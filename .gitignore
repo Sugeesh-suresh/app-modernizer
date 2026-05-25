@@ -1,0 +1,17 @@
+# Python backend
+modernizer-backend/.venv/
+modernizer-backend/__pycache__/
+modernizer-backend/**/__pycache__/
+modernizer-backend/*.pyc
+modernizer-backend/*.db
+modernizer-backend/modernizer.db
+
+# Environment secrets — NEVER commit these
+modernizer-backend/.env
+
+# Frontend
+modernizer-app/node_modules/
+modernizer-app/dist/
+
+# macOS
+.DS_Store

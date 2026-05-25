@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"/Users/anitasugeesh/Documents/AI/App Modernizer/modernizer-backend/agents/tibco_to_springboot\")",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('Endpoints:', len\\(d['paths']\\)\\)\")",
+      "Bash(.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --reload)",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s -X POST http://localhost:8000/api/upload -F pattern=tibco-to-springboot -F 'file=@/tmp/tibco_test.zip;type=application/zip')",
+      "Bash(curl -s --max-time 5 http://localhost:8000/health)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(kill -9 85027 88465)"
+    ],
+    "additionalDirectories": [
+      "/Users/anitasugeesh/Documents/AI/App Modernizer/modernizer-backend/agents"
+    ]
+  }
+}
