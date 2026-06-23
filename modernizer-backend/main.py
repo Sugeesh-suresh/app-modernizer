@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import os
 import uuid
@@ -437,6 +438,34 @@ async def download_plan(session_id: str):
         content=plan,
         media_type="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="plan-{session_id[:8]}.md"'},
+    )
+
+
+@app.get("/api/sessions/{session_id}/download/code")
+async def download_code_zip(session_id: str):
+    """Return all generated source files as a ZIP archive preserving folder structure."""
+    state = await _get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    files = json.loads(state.get("generated_files_json", "[]"))
+    if not files:
+        raise HTTPException(status_code=404, detail="No generated files found.")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in files:
+            # Use the path as-is so folder structure is preserved inside the ZIP
+            zf.writestr(f["path"], f["content"])
+    buf.seek(0)
+
+    pattern_slug = state.get("pattern", "migration").replace("/", "-")
+    filename = f"{pattern_slug}-migrated.zip"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

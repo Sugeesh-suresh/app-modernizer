@@ -69,6 +69,9 @@ export const brdDownloadUrl = (sessionId: string) =>
 export const planDownloadUrl = (sessionId: string) =>
   `${BASE}/api/sessions/${sessionId}/download/plan`;
 
+export const codeZipDownloadUrl = (sessionId: string) =>
+  `${BASE}/api/sessions/${sessionId}/download/code`;
+
 export function createSSEConnection(
   sessionId: string,
   onEvent: (e: MessageEvent) => void,

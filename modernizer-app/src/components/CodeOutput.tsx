@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { Code2, Copy, CheckCheck, Download, FolderTree, PartyPopper } from 'lucide-react';
+import { Code2, Copy, CheckCheck, FolderTree, PartyPopper, FileArchive } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { GeneratedFile } from '../types';
+import { codeZipDownloadUrl } from '../api';
 
 interface Props {
+  sessionId: string;
   files: GeneratedFile[];
   pattern: string;
   onStartNew: () => void;
@@ -28,7 +30,7 @@ function normaliseLanguage(lang: string): string {
   return LANG_MAP[lang.toLowerCase()] ?? lang.toLowerCase();
 }
 
-export function CodeOutput({ files, pattern, onStartNew }: Props) {
+export function CodeOutput({ sessionId, files, pattern, onStartNew }: Props) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [copied, setCopied] = useState(false);
 
@@ -38,18 +40,6 @@ export function CodeOutput({ files, pattern, onStartNew }: Props) {
     await navigator.clipboard.writeText(selected?.content ?? '');
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleDownloadAll = () => {
-    files.forEach((f) => {
-      const blob = new Blob([f.content], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = f.path.split('/').pop() ?? 'file.txt';
-      a.click();
-      URL.revokeObjectURL(url);
-    });
   };
 
   return (
@@ -68,13 +58,14 @@ export function CodeOutput({ files, pattern, onStartNew }: Props) {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={handleDownloadAll}
+          <a
+            href={codeZipDownloadUrl(sessionId)}
+            download
             className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 px-4 py-2 rounded-lg text-sm transition-colors"
           >
-            <Download size={14} />
-            Download All
-          </button>
+            <FileArchive size={14} />
+            Download ZIP
+          </a>
           <button
             onClick={onStartNew}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"

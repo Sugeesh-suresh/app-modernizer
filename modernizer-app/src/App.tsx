@@ -243,6 +243,7 @@ export default function App() {
 
         {state.step === 'complete' && state.generatedFiles.length > 0 && (
           <CodeOutput
+            sessionId={state.sessionId ?? ''}
             files={state.generatedFiles}
             pattern={patternConfig?.title ?? state.pattern ?? ''}
             onStartNew={handleStartNew}
