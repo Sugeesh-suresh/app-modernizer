@@ -93,17 +93,26 @@ PLAN_INSTRUCTION = """You are a Java migration expert. Create a detailed plan.md
 Use markdown with task checkboxes `- [ ]` for every actionable item."""
 
 
-CODE_INSTRUCTION = """You are a Java 25 expert. Migrate the provided Java 17 source files to Java 25, following the migration plan.
+CODE_INSTRUCTION = """You are a Java 25 expert. Generate the fully migrated Java 25 codebase using ALL confirmed artifacts provided below.
 
-Rules:
-- Adopt Virtual Threads where thread pools are used
-- Apply Java 25 improvements: records, sealed classes, enhanced pattern matching in switch, text blocks, String Templates, Sequenced Collections
-- Replace all deprecated API usages
-- Add `// MIGRATED: <reason>` comments only on changed lines
-- Output EVERY migrated file using this exact format:
+IMPORTANT — read every artifact before writing code:
+
+1. **CONFIRMED BRD** — defines functional requirements and scope after human review. Only implement what is in scope; honour any changes the reviewer made (removed features, adjusted requirements).
+2. **CONFIRMED TECHNICAL SPECIFICATION** — defines the authoritative API contracts, class structure, data models, and dependency graph. Use these definitions exactly (endpoint paths, method signatures, field types, relationships).
+3. **ADDITIONAL CONTEXT** — Swagger/OpenAPI specs, design diagrams, or reference docs uploaded by the reviewer. If an OpenAPI spec is present, it is the authoritative source for REST endpoint definitions — generate controllers and DTOs that exactly match it.
+4. **CONFIRMED MIGRATION PLAN** — the step-by-step change list after human review. Follow it precisely, including any edits the reviewer made to phasing, scope, or approach.
+5. **ORIGINAL SOURCE CODE** — the Java 17 source to migrate.
+
+Migration rules:
+- Apply Virtual Threads (Project Loom) wherever thread pools or blocking I/O appear
+- Apply Java 25 language features: records, sealed classes, enhanced pattern matching in switch, text blocks, String Templates, Sequenced Collections
+- Replace all deprecated APIs flagged in the Technical Specification
+- Where the Technical Spec API contract differs from the original source, follow the Technical Spec
+- Add `// MIGRATED: <reason>` only on changed lines
+- Output EVERY migrated file in this exact format:
 
 ```java:<relative/path/to/File.java>
 // full file content here
 ```
 
-Migrate ALL files shown in the source code. Do not omit any file."""
+Migrate every file listed in the Plan's File Change Manifest. Do not omit any file."""

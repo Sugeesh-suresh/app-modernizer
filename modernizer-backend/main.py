@@ -218,8 +218,35 @@ async def _run_workflow(session_id: str) -> None:
         await _plan_gates[session_id].wait()
 
         # ── Step 4: Code Generation ──────────────────────────────────────────
+        # Re-fetch ALL confirmed/edited artifacts from session state so that
+        # any human edits made during the review steps are reflected in the
+        # generated code.
         state = await _get_state(session_id)
-        plan = state.get("plan", "")
+        plan             = state.get("plan", "")
+        brd              = state.get("brd", "")
+        tech_spec        = state.get("technical_spec", "")
+        additional_ctx   = state.get("additional_context", "")
+
+        code_msg_parts = ["Generate the migrated code using ALL of the following confirmed artifacts.\n"]
+
+        if brd.strip():
+            code_msg_parts.append(
+                f"=== CONFIRMED BRD (human-reviewed) ===\n{brd[:8000]}"
+            )
+        if tech_spec.strip():
+            code_msg_parts.append(
+                f"=== CONFIRMED TECHNICAL SPECIFICATION (human-reviewed) ===\n{tech_spec[:8000]}"
+            )
+        if additional_ctx.strip():
+            code_msg_parts.append(
+                f"=== ADDITIONAL CONTEXT (Swagger / OpenAPI / Design Docs) ===\n{additional_ctx[:15000]}"
+            )
+        code_msg_parts.append(
+            f"=== CONFIRMED MIGRATION PLAN (human-reviewed) ===\n{plan[:8000]}"
+        )
+        code_msg_parts.append(
+            f"=== ORIGINAL SOURCE CODE ===\n{source_code[:45000]}"
+        )
 
         await _push(session_id, "step-start", step="code-generation",
                     message="Generating migrated code…")
@@ -227,11 +254,7 @@ async def _run_workflow(session_id: str) -> None:
 
         await _run_step(
             session_id, "code", pattern,
-            message=(
-                f"Generate the migrated code.\n\n"
-                f"Plan summary:\n{plan[:10000]}\n\n"
-                f"Original source:\n{source_code[:50000]}"
-            ),
+            message="\n\n".join(code_msg_parts),
             sse_event_type="code-stream",
         )
         state = await _get_state(session_id)
