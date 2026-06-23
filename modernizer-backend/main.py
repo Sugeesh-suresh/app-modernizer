@@ -23,9 +23,8 @@ if not os.getenv("GOOGLE_API_KEY") and os.getenv("GEMINI_API_KEY"):
     os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
 from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, session_service
-from agents.config import TEST_RETRY_ATTEMPTS
 from agents.shared.file_parser import extract_text
-from agents.shared.code_parser import parse_generated_files, is_test_file, merge_files_by_path
+from agents.shared.code_parser import parse_generated_files
 from models.schemas import PatternType, UploadResponse, ConfirmRequest
 
 # ---------------------------------------------------------------------------
@@ -73,42 +72,6 @@ async def _get_state(session_id: str) -> dict:
         app_name=APP_NAME, user_id=USER_ID, session_id=session_id
     )
     return dict(session.state) if session else {}
-
-
-def _parse_validation(raw: str) -> dict:
-    """Extract JSON from the validate-agent output with multi-strategy fallback.
-
-    The model is instructed to output only JSON, but may occasionally wrap it
-    in markdown fences or add surrounding text.  We try three strategies in
-    order and fall back to "passed=True" so a bad parse never blocks the
-    pipeline.
-    """
-    import re as _re
-    text = raw.strip()
-
-    # Strategy 1: direct JSON parse
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # Strategy 2: strip markdown fences then parse
-    clean = _re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
-    try:
-        return json.loads(clean)
-    except json.JSONDecodeError:
-        pass
-
-    # Strategy 3: extract outermost { … } block
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
-        try:
-            return json.loads(text[start : end + 1])
-        except json.JSONDecodeError:
-            pass
-
-    # Fallback: treat as passed so pipeline continues
-    return {"passed": True, "issues": [], "summary": "Validation output could not be parsed; assuming passed."}
 
 
 def _extract_zip(zip_bytes: bytes) -> str:
@@ -175,6 +138,27 @@ async def _run_step(
                 await asyncio.sleep(0)  # yield to event loop
 
 # ---------------------------------------------------------------------------
+# Section parser — splits the combined RE output into Analysis / BRD / TechSpec
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+def _parse_re_sections(combined: str) -> tuple[str, str, str]:
+    """Return (analysis, brd, technical_spec) parsed from the combined RE output."""
+    _A = _re.search(r'<!--\s*SECTION:\s*ANALYSIS\s*-->', combined, _re.IGNORECASE)
+    _B = _re.search(r'<!--\s*SECTION:\s*BRD\s*-->', combined, _re.IGNORECASE)
+    _T = _re.search(r'<!--\s*SECTION:\s*TECHNICAL_SPECIFICATION\s*-->', combined, _re.IGNORECASE)
+    _E = _re.search(r'<!--\s*SECTION:\s*END\s*-->', combined, _re.IGNORECASE)
+
+    analysis = combined[_A.end():_B.start()].strip() if _A and _B else combined
+    brd       = combined[_B.end():_T.start()].strip() if _B and _T else (combined[_B.end():].strip() if _B else combined)
+    end_pos   = _E.start() if _E else len(combined)
+    tech_spec = combined[_T.end():end_pos].strip() if _T else ""
+
+    return analysis, brd or combined, tech_spec
+
+
+# ---------------------------------------------------------------------------
 # Workflow orchestration
 # ---------------------------------------------------------------------------
 
@@ -184,9 +168,7 @@ async def _run_workflow(session_id: str) -> None:
         pattern = state["pattern"]
         source_code = state["source_code"]
 
-        # ── Step 1: Reverse Engineering ─────────────────────────────────────
-        await _push(session_id, "step-start", step="reverse-engineering",
-                    message="Analysing your codebase…")
+        # ── Step 1: Reverse Engineering → Analysis + BRD + Tech Spec ────────
         await _push(session_id, "step-change", step="reverse-engineering")
 
         await _run_step(
@@ -195,38 +177,30 @@ async def _run_workflow(session_id: str) -> None:
             sse_event_type="re-stream",
         )
         state = await _get_state(session_id)
-        analysis = state.get("analysis", "")
-        await _push(session_id, "re-complete", content=analysis)
+        combined = state.get("analysis", "")
+        analysis, brd, tech_spec = _parse_re_sections(combined)
 
-        # ── Step 2: BRD Generation ───────────────────────────────────────────
-        await _push(session_id, "step-start", step="brd-generation",
-                    message="Generating Business Requirements Document…")
-        await _push(session_id, "step-change", step="brd-generation")
+        # Persist parsed sections so confirm-brd can serve them
+        await _update_state(session_id, {"brd": brd, "technical_spec": tech_spec})
 
-        await _run_step(
-            session_id, "brd", pattern,
-            message=f"Generate the BRD based on this analysis:\n\n{analysis[:25000]}",
-            sse_event_type="brd-stream",
-        )
-        state = await _get_state(session_id)
-        brd = state.get("brd", "")
-        await _push(session_id, "brd-ready", content=brd)
+        await _push(session_id, "brd-ready", brd=brd, technical_spec=tech_spec)
         await _push(session_id, "step-change", step="brd-review")
 
-        # ── HITL: Wait for BRD confirmation ─────────────────────────────────
+        # ── HITL: Wait for Analysis confirmation (BRD + TechSpec) ───────────
         await _brd_gates[session_id].wait()
 
-        # ── Step 3: Plan Generation ──────────────────────────────────────────
+        # ── Step 2: Plan Generation ──────────────────────────────────────────
         state = await _get_state(session_id)
-        brd = state.get("brd", "")
+        brd       = state.get("brd", "")
+        tech_spec = state.get("technical_spec", "")
         additional_context = state.get("additional_context", "")
 
-        plan_msg = f"Generate the migration plan.\n\nBRD:\n{brd[:20000]}"
+        plan_msg = f"Generate the migration plan.\n\nBRD:\n{brd[:15000]}"
+        if tech_spec.strip():
+            plan_msg += f"\n\nTechnical Specification:\n{tech_spec[:15000]}"
         if additional_context.strip():
-            plan_msg += f"\n\nAdditional Context:\n{additional_context[:30000]}"
+            plan_msg += f"\n\nAdditional Context (Swagger / OpenAPI / Design Docs):\n{additional_context[:25000]}"
 
-        await _push(session_id, "step-start", step="plan-generation",
-                    message="Generating migration plan…")
         await _push(session_id, "step-change", step="plan-generation")
 
         await _run_step(
@@ -266,132 +240,6 @@ async def _run_workflow(session_id: str) -> None:
 
         await _update_state(session_id, {"generated_files_json": json.dumps(files_payload)})
         await _push(session_id, "code-ready", files=files_payload)
-
-        # ── Step 5: Test Generation ──────────────────────────────────────────
-        await _push(session_id, "step-start", step="test-generation",
-                    message="Generating unit tests (>80% coverage target)…")
-        await _push(session_id, "step-change", step="test-generation")
-
-        await _run_step(
-            session_id, "test", pattern,
-            message=(
-                f"Generate the unit test suite for the migrated code.\n\n"
-                f"Plan:\n{plan[:8000]}\n\n"
-                f"Generated source code:\n{raw_code[:50000]}"
-            ),
-            sse_event_type="test-stream",
-        )
-        state = await _get_state(session_id)
-        raw_tests = state.get("generated_tests_raw", "")
-        test_files = parse_generated_files(raw_tests, TARGET_LANGS[pattern])
-        tests_payload = [f.model_dump() for f in test_files]
-
-        await _update_state(session_id, {"generated_tests_json": json.dumps(tests_payload)})
-        await _push(session_id, "tests-ready", files=tests_payload)
-
-        # ── Step 6: Validation / Fix retry loop ─────────────────────────────
-        # Keep mutable copies so each iteration works on the latest version.
-        files_current = files_payload          # list[dict]  source files
-        tests_current = tests_payload          # list[dict]  test files
-        lang = TARGET_LANGS[pattern]
-
-        validation: dict = {"passed": True, "issues": [], "summary": ""}
-        attempts_used = 0
-
-        def _to_raw(file_list: list) -> str:
-            """Reconstruct fenced-block text from a list of file dicts."""
-            return "\n\n".join(
-                f"```{f['language']}:{f['path']}\n{f['content']}\n```"
-                for f in file_list
-            )
-
-        if TEST_RETRY_ATTEMPTS > 0:
-            for attempt in range(1, TEST_RETRY_ATTEMPTS + 1):
-                attempts_used = attempt
-
-                # --- Validate ---
-                await _push(session_id, "validation-start",
-                            attempt=attempt, max_retries=TEST_RETRY_ATTEMPTS)
-
-                raw_src = _to_raw(files_current)
-                raw_tst = _to_raw(tests_current)
-
-                await _run_step(
-                    session_id, "validate", pattern,
-                    message=(
-                        f"Review these source files and test files for correctness.\n\n"
-                        f"=== SOURCE CODE ===\n{raw_src[:35000]}\n\n"
-                        f"=== TEST FILES ===\n{raw_tst[:20000]}"
-                    ),
-                    sse_event_type="validate-stream",
-                )
-
-                state = await _get_state(session_id)
-                validation = _parse_validation(state.get("validation_result", ""))
-                issues = validation.get("issues", [])
-                passed = validation.get("passed", True)
-
-                await _push(session_id, "validation-result",
-                            passed=passed,
-                            attempt=attempt,
-                            max_retries=TEST_RETRY_ATTEMPTS,
-                            issues=issues,
-                            summary=validation.get("summary", ""))
-
-                if passed:
-                    break
-
-                if attempt >= TEST_RETRY_ATTEMPTS:
-                    break  # budget exhausted — accept best-effort result
-
-                # --- Fix ---
-                await _push(session_id, "fix-start",
-                            attempt=attempt, max_retries=TEST_RETRY_ATTEMPTS,
-                            issues=issues)
-
-                issues_text = "\n".join(f"- {iss}" for iss in issues)
-                await _run_step(
-                    session_id, "fix", pattern,
-                    message=(
-                        f"Fix the following issues:\n{issues_text}\n\n"
-                        f"=== SOURCE CODE ===\n{raw_src[:35000]}\n\n"
-                        f"=== TEST FILES ===\n{raw_tst[:20000]}"
-                    ),
-                    sse_event_type="fix-stream",
-                )
-
-                state = await _get_state(session_id)
-                raw_fix = state.get("generated_fix_raw", "").strip()
-
-                if raw_fix:
-                    fixed_files = parse_generated_files(raw_fix, lang)
-                    fixed_payload = [f.model_dump() for f in fixed_files]
-
-                    src_fixed  = [f for f in fixed_payload if not is_test_file(f["path"], lang)]
-                    test_fixed = [f for f in fixed_payload if is_test_file(f["path"], lang)]
-
-                    if src_fixed:
-                        files_current = merge_files_by_path(files_current, src_fixed)
-                    if test_fixed:
-                        tests_current = merge_files_by_path(tests_current, test_fixed)
-
-                    # Persist updated files so the session stays consistent
-                    await _update_state(session_id, {
-                        "generated_files_json": json.dumps(files_current),
-                        "generated_tests_json": json.dumps(tests_current),
-                    })
-
-                    await _push(session_id, "fix-applied",
-                                attempt=attempt,
-                                source_files=src_fixed,
-                                test_files=test_fixed)
-
-        final_passed = validation.get("passed", True)
-        await _push(session_id, "validation-complete",
-                    passed=final_passed,
-                    attempts_used=attempts_used,
-                    max_retries=TEST_RETRY_ATTEMPTS,
-                    final_issues=validation.get("issues", []))
 
         await _push(session_id, "step-change", step="complete")
         await _push(session_id, "workflow-complete")
@@ -448,12 +296,11 @@ async def upload_repository(
             "source_code": source_code,
             "analysis": "",
             "brd": "",
+            "technical_spec": "",
             "plan": "",
             "additional_context": "",
             "generated_code_raw": "",
             "generated_files_json": "[]",
-            "generated_tests_raw": "",
-            "generated_tests_json": "[]",
             "workflow_step": "upload",
         },
     )
@@ -507,10 +354,12 @@ async def confirm_brd(session_id: str, body: ConfirmRequest = ConfirmRequest()):
     delta: dict = {}
     if body.content is not None:
         delta["brd"] = body.content
+    if body.technical_spec_content is not None:
+        delta["technical_spec"] = body.technical_spec_content
     if body.feedback:
         state = await _get_state(session_id)
-        current = state.get("brd", body.content or "")
-        delta["brd"] = current + f"\n\n---\n**Reviewer Feedback:** {body.feedback}"
+        current_brd = state.get("brd", body.content or "")
+        delta["brd"] = current_brd + f"\n\n---\n**Reviewer Feedback:** {body.feedback}"
 
     if delta:
         await _update_state(session_id, delta)
@@ -597,14 +446,12 @@ async def get_session(session_id: str):
     if not state:
         raise HTTPException(status_code=404, detail="Session not found.")
     files = json.loads(state.get("generated_files_json", "[]"))
-    tests = json.loads(state.get("generated_tests_json", "[]"))
     return {
         "session_id": session_id,
         "pattern": state.get("pattern"),
         "brd": state.get("brd") or None,
         "plan": state.get("plan") or None,
         "generated_files": files,
-        "generated_tests": tests,
     }
 
 

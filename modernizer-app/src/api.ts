@@ -20,13 +20,18 @@ export async function uploadRepository(
 
 export async function confirmBrd(
   sessionId: string,
-  content: string,
+  brdContent: string,
+  techSpecContent: string,
   feedback?: string,
 ): Promise<void> {
   const res = await fetch(`${BASE}/api/sessions/${sessionId}/confirm-brd`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, feedback: feedback ?? null }),
+    body: JSON.stringify({
+      content: brdContent,
+      technical_spec_content: techSpecContent,
+      feedback: feedback ?? null,
+    }),
   });
   if (!res.ok) throw new Error('Failed to confirm BRD');
 }

@@ -4,19 +4,16 @@ import type { WorkflowStep } from '../types';
 const STEPS: { id: WorkflowStep; label: string }[] = [
   { id: 'upload', label: 'Upload' },
   { id: 'reverse-engineering', label: 'Reverse Engineer' },
-  { id: 'brd-review', label: 'BRD Review' },
+  { id: 'brd-review', label: 'Analysis Review' },
   { id: 'plan-generation', label: 'Plan' },
   { id: 'plan-review', label: 'Plan Review' },
   { id: 'code-generation', label: 'Generate Code' },
-  { id: 'test-generation', label: 'Generate Tests' },
   { id: 'complete', label: 'Complete' },
 ];
 
 const STEP_ORDER = STEPS.map((s) => s.id);
 
 function getStepIndex(step: WorkflowStep): number {
-  // Treat brd-generation same as brd-review for progress
-  if (step === 'brd-generation') return STEP_ORDER.indexOf('brd-review');
   return STEP_ORDER.indexOf(step);
 }
 

@@ -17,7 +17,6 @@ class SessionStatus(str, Enum):
     PLAN_GENERATION = "plan-generation"
     PLAN_REVIEW = "plan-review"
     CODE_GENERATION = "code-generation"
-    TEST_GENERATION = "test-generation"
     COMPLETE = "complete"
     ERROR = "error"
 
@@ -36,7 +35,8 @@ class UploadResponse(BaseModel):
 
 class ConfirmRequest(BaseModel):
     feedback: Optional[str] = None
-    content: Optional[str] = None  # full edited text from UI replaces the generated draft
+    content: Optional[str] = None               # edited BRD text
+    technical_spec_content: Optional[str] = None  # edited Technical Specification text
 
 
 class SessionInfo(BaseModel):
