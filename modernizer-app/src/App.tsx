@@ -20,8 +20,12 @@ const INITIAL_STATE: WorkflowState = {
   plan: '',
   generatedFiles: [],
   streamingContent: '',
+  validationContent: '',
   progress: 0,
   progressMessage: '',
+  codeSubStep: 'generating',
+  validationIteration: 0,
+  validationResult: null,
   error: null,
 };
 
@@ -64,8 +68,12 @@ export default function App() {
             ...s,
             step: event.step as WorkflowStep,
             streamingContent: '',
+            validationContent: '',
             progress: 0,
             progressMessage: '',
+            codeSubStep: 'generating',
+            validationIteration: 0,
+            validationResult: null,
           }));
         }
         break;
@@ -86,8 +94,64 @@ export default function App() {
           ...s,
           streamingContent: s.streamingContent + (event.content ?? ''),
           progress: event.progress ?? s.progress,
+          codeSubStep: s.step === 'code-generation' ? 'generating' : s.codeSubStep,
         }));
         break;
+
+      // ── Quarkus validation loop events ──────────────────────────────────
+
+      case 'validation-agent-start':
+        setState((s) => ({
+          ...s,
+          codeSubStep: 'validating',
+          validationContent: '',
+          validationIteration: event.iteration ?? s.validationIteration + 1,
+          progressMessage: `Validating — iteration ${event.iteration ?? s.validationIteration + 1} / 4…`,
+        }));
+        break;
+
+      case 'validate-stream':
+        setState((s) => ({
+          ...s,
+          validationContent: s.validationContent + (event.content ?? ''),
+          progress: event.progress ?? s.progress,
+        }));
+        break;
+
+      case 'fix-agent-start':
+        setState((s) => ({
+          ...s,
+          codeSubStep: 'fixing',
+          streamingContent: '',
+          progressMessage: `Fixing errors — iteration ${event.iteration ?? s.validationIteration} / 4…`,
+        }));
+        break;
+
+      case 'fix-stream':
+        setState((s) => ({
+          ...s,
+          streamingContent: s.streamingContent + (event.content ?? ''),
+          progress: event.progress ?? s.progress,
+        }));
+        break;
+
+      case 'validation-complete':
+        setState((s) => ({
+          ...s,
+          codeSubStep: 'generating',
+          validationResult: {
+            passed: event.passed ?? true,
+            errors: event.errors ?? [],
+            summary: event.summary ?? '',
+            iterations: event.iterations ?? s.validationIteration,
+          },
+          progressMessage: event.passed
+            ? `Build validated — ${event.iterations ?? s.validationIteration} iteration(s)`
+            : `Completed ${event.iterations ?? s.validationIteration} iteration(s) — issues remain`,
+        }));
+        break;
+
+      // ── End validation loop events ───────────────────────────────────────
 
       case 'brd-ready':
         setState((s) => ({
@@ -222,9 +286,14 @@ export default function App() {
           state.step === 'code-generation') && (
           <ProcessingView
             step={state.step}
+            pattern={state.pattern}
             streamingContent={state.streamingContent}
+            validationContent={state.validationContent}
             progress={state.progress}
             progressMessage={state.progressMessage}
+            codeSubStep={state.codeSubStep}
+            validationIteration={state.validationIteration}
+            validationResult={state.validationResult}
           />
         )}
 

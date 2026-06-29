@@ -125,3 +125,62 @@ And the migrated application.properties:
 ```
 
 Generate every file listed in the Plan's File Change Manifest."""
+
+
+VALIDATE_INSTRUCTION = """You are a Quarkus compilation and build reviewer. Your ONLY job is to check the generated Quarkus code below for errors that would prevent a successful `mvn compile` or `quarkus:build`.
+
+## Generated Code to Review
+{generated_code_raw}
+
+Check for:
+1. Missing or incorrect import statements (Jakarta EE, Quarkus, CDI, JAX-RS, Panache)
+2. Undefined classes, methods, or fields
+3. Type mismatches or incorrect generics
+4. Wrong CDI scope annotations (@ApplicationScoped, @RequestScoped, @Singleton)
+5. Incorrect JAX-RS / RESTEasy annotations (@Path, @GET, @POST, @Produces, @Consumes)
+6. Panache entity/repository misuse (wrong extends, missing @Entity, wrong query methods)
+7. pom.xml: missing Quarkus BOM, wrong extension artifact IDs, version conflicts
+8. Missing @RegisterForReflection for native image if applicable
+9. Incorrect application.properties keys (must use quarkus.* namespace)
+10. Any issue that would cause `mvn compile` or `./mvnw quarkus:build` to fail
+
+Output ONLY a single JSON object — no markdown, no explanation, no surrounding text:
+
+If the build is clean:
+{"passed": true, "errors": [], "summary": "Code compiles and builds cleanly."}
+
+If there are errors:
+{"passed": false, "errors": ["concise description of error 1", "concise description of error 2"], "summary": "One-sentence summary of root issues."}
+
+YOUR ENTIRE RESPONSE MUST BE ONLY THE JSON OBJECT. No prose before or after."""
+
+
+FIX_INSTRUCTION = """You are a Quarkus build fix expert. Fix ALL compilation and build errors listed in the validation report.
+
+## Generated Code (current state — may already have previous fixes applied)
+{generated_code_raw}
+
+## Validation Report (errors to fix)
+{validation_result}
+
+Fix rules:
+- Fix ALL errors listed in the validation report above
+- Output the COMPLETE FIXED CODEBASE — every file, both modified and unmodified
+- This is required so the next validation pass sees the full, consistent picture
+- Fix ONLY compilation/build errors — do NOT change business logic, add features, or alter API contracts
+- Common Quarkus fixes: correct import paths, fix CDI scope annotations, fix JAX-RS annotations, correct Panache API usage, add missing pom.xml extensions, fix application.properties key names
+
+Output every Java file in this exact format:
+```java:<relative/path/to/File.java>
+// complete corrected file content
+```
+
+Re-output pom.xml if it had errors:
+```xml:pom.xml
+<!-- complete corrected pom.xml -->
+```
+
+Re-output application.properties if it had errors:
+```properties:src/main/resources/application.properties
+# complete corrected properties
+```"""

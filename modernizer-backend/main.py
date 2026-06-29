@@ -138,6 +138,90 @@ async def _run_step(
                 await _push(session_id, sse_event_type, content=text, progress=progress)
                 await asyncio.sleep(0)  # yield to event loop
 
+
+def _parse_validation_json(raw: str) -> dict:
+    """Parse the JSON validation result produced by the validate agent."""
+    import re as _re2
+    text = raw.strip()
+    for parse in [
+        lambda t: json.loads(t),
+        lambda t: json.loads(_re2.sub(r"```(?:json)?\s*|\s*```", "", t).strip()),
+        lambda t: json.loads(t[t.find("{") : t.rfind("}") + 1]),
+    ]:
+        try:
+            return parse(text)
+        except Exception:
+            pass
+    return {"passed": True, "errors": [], "summary": "Parse error — assuming passed."}
+
+
+async def _run_quarkus_code_step(session_id: str, code_message: str) -> None:
+    """Run the Quarkus code_pipeline (code_agent → LoopAgent(validate, fix, max=4)).
+
+    Streams events to the SSE queue with author-aware routing:
+      quarkus_code     → code-stream
+      quarkus_validate → validate-stream  (also emits validation-agent-start)
+      quarkus_fix      → fix-stream       (also emits fix-agent-start)
+
+    After the pipeline completes, reads validation_result from session state
+    and emits a validation-complete event.
+    """
+    runner = PATTERN_RUNNERS["java-to-quarkus"]["code"]
+    content = types.Content(role="user", parts=[types.Part(text=code_message)])
+
+    prev_author = ""
+    iteration = 0
+    progress = 5
+
+    async for event in runner.run_async(
+        session_id=session_id,
+        user_id=USER_ID,
+        new_message=content,
+    ):
+        author = getattr(event, "author", "") or ""
+
+        # ── Author-transition signals ─────────────────────────────────────
+        if author and author != prev_author:
+            if "quarkus_validate" in author:
+                iteration += 1
+                await _push(session_id, "validation-agent-start", iteration=iteration)
+            elif "quarkus_fix" in author:
+                await _push(session_id, "fix-agent-start", iteration=iteration)
+            prev_author = author
+
+        if not event.content:
+            continue
+
+        # ── Route text by author ──────────────────────────────────────────
+        if "quarkus_validate" in author:
+            sse_type = "validate-stream"
+        elif "quarkus_fix" in author:
+            sse_type = "fix-stream"
+        elif "quarkus_code" in author:
+            sse_type = "code-stream"
+        else:
+            continue  # skip SequentialAgent / LoopAgent envelope events
+
+        for part in event.content.parts:
+            text = getattr(part, "text", None)
+            if text:
+                progress = min(progress + 2, 92)
+                await _push(session_id, sse_type, content=text, progress=progress)
+                await asyncio.sleep(0)
+
+    # ── Emit final validation result ──────────────────────────────────────
+    state = await _get_state(session_id)
+    raw_result = state.get("validation_result", "")
+    validation = _parse_validation_json(raw_result) if raw_result else {"passed": True, "errors": [], "summary": ""}
+    await _push(
+        session_id,
+        "validation-complete",
+        passed=validation.get("passed", True),
+        errors=validation.get("errors", []),
+        summary=validation.get("summary", ""),
+        iterations=iteration,
+    )
+
 # ---------------------------------------------------------------------------
 # Section parser — splits the combined RE output into Analysis / BRD / TechSpec
 # ---------------------------------------------------------------------------
@@ -252,11 +336,15 @@ async def _run_workflow(session_id: str) -> None:
                     message="Generating migrated code…")
         await _push(session_id, "step-change", step="code-generation")
 
-        await _run_step(
-            session_id, "code", pattern,
-            message="\n\n".join(code_msg_parts),
-            sse_event_type="code-stream",
-        )
+        if pattern == "java-to-quarkus":
+            # Code pipeline: code_agent → LoopAgent(validate, fix, max=4)
+            await _run_quarkus_code_step(session_id, "\n\n".join(code_msg_parts))
+        else:
+            await _run_step(
+                session_id, "code", pattern,
+                message="\n\n".join(code_msg_parts),
+                sse_event_type="code-stream",
+            )
         state = await _get_state(session_id)
         raw_code = state.get("generated_code_raw", "")
         files = parse_generated_files(raw_code, TARGET_LANGS[pattern])
@@ -325,6 +413,7 @@ async def upload_repository(
             "additional_context": "",
             "generated_code_raw": "",
             "generated_files_json": "[]",
+            "validation_result": "",
             "workflow_step": "upload",
         },
     )

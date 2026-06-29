@@ -15,7 +15,7 @@ from .java_to_go.agents import (
     re_agent as go_re, plan_agent as go_plan, code_agent as go_code,
 )
 from .java_to_quarkus.agents import (
-    re_agent as qk_re, plan_agent as qk_plan, code_agent as qk_code,
+    re_agent as qk_re, plan_agent as qk_plan, code_pipeline as qk_code_pipeline,
 )
 from .tibco_to_springboot.agents import (
     re_agent as tibco_re, plan_agent as tibco_plan, code_agent as tibco_code,
@@ -50,7 +50,7 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
     "java-to-quarkus": {
         "re":   _runner(qk_re),
         "plan": _runner(qk_plan),
-        "code": _runner(qk_code),
+        "code": _runner(qk_code_pipeline),  # SequentialAgent: code → LoopAgent(validate, fix, max=4)
     },
     "tibco-to-springboot": {
         "re":   _runner(tibco_re),
