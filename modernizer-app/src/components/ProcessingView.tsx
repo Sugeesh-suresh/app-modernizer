@@ -6,25 +6,25 @@ const STEP_CONFIG: Record<string, { icon: React.ReactNode; title: string; subtit
     icon: <Brain size={28} />,
     title: 'Reverse Engineering',
     subtitle: 'AI is analysing your codebase — architecture, business logic, dependencies…',
-    color: 'text-violet-400',
+    color: 'text-violet-600',
   },
   'brd-generation': {
     icon: <FileText size={28} />,
     title: 'Generating BRD',
     subtitle: 'Drafting the Business Requirements Document based on the analysis…',
-    color: 'text-blue-400',
+    color: 'text-blue-600',
   },
   'plan-generation': {
     icon: <GitBranch size={28} />,
     title: 'Generating Migration Plan',
     subtitle: 'Building a step-by-step plan.md for your migration…',
-    color: 'text-emerald-400',
+    color: 'text-emerald-600',
   },
   'code-generation': {
     icon: <Code2 size={28} />,
     title: 'Generating Target Code',
     subtitle: 'Producing the fully migrated codebase…',
-    color: 'text-amber-400',
+    color: 'text-amber-600',
   },
 };
 
@@ -64,19 +64,19 @@ export function ProcessingView({
   return (
     <div className="max-w-4xl mx-auto px-6 py-12">
       {/* Status card */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 mb-6 text-center">
-        <div className={`inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-slate-800 border border-slate-700 ${config.color} mb-5`}>
+      <div className="glass rounded-2xl p-8 mb-6 text-center">
+        <div className={`inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-slate-900/5 border border-slate-900/10 ${config.color} mb-5`}>
           {config.icon}
         </div>
-        <h2 className="text-xl font-bold text-white mb-2">{config.title}</h2>
-        <p className="text-slate-400 text-sm mb-6">{config.subtitle}</p>
+        <h2 className="text-xl font-bold text-slate-900 mb-2">{config.title}</h2>
+        <p className="text-slate-600 text-sm mb-6">{config.subtitle}</p>
 
         {/* Sub-step badge — Quarkus code generation only */}
         {showValidationPanel && codeSubStep !== 'generating' && (
           <div className={`inline-flex items-center gap-2 text-xs font-medium mb-4 px-3 py-1.5 rounded-full border ${
             codeSubStep === 'validating'
-              ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
-              : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+              ? 'bg-blue-500/10 text-blue-600 border-blue-500/20'
+              : 'bg-rose-500/10 text-rose-600 border-rose-500/20'
           }`}>
             {codeSubStep === 'validating' ? <ShieldCheck size={13} /> : <Wrench size={13} />}
             {codeSubStep === 'validating' ? 'Validating for compilation errors…' : 'Fixing compilation errors…'}
@@ -89,9 +89,9 @@ export function ProcessingView({
             <span>{progressMessage || 'Processing…'}</span>
             <span>{progress}%</span>
           </div>
-          <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+          <div className="h-2 bg-slate-900/5 rounded-full overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500"
+              className="h-full bg-gradient-to-r from-red-500 to-red-700 rounded-full transition-all duration-500"
               style={{ width: `${Math.max(progress, 3)}%` }}
             />
           </div>
@@ -100,9 +100,9 @@ export function ProcessingView({
 
       {/* Quarkus validation loop panel */}
       {showValidationPanel && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden mb-4">
-          <div className="px-5 py-3 border-b border-slate-800 bg-slate-950/50 flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+        <div className="glass rounded-2xl overflow-hidden mb-4">
+          <div className="px-5 py-3 border-b border-slate-900/10 glass-inset flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
               Quarkus Build Loop — LoopAgent (max {MAX_ITERATIONS} iterations)
             </span>
             {/* Iteration dots */}
@@ -120,7 +120,7 @@ export function ProcessingView({
                     ? codeSubStep === 'validating' ? 'bg-blue-400 animate-pulse'
                       : codeSubStep === 'fixing'   ? 'bg-rose-400 animate-pulse'
                       : 'bg-amber-400 animate-pulse'
-                    : 'bg-slate-700';
+                    : 'bg-slate-300';
                   return (
                     <div
                       key={i}
@@ -155,10 +155,10 @@ export function ProcessingView({
                     key={i}
                     className={`flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${
                       isActive
-                        ? item.color === 'amber' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                          : item.color === 'blue'  ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
-                          : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                        : 'bg-slate-800 text-slate-500 border-slate-700'
+                        ? item.color === 'amber' ? 'bg-amber-500/20 text-amber-700 border-amber-500/40'
+                          : item.color === 'blue'  ? 'bg-blue-500/20 text-blue-700 border-blue-500/40'
+                          : 'bg-rose-500/20 text-rose-700 border-rose-500/40'
+                        : 'bg-slate-900/5 text-slate-500 border-slate-900/10'
                     }`}
                   >
                     {item.icon}
@@ -171,13 +171,13 @@ export function ProcessingView({
 
             {/* In-progress context banners */}
             {codeSubStep === 'validating' && validationIteration > 0 && (
-              <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-blue-500/10 text-blue-300 border border-blue-500/20">
+              <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-blue-500/10 text-blue-700 border border-blue-500/20">
                 <ShieldCheck size={13} className="shrink-0" />
                 Running `mvn compile` check — iteration {validationIteration} of {MAX_ITERATIONS}…
               </div>
             )}
             {codeSubStep === 'fixing' && validationIteration > 0 && (
-              <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-rose-500/10 text-rose-300 border border-rose-500/20">
+              <div className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-rose-500/10 text-rose-700 border border-rose-500/20">
                 <Wrench size={13} className="shrink-0" />
                 Applying fixes and re-outputting full codebase — iteration {validationIteration} of {MAX_ITERATIONS}…
               </div>
@@ -187,8 +187,8 @@ export function ProcessingView({
             {validationResult && (
               <div className={`flex items-start gap-2 text-xs px-3 py-2 rounded-lg border ${
                 validationResult.passed
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                  : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                  ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
+                  : 'bg-amber-500/10 text-amber-600 border-amber-500/20'
               }`}>
                 {validationResult.passed
                   ? <CheckCircle2 size={13} className="shrink-0 mt-0.5" />
@@ -205,9 +205,9 @@ export function ProcessingView({
 
             {/* Remaining error list when loop exhausted */}
             {validationResult && !validationResult.passed && validationResult.errors.length > 0 && (
-              <div className="bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 max-h-28 overflow-y-auto space-y-1">
+              <div className="glass-inset border border-slate-900/10 rounded-lg px-3 py-2 max-h-28 overflow-y-auto space-y-1">
                 {validationResult.errors.map((err, i) => (
-                  <p key={i} className="text-xs text-rose-300 font-mono leading-relaxed">• {err}</p>
+                  <p key={i} className="text-xs text-rose-700 font-mono leading-relaxed">• {err}</p>
                 ))}
               </div>
             )}
@@ -217,19 +217,19 @@ export function ProcessingView({
 
       {/* Live streaming output */}
       {activeStream && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-950/50">
-            <span className="text-xs font-medium text-slate-400">
+        <div className="glass rounded-2xl overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-900/10 glass-inset">
+            <span className="text-xs font-medium text-slate-600">
               {isCodeStep && codeSubStep === 'validating' ? 'Validation output' : 'Live output'}
             </span>
-            <span className="flex items-center gap-1.5 text-xs text-emerald-400">
+            <span className="flex items-center gap-1.5 text-xs text-emerald-600">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               Streaming
             </span>
           </div>
-          <div className="p-4 max-h-96 overflow-y-auto font-mono text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
+          <div className="p-4 max-h-96 overflow-y-auto font-mono text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
             {activeStream}
-            <span className="inline-block w-1.5 h-3.5 bg-indigo-400 animate-pulse ml-0.5 align-middle" />
+            <span className="inline-block w-1.5 h-3.5 bg-red-400 animate-pulse ml-0.5 align-middle" />
           </div>
         </div>
       )}

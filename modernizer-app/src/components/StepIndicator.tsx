@@ -1,7 +1,15 @@
 import { Check, Loader2, Clock } from 'lucide-react';
-import type { WorkflowStep } from '../types';
+import type { PatternId, WorkflowStep } from '../types';
 
-const STEPS: { id: WorkflowStep; label: string }[] = [
+/** Patterns that skip the reverse-engineering / analysis-review phase (direct upgrades). */
+const DIRECT_UPGRADE_PATTERNS: PatternId[] = [
+  'dotnet4-to-dotnet8',
+  'dotnet8-to-dotnet9',
+  'dotnet9-to-dotnet10',
+  'dotnet10-to-dotnet11',
+];
+
+const ALL_STEPS: { id: WorkflowStep; label: string }[] = [
   { id: 'upload', label: 'Upload' },
   { id: 'reverse-engineering', label: 'Reverse Engineer' },
   { id: 'brd-review', label: 'Analysis Review' },
@@ -11,23 +19,23 @@ const STEPS: { id: WorkflowStep; label: string }[] = [
   { id: 'complete', label: 'Complete' },
 ];
 
-const STEP_ORDER = STEPS.map((s) => s.id);
-
-function getStepIndex(step: WorkflowStep): number {
-  return STEP_ORDER.indexOf(step);
-}
-
 interface Props {
   currentStep: WorkflowStep;
+  pattern: PatternId | null;
   progress: number;
   progressMessage: string;
 }
 
-export function StepIndicator({ currentStep, progress, progressMessage }: Props) {
-  const currentIndex = getStepIndex(currentStep);
+export function StepIndicator({ currentStep, pattern, progress, progressMessage }: Props) {
+  const skipsReverseEngineering = pattern !== null && DIRECT_UPGRADE_PATTERNS.includes(pattern);
+  const STEPS = skipsReverseEngineering
+    ? ALL_STEPS.filter((s) => s.id !== 'reverse-engineering' && s.id !== 'brd-review')
+    : ALL_STEPS;
+  const STEP_ORDER = STEPS.map((s) => s.id);
+  const currentIndex = STEP_ORDER.indexOf(currentStep);
 
   return (
-    <div className="border-b border-slate-800 bg-slate-950/60 backdrop-blur">
+    <div className="glass-strong border-b border-slate-900/10">
       <div className="max-w-7xl mx-auto px-6 py-5">
         {/* Steps */}
         <div className="flex items-center gap-0">
@@ -40,7 +48,7 @@ export function StepIndicator({ currentStep, progress, progressMessage }: Props)
               <div key={step.id} className="flex items-center gap-0 flex-1 last:flex-none">
                 {/* Connector line before */}
                 {i > 0 && (
-                  <div className={`flex-1 h-px ${isComplete ? 'bg-indigo-500' : 'bg-slate-700'} transition-colors duration-500`} />
+                  <div className={`flex-1 h-px ${isComplete ? 'bg-red-500' : 'bg-slate-900/10'} transition-colors duration-500`} />
                 )}
 
                 {/* Step circle */}
@@ -48,9 +56,9 @@ export function StepIndicator({ currentStep, progress, progressMessage }: Props)
                   <div
                     className={`
                       w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold transition-all duration-300 shrink-0
-                      ${isComplete ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/40' : ''}
-                      ${isCurrent ? 'bg-indigo-500/20 border-2 border-indigo-500 text-indigo-300 pulse-glow' : ''}
-                      ${isPending ? 'bg-slate-800 border border-slate-700 text-slate-600' : ''}
+                      ${isComplete ? 'bg-red-600 text-white shadow-md shadow-red-500/40' : ''}
+                      ${isCurrent ? 'bg-red-500/20 border-2 border-red-500 text-red-700 pulse-glow' : ''}
+                      ${isPending ? 'bg-slate-900/5 border border-slate-900/10 text-slate-600' : ''}
                     `}
                   >
                     {isComplete ? (
@@ -62,7 +70,7 @@ export function StepIndicator({ currentStep, progress, progressMessage }: Props)
                     )}
                   </div>
                   <span className={`text-[10px] mt-1.5 font-medium whitespace-nowrap ${
-                    isCurrent ? 'text-indigo-300' : isComplete ? 'text-slate-300' : 'text-slate-600'
+                    isCurrent ? 'text-red-700' : isComplete ? 'text-slate-700' : 'text-slate-600'
                   }`}>
                     {step.label}
                   </span>
@@ -79,9 +87,9 @@ export function StepIndicator({ currentStep, progress, progressMessage }: Props)
               <span>{progressMessage || 'Processing…'}</span>
               <span>{progress}%</span>
             </div>
-            <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+            <div className="h-1.5 bg-slate-900/5 rounded-full overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500"
+                className="h-full bg-gradient-to-r from-red-500 to-red-700 rounded-full transition-all duration-500"
                 style={{ width: `${progress}%` }}
               />
             </div>

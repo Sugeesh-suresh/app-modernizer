@@ -17,7 +17,7 @@ def parse_generated_files(raw: str, target_lang: str = "java") -> List[Generated
         files.append(GeneratedFile(path=path, content=code, language=lang))
 
     if not files:
-        ext = {"go": "go", "java": "java", "kotlin": "kt"}.get(target_lang.lower(), "txt")
+        ext = {"go": "go", "java": "java", "kotlin": "kt", "csharp": "cs"}.get(target_lang.lower(), "txt")
         files.append(GeneratedFile(
             path=f"output.{ext}",
             content=raw.strip(),

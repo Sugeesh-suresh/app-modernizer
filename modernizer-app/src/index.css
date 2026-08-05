@@ -10,13 +10,43 @@
 
 body {
   margin: 0;
-  background: #0f1117;
-  color: #e2e8f0;
+  color: #1e293b;
   font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  background-color: #ffffff;
+  background-image:
+    radial-gradient(1100px 700px at 12% -10%, rgba(225, 29, 42, 0.10), transparent 60%),
+    radial-gradient(900px 700px at 112% 8%, rgba(153, 27, 27, 0.09), transparent 55%),
+    radial-gradient(900px 800px at 50% 115%, rgba(225, 29, 42, 0.06), transparent 55%),
+    linear-gradient(180deg, #ffffff 0%, #fbf6f6 45%, #ffffff 100%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+  min-height: 100vh;
 }
 
 #root {
   min-height: 100vh;
+}
+
+/* ── Liquid glass surfaces ──────────────────────────────────────────────── */
+
+.glass {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 8px 32px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.glass-strong {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+.glass-inset {
+  background: rgba(15, 23, 42, 0.03);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 @keyframes shimmer {
@@ -25,14 +55,14 @@ body {
 }
 
 .shimmer {
-  background: linear-gradient(90deg, #1e2130 25%, #2a2d3e 50%, #1e2130 75%);
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }
 
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 8px rgba(99, 102, 241, 0.3); }
-  50% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.7); }
+  0%, 100% { box-shadow: 0 0 8px rgba(225, 29, 42, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(225, 29, 42, 0.7); }
 }
 
 .pulse-glow {
@@ -52,9 +82,9 @@ body {
 
 /* Smooth scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #1a1d2e; }
-::-webkit-scrollbar-thumb { background: #3b3f5c; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #4f537a; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
 /* Code block overrides */
 pre { margin: 0 !important; border-radius: 8px !important; }

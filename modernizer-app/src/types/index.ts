@@ -1,4 +1,14 @@
-export type PatternId = 'java17-to-java25' | 'java-to-go' | 'java-to-quarkus' | 'tibco-to-springboot';
+export type PatternId =
+  | 'java11-to-java25'
+  | 'java17-to-java25'
+  | 'java-to-go'
+  | 'java-to-quarkus'
+  | 'tibco-to-springboot'
+  | 'dotnet4-to-dotnet8'
+  | 'dotnet8-to-dotnet9'
+  | 'dotnet9-to-dotnet10'
+  | 'dotnet10-to-dotnet11'
+  | 'dotnet-to-java';
 
 export type WorkflowStep =
   | 'upload'
@@ -60,6 +70,8 @@ export interface WorkflowState {
   validationIteration: number;
   /** Final validation result, set when validation-complete fires */
   validationResult: ValidationResult | null;
+  /** reporter_agent's closing summary (java11-to-java25 only), set when report-ready fires */
+  finalReport: string;
   error: string | null;
 }
 
