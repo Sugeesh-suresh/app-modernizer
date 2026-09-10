@@ -1,21 +1,15 @@
 import { Check, Loader2, Clock } from 'lucide-react';
 import type { PatternId, WorkflowStep } from '../types';
 
-/** Patterns that skip the reverse-engineering / analysis-review phase (direct upgrades). */
-const DIRECT_UPGRADE_PATTERNS: PatternId[] = [
-  'dotnet4-to-dotnet8',
-  'dotnet8-to-dotnet9',
-  'dotnet9-to-dotnet10',
-  'dotnet10-to-dotnet11',
-];
-
 const ALL_STEPS: { id: WorkflowStep; label: string }[] = [
   { id: 'upload', label: 'Upload' },
+  { id: 'dependency-graph', label: 'Dependency Graph' },
+  { id: 'companion-selection', label: 'Additional Migrations' },
   { id: 'reverse-engineering', label: 'Reverse Engineer' },
   { id: 'brd-review', label: 'Analysis Review' },
   { id: 'plan-generation', label: 'Plan' },
   { id: 'plan-review', label: 'Plan Review' },
-  { id: 'code-generation', label: 'Generate Code' },
+  { id: 'code-generation', label: 'Migrate & Build' },
   { id: 'complete', label: 'Complete' },
 ];
 
@@ -24,13 +18,14 @@ interface Props {
   pattern: PatternId | null;
   progress: number;
   progressMessage: string;
+  /** Steps to omit from the rail — e.g. 'companion-selection' when no
+   * companion migrations were recommended for this session, so the rail
+   * doesn't show a step that will never actually fire. */
+  skipSteps?: WorkflowStep[];
 }
 
-export function StepIndicator({ currentStep, pattern, progress, progressMessage }: Props) {
-  const skipsReverseEngineering = pattern !== null && DIRECT_UPGRADE_PATTERNS.includes(pattern);
-  const STEPS = skipsReverseEngineering
-    ? ALL_STEPS.filter((s) => s.id !== 'reverse-engineering' && s.id !== 'brd-review')
-    : ALL_STEPS;
+export function StepIndicator({ currentStep, progress, progressMessage, skipSteps = [] }: Props) {
+  const STEPS = ALL_STEPS.filter((s) => !skipSteps.includes(s.id));
   const STEP_ORDER = STEPS.map((s) => s.id);
   const currentIndex = STEP_ORDER.indexOf(currentStep);
 
@@ -81,7 +76,7 @@ export function StepIndicator({ currentStep, pattern, progress, progressMessage 
         </div>
 
         {/* Progress bar */}
-        {currentStep !== 'upload' && currentStep !== 'complete' && currentStep !== 'brd-review' && currentStep !== 'plan-review' && currentStep !== 'error' && (
+        {currentStep !== 'upload' && currentStep !== 'dependency-graph' && currentStep !== 'companion-selection' && currentStep !== 'complete' && currentStep !== 'brd-review' && currentStep !== 'plan-review' && currentStep !== 'error' && (
           <div className="mt-4">
             <div className="flex items-center justify-between text-xs text-slate-500 mb-1.5">
               <span>{progressMessage || 'Processing…'}</span>

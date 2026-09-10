@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckCircle2, MessageSquare, GitBranch, Loader2, Pencil, Eye, Download } from 'lucide-react';
+import { CheckCircle2, MessageSquare, GitBranch, Loader2, Pencil, Eye, Download, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { planDownloadUrl } from '../api';
@@ -7,11 +7,21 @@ import { planDownloadUrl } from '../api';
 interface Props {
   sessionId: string;
   plan: string;
+  refining: boolean;
+  refiningContent: string;
   onConfirm: (content: string, feedback?: string) => Promise<void>;
+  onRefine: (feedback: string) => Promise<void>;
 }
 
-export function PlanReview({ sessionId, plan, onConfirm }: Props) {
+export function PlanReview({ sessionId, plan, refining, refiningContent, onConfirm, onRefine }: Props) {
+  // Reset the editable draft whenever a freshly (re)generated plan arrives —
+  // adjusting state during render per https://react.dev/learn/you-might-not-need-an-effect
+  const [prevPlan, setPrevPlan] = useState(plan);
   const [editedContent, setEditedContent] = useState(plan);
+  if (plan !== prevPlan) {
+    setPrevPlan(plan);
+    setEditedContent(plan);
+  }
   const [editMode, setEditMode] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [showFeedback, setShowFeedback] = useState(false);
@@ -20,6 +30,12 @@ export function PlanReview({ sessionId, plan, onConfirm }: Props) {
   const handleConfirm = async () => {
     setConfirming(true);
     await onConfirm(editedContent, feedback || undefined);
+  };
+
+  const handleRefine = async () => {
+    if (!feedback.trim()) return;
+    await onRefine(feedback);
+    setFeedback('');
   };
 
   return (
@@ -109,11 +125,31 @@ export function PlanReview({ sessionId, plan, onConfirm }: Props) {
         </button>
       )}
 
+      {/* Refining preview */}
+      {refining && (
+        <div className="glass rounded-2xl overflow-hidden mb-4">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-900/10 glass-inset">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
+              <Sparkles size={13} className="text-violet-600" />
+              Planner is revising the plan…
+            </span>
+            <span className="flex items-center gap-1.5 text-xs text-emerald-600">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Streaming
+            </span>
+          </div>
+          <div className="p-4 max-h-64 overflow-y-auto font-mono text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
+            {refiningContent}
+            <span className="inline-block w-1.5 h-3.5 bg-red-400 animate-pulse ml-0.5 align-middle" />
+          </div>
+        </div>
+      )}
+
       {/* Action */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={handleConfirm}
-          disabled={confirming}
+          disabled={confirming || refining}
           className="flex items-center gap-2 bg-red-600 hover:bg-red-500 disabled:bg-slate-900/5 disabled:text-slate-500 text-white font-semibold px-6 py-3 rounded-xl transition-colors text-sm shadow-lg shadow-red-500/25 cursor-pointer disabled:cursor-not-allowed"
         >
           {confirming ? (
@@ -121,10 +157,19 @@ export function PlanReview({ sessionId, plan, onConfirm }: Props) {
           ) : (
             <CheckCircle2 size={16} />
           )}
-          {confirming ? 'Confirming…' : 'Confirm Plan & Generate Code'}
+          {confirming ? 'Confirming…' : 'Confirm Plan & Begin Migration'}
+        </button>
+        <button
+          onClick={handleRefine}
+          disabled={confirming || refining || !feedback.trim()}
+          title={!feedback.trim() ? 'Add feedback above first' : undefined}
+          className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-900/5 disabled:text-slate-500 text-white font-semibold px-5 py-3 rounded-xl transition-colors text-sm cursor-pointer disabled:cursor-not-allowed"
+        >
+          {refining ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+          {refining ? 'Refining…' : 'Refine with Planner'}
         </button>
         <p className="text-xs text-slate-500">
-          AI will now generate the migrated codebase
+          Refine re-runs the planner with your feedback; Confirm begins the actual migration.
         </p>
       </div>
     </div>

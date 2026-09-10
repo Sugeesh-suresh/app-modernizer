@@ -41,12 +41,12 @@ A single-page React application that guides users through the full modernization
 - Show a step-by-step progress indicator across the full pipeline
 - Provide an **Analysis Review** screen with two editable panels:
   - **BRD tab** — review and edit the AI-generated Business Requirements Document
-  - **Technical Specification tab** — review Mermaid dependency graphs, API contracts, data models, and migration impact matrix
+  - **Technical Specification tab** — review the dependency graph and migration groups, API contracts, data models, and migration impact matrix (diagrams are plain-text trees and tables — no diagram library)
 - Allow uploading additional context files (Swagger, OpenAPI specs, design diagrams) to enrich plan generation
 - Show the **Migration Plan** for review and approval before code generation begins
 - Display the final generated code files in a syntax-highlighted file browser with download support
 
-**Tech stack:** React 18, TypeScript, Vite, Tailwind CSS, react-markdown, Mermaid, react-syntax-highlighter, Lucide icons
+**Tech stack:** React 18, TypeScript, Vite, Tailwind CSS, react-markdown, react-syntax-highlighter, Lucide icons
 
 ---
 
@@ -58,7 +58,7 @@ A Python FastAPI service that orchestrates a multi-step agentic pipeline. Each m
 - Receive and extract uploaded repository ZIP files
 - Create an ADK session to persist state across the full pipeline
 - Run the agentic workflow as a background task:
-  1. **Reverse Engineering** *(rewrite patterns only)* — analyse the source code and produce Analysis + BRD + Technical Specification (with Mermaid diagrams) in a single Gemini call
+  1. **Reverse Engineering** *(rewrite patterns only)* — analyse the source code and produce Analysis + BRD + Technical Specification (with plain-text diagrams and tables) in a single Gemini call
   2. **Analysis Review (HITL)** *(rewrite patterns only)* — pause and wait for human confirmation of BRD and Technical Spec
   3. **Plan Generation** — generate a detailed `plan.md` (direct-upgrade patterns work straight from the uploaded source; rewrite patterns use the confirmed BRD, Technical Spec, and any uploaded context files)
   4. **Plan Review (HITL)** — pause and wait for human confirmation of the migration plan
@@ -186,7 +186,7 @@ app-modernizer/
 │   │       ├── FileUpload.tsx
 │   │       ├── StepIndicator.tsx
 │   │       ├── ProcessingView.tsx
-│   │       ├── BRDReview.tsx        # Two-tab editor with Mermaid rendering
+│   │       ├── BRDReview.tsx        # Tabbed editor with plain-text diagram rendering
 │   │       ├── PlanReview.tsx
 │   │       └── CodeOutput.tsx
 │   └── package.json

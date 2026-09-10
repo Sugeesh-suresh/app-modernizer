@@ -1,37 +1,36 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   CheckCircle2, MessageSquare, FileText, Loader2, Pencil, Eye,
-  Download, Paperclip, X, AlertCircle, Network,
+  Download, Paperclip, X, AlertCircle, Network, Sparkles, ClipboardList,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import mermaid from 'mermaid';
 import { brdDownloadUrl, uploadContextFiles } from '../api';
 
-// ── Mermaid renderer ─────────────────────────────────────────────────────────
+// ── Plain-text diagram renderer ──────────────────────────────────────────────
+// Diagrams (class trees, business flows, the dependency graph) arrive as fenced
+// ```text blocks and render verbatim in monospace — no diagram library, so
+// nothing can fail at render time. Legacy ```mermaid blocks (older sessions, or
+// a model slip) are shown as their source instead of being rendered.
 
-mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
+const DIAGRAM_LANGS = new Set(['text', 'diagram', 'ascii', 'mermaid']);
 
-let _mermaidId = 0;
-
-function MermaidDiagram({ chart }: { chart: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const id = useRef(`mermaid-${++_mermaidId}`);
-
-  useEffect(() => {
-    if (!ref.current) return;
-    mermaid.render(id.current, chart)
-      .then(({ svg }) => { if (ref.current) ref.current.innerHTML = svg; })
-      .catch(() => {
-        if (ref.current)
-          ref.current.innerHTML = `<pre class="text-xs text-slate-600 p-3 overflow-x-auto">${chart}</pre>`;
-      });
-  }, [chart]);
-
-  return <div ref={ref} className="my-4 flex justify-center overflow-x-auto glass-inset border border-slate-900/10 rounded-lg p-3" />;
+function DiagramBlock({ source, legacyMermaid }: { source: string; legacyMermaid: boolean }) {
+  return (
+    <figure className="not-prose my-4 glass-inset border border-slate-900/10 rounded-lg overflow-hidden">
+      {legacyMermaid && (
+        <figcaption className="px-3 py-1.5 text-[10px] text-slate-500 border-b border-slate-900/10">
+          Mermaid diagram source (diagram rendering is disabled)
+        </figcaption>
+      )}
+      <pre className="m-0 p-4 overflow-x-auto font-mono text-xs leading-relaxed text-slate-800 whitespace-pre">
+        {source}
+      </pre>
+    </figure>
+  );
 }
 
-// ── Markdown renderer with Mermaid support ────────────────────────────────────
+// ── Markdown renderer with plain-text diagram support ────────────────────────
 
 const PROSE_CLS = `prose prose-invert prose-sm max-w-none
   prose-headings:text-slate-900 prose-headings:font-semibold
@@ -45,17 +44,29 @@ const PROSE_CLS = `prose prose-invert prose-sm max-w-none
   prose-table:text-slate-700 prose-th:text-slate-800
   prose-td:border-slate-900/10 prose-th:border-slate-900/15`;
 
-function MarkdownWithMermaid({ content }: { content: string }) {
+function MarkdownWithDiagrams({ content }: { content: string }) {
   return (
     <div className={PROSE_CLS}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          code({ className, children }) {
-            const lang = (className ?? '').replace('language-', '');
-            const text = String(children).replace(/\n$/, '');
-            if (lang === 'mermaid') return <MermaidDiagram chart={text} />;
-            return <code className={className}>{children}</code>;
+          pre({ node, children }) {
+            const code = node?.children[0];
+            if (code?.type === 'element' && code.tagName === 'code') {
+              const classes = code.properties.className;
+              const langClass = Array.isArray(classes)
+                ? classes.map(String).find((c) => c.startsWith('language-'))
+                : undefined;
+              const lang = langClass?.slice('language-'.length) ?? '';
+              if (DIAGRAM_LANGS.has(lang)) {
+                const source = code.children
+                  .map((c) => (c.type === 'text' ? c.value : ''))
+                  .join('')
+                  .replace(/\n$/, '');
+                return <DiagramBlock source={source} legacyMermaid={lang === 'mermaid'} />;
+              }
+            }
+            return <pre>{children}</pre>;
           },
         }}
       >
@@ -84,17 +95,31 @@ interface Props {
   sessionId: string;
   brd: string;
   technicalSpec: string;
+  testInventory: string;
+  refining: boolean;
+  refiningContent: string;
   onConfirm: (brdContent: string, techSpecContent: string, feedback?: string) => Promise<void>;
+  onRefine: (feedback: string) => Promise<void>;
 }
 
-type ActiveTab = 'brd' | 'techspec';
+type ActiveTab = 'brd' | 'techspec' | 'tests';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function BRDReview({ sessionId, brd, technicalSpec, onConfirm }: Props) {
+export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refining, refiningContent, onConfirm, onRefine }: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('brd');
+  // Reset the editable drafts whenever freshly (re)generated content arrives —
+  // adjusting state during render per https://react.dev/learn/you-might-not-need-an-effect
+  const [prevBrd, setPrevBrd] = useState(brd);
+  const [prevTechnicalSpec, setPrevTechnicalSpec] = useState(technicalSpec);
   const [brdContent, setBrdContent] = useState(brd);
   const [techSpecContent, setTechSpecContent] = useState(technicalSpec);
+  if (brd !== prevBrd || technicalSpec !== prevTechnicalSpec) {
+    setPrevBrd(brd);
+    setPrevTechnicalSpec(technicalSpec);
+    setBrdContent(brd);
+    setTechSpecContent(technicalSpec);
+  }
   const [brdEditMode, setBrdEditMode] = useState(false);
   const [techEditMode, setTechEditMode] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -128,6 +153,12 @@ export function BRDReview({ sessionId, brd, technicalSpec, onConfirm }: Props) {
   const handleConfirm = async () => {
     setConfirming(true);
     await onConfirm(brdContent, techSpecContent, feedback || undefined);
+  };
+
+  const handleRefine = async () => {
+    if (!feedback.trim()) return;
+    await onRefine(feedback);
+    setFeedback('');
   };
 
   const formatBytes = (b: number) =>
@@ -170,7 +201,16 @@ export function BRDReview({ sessionId, brd, technicalSpec, onConfirm }: Props) {
         >
           <Network size={14} />
           Technical Specification
-          {technicalSpec && <span className="text-xs opacity-70 ml-1">+ Dependency Graphs</span>}
+          {technicalSpec && <span className="text-xs opacity-70 ml-1">+ Dependency Graph</span>}
+        </button>
+        <button
+          onClick={() => setActiveTab('tests')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            activeTab === 'tests' ? 'bg-emerald-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <ClipboardList size={14} />
+          Existing Test Cases
         </button>
       </div>
 
@@ -209,7 +249,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, onConfirm }: Props) {
             />
           ) : (
             <div className="p-6 max-h-[62vh] overflow-y-auto">
-              <MarkdownWithMermaid content={brdContent} />
+              <MarkdownWithDiagrams content={brdContent} />
             </div>
           )}
         </div>
@@ -222,7 +262,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, onConfirm }: Props) {
             <div className="flex items-center gap-2">
               <span className="text-xs font-medium text-slate-600">technical-spec.md</span>
               <span className="text-[10px] text-violet-600 bg-violet-400/10 border border-violet-400/20 rounded-full px-2 py-0.5">
-                Includes Mermaid Diagrams
+                Includes Diagrams
               </span>
             </div>
             <button
@@ -243,11 +283,29 @@ export function BRDReview({ sessionId, brd, technicalSpec, onConfirm }: Props) {
           ) : (
             <div className="p-6 max-h-[62vh] overflow-y-auto">
               {techSpecContent
-                ? <MarkdownWithMermaid content={techSpecContent} />
+                ? <MarkdownWithDiagrams content={techSpecContent} />
                 : <p className="text-slate-600 text-sm italic">Technical specification not available.</p>
               }
             </div>
           )}
+        </div>
+      )}
+
+      {/* Existing Test Inventory Panel */}
+      {activeTab === 'tests' && (
+        <div className="glass rounded-2xl overflow-hidden mb-6">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-900/10 glass-inset">
+            <span className="text-xs font-medium text-slate-600">test-inventory.md</span>
+            <span className="text-[10px] text-emerald-600 bg-emerald-400/10 border border-emerald-400/20 rounded-full px-2 py-0.5">
+              Read-only
+            </span>
+          </div>
+          <div className="p-6 max-h-[62vh] overflow-y-auto">
+            {testInventory
+              ? <MarkdownWithDiagrams content={testInventory} />
+              : <p className="text-slate-600 text-sm italic">No existing test inventory was generated for this repository.</p>
+            }
+          </div>
         </div>
       )}
 
@@ -337,18 +395,47 @@ export function BRDReview({ sessionId, brd, technicalSpec, onConfirm }: Props) {
         </button>
       )}
 
+      {/* Refining preview */}
+      {refining && (
+        <div className="glass rounded-2xl overflow-hidden mb-4">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-900/10 glass-inset">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
+              <Sparkles size={13} className="text-violet-600" />
+              Planner is revising the analysis…
+            </span>
+            <span className="flex items-center gap-1.5 text-xs text-emerald-600">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Streaming
+            </span>
+          </div>
+          <div className="p-4 max-h-64 overflow-y-auto font-mono text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
+            {refiningContent}
+            <span className="inline-block w-1.5 h-3.5 bg-red-400 animate-pulse ml-0.5 align-middle" />
+          </div>
+        </div>
+      )}
+
       {/* Confirm */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={handleConfirm}
-          disabled={confirming || anyUploading}
+          disabled={confirming || refining || anyUploading}
           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-900/5 disabled:text-slate-500 text-white font-semibold px-6 py-3 rounded-xl transition-colors text-sm shadow-lg shadow-emerald-500/20 cursor-pointer disabled:cursor-not-allowed"
         >
           {confirming ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
           {confirming ? 'Confirming…' : 'Confirm Analysis & Generate Plan'}
         </button>
+        <button
+          onClick={handleRefine}
+          disabled={confirming || refining || anyUploading || !feedback.trim()}
+          title={!feedback.trim() ? 'Add feedback above first' : undefined}
+          className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-900/5 disabled:text-slate-500 text-white font-semibold px-5 py-3 rounded-xl transition-colors text-sm cursor-pointer disabled:cursor-not-allowed"
+        >
+          {refining ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+          {refining ? 'Refining…' : 'Refine with Planner'}
+        </button>
         <p className="text-xs text-slate-500">
-          {anyUploading ? 'Waiting for file uploads to finish…' : 'Triggers AI plan generation using BRD + Technical Spec'}
+          {anyUploading ? 'Waiting for file uploads to finish…' : 'Refine re-runs the planner with your feedback; Confirm advances to plan generation.'}
         </p>
       </div>
     </div>

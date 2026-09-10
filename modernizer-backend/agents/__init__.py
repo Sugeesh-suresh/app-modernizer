@@ -1,47 +1,47 @@
 """
 ADK agent registry for the App Modernizer.
 
-Each pattern normally has 3 runners: re (reverse-engineering + BRD +
-TechSpec), plan, and code. The BRD is generated inside the RE step.
+All 4 patterns share one shape: `re` (reverse-engineering -> Analysis/BRD/
+TechSpec/Test Inventory) -> HITL brd-review -> `plan` (from confirmed BRD/
+TechSpec) -> HITL plan-review -> code generation on a real per-session
+workspace directory (modifier -> LoopAgent(validate, fix) -> reporter).
 
-Direct-upgrade patterns (e.g. dotnet4-to-dotnet8) omit the "re" runner
-entirely — main.py's workflow detects this and skips the reverse-
-engineering / BRD-review phase, going straight from upload to plan
-generation using the raw source code.
+java-8-to-25 is the one exception on the code-generation side: the user
+chooses a "bigbang" or "incremental" strategy before upload, so its code
+phase is registered as several runners instead of one -- `code_bigbang`
+for a single-pass migration straight to Java 25, or `code_stage_1`..
+`code_stage_8` for the phased staged builds (Readiness -> Java 17 ->
+Spring Boot 2.7 -> 3.x -> Java 25 -> Spring Boot 4.x -> executable JAR;
+the Spring Boot stages only run when requested) plus separate incremental reviewer/
+reporter/curator runners that work across every stage (see
+agents/java_8_to_25/agents.py's INCREMENTAL_STAGES and main.py's
+_run_java8_incremental_code_step for the orchestration).
 """
 import os
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 
-from .java11_to_java25.agents import (
-    plan_pipeline as j11_plan_pipeline, code_pipeline as j11_code_pipeline,
+from .java_8_to_25.agents import (
+    re_agent as j8_re,
+    planner_agent as j8_plan,
+    code_pipeline_bigbang as j8_code_bigbang,
+    INCREMENTAL_STAGES as j8_incremental_stages,
+    STAGE_PIPELINES as j8_stage_pipelines,
+    incremental_code_reviewer_agent as j8_incremental_code_reviewer,
+    incremental_reporter_agent as j8_incremental_reporter,
+    incremental_skill_curator_agent as j8_incremental_skill_curator,
 )
-from .java17_to_java25.agents import (
-    re_agent as j17_re, plan_agent as j17_plan, code_agent as j17_code,
+from .solr_4_to_9.agents import (
+    re_agent as solr_re, planner_agent as solr_plan, code_pipeline as solr_code,
 )
-from .java_to_go.agents import (
-    re_agent as go_re, plan_agent as go_plan, code_agent as go_code,
+from .oracle_19c_to_23ai.agents import (
+    re_agent as oracle_re, planner_agent as oracle_plan, code_pipeline as oracle_code,
 )
-from .java_to_quarkus.agents import (
-    re_agent as qk_re, plan_agent as qk_plan, code_pipeline as qk_code_pipeline,
+from .tibco_ems_to_pubsub.agents import (
+    re_agent as tibco_ems_re, planner_agent as tibco_ems_plan, code_pipeline as tibco_ems_code,
 )
-from .tibco_to_springboot.agents import (
-    re_agent as tibco_re, plan_agent as tibco_plan, code_agent as tibco_code,
-)
-from .dotnet4_to_dotnet8.agents import (
-    plan_agent as net8_plan, code_agent as net8_code,
-)
-from .dotnet8_to_dotnet9.agents import (
-    plan_agent as net9_plan, code_agent as net9_code,
-)
-from .dotnet9_to_dotnet10.agents import (
-    plan_agent as net10_plan, code_agent as net10_code,
-)
-from .dotnet10_to_dotnet11.agents import (
-    plan_agent as net11_plan, code_agent as net11_code,
-)
-from .dotnet_to_java.agents import (
-    re_agent as netjava_re, plan_agent as netjava_plan, code_agent as netjava_code,
+from .jsp_to_react_bff.agents import (
+    re_pipeline as jsp_re_pipeline, planner_agent as jsp_plan, code_pipeline as jsp_code,
 )
 
 APP_NAME = "modernizer"
@@ -60,67 +60,44 @@ def _runner(agent) -> Runner:
 
 
 PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
-    "java11-to-java25": {
-        # No "re" runner — direct upgrade pattern, skips reverse-engineering / BRD review.
-        "plan": _runner(j11_plan_pipeline),  # SequentialAgent: scanner_agent -> planner_agent
-        "code": _runner(j11_code_pipeline),  # SequentialAgent: modifier_agent -> LoopAgent(validate, fix, max=3) -> reporter_agent
+    "java-8-to-25": {
+        "re": _runner(j8_re),
+        "plan": _runner(j8_plan),
+        "code_bigbang": _runner(j8_code_bigbang),
+        **{
+            f"code_stage_{stage.idx}": _runner(pipeline)
+            for stage, pipeline in zip(j8_incremental_stages, j8_stage_pipelines)
+        },
+        "incremental_code_reviewer": _runner(j8_incremental_code_reviewer),
+        "incremental_reporter": _runner(j8_incremental_reporter),
+        "incremental_skill_curator": _runner(j8_incremental_skill_curator),
     },
-    "java17-to-java25": {
-        "re":   _runner(j17_re),
-        "plan": _runner(j17_plan),
-        "code": _runner(j17_code),
+    "solr-4-to-9": {
+        "re": _runner(solr_re),
+        "plan": _runner(solr_plan),
+        "code": _runner(solr_code),
     },
-    "java-to-go": {
-        "re":   _runner(go_re),
-        "plan": _runner(go_plan),
-        "code": _runner(go_code),
+    "oracle-19c-to-23ai": {
+        "re": _runner(oracle_re),
+        "plan": _runner(oracle_plan),
+        "code": _runner(oracle_code),
     },
-    "java-to-quarkus": {
-        "re":   _runner(qk_re),
-        "plan": _runner(qk_plan),
-        "code": _runner(qk_code_pipeline),  # SequentialAgent: code → LoopAgent(validate, fix, max=4)
+    "tibco-ems-to-pubsub": {
+        "re": _runner(tibco_ems_re),
+        "plan": _runner(tibco_ems_plan),
+        "code": _runner(tibco_ems_code),
     },
-    "tibco-to-springboot": {
-        "re":   _runner(tibco_re),
-        "plan": _runner(tibco_plan),
-        "code": _runner(tibco_code),
-    },
-    "dotnet4-to-dotnet8": {
-        # No "re" runner — direct upgrade pattern, skips reverse-engineering / BRD review.
-        "plan": _runner(net8_plan),
-        "code": _runner(net8_code),
-    },
-    "dotnet8-to-dotnet9": {
-        # No "re" runner — direct upgrade pattern, skips reverse-engineering / BRD review.
-        "plan": _runner(net9_plan),
-        "code": _runner(net9_code),
-    },
-    "dotnet9-to-dotnet10": {
-        # No "re" runner — direct upgrade pattern, skips reverse-engineering / BRD review.
-        "plan": _runner(net10_plan),
-        "code": _runner(net10_code),
-    },
-    "dotnet10-to-dotnet11": {
-        # No "re" runner — direct upgrade pattern, skips reverse-engineering / BRD review.
-        "plan": _runner(net11_plan),
-        "code": _runner(net11_code),
-    },
-    "dotnet-to-java": {
-        "re":   _runner(netjava_re),
-        "plan": _runner(netjava_plan),
-        "code": _runner(netjava_code),
+    "jsp-to-react-bff": {
+        "re": _runner(jsp_re_pipeline),  # SequentialAgent: jsp_re_agent -> jsp_classifier_agent
+        "plan": _runner(jsp_plan),
+        "code": _runner(jsp_code),  # SequentialAgent: backend_generator -> frontend_generator -> LoopAgent(validate, fix) -> reporter
     },
 }
 
 TARGET_LANGS: dict[str, str] = {
-    "java11-to-java25":    "java",
-    "java17-to-java25":    "java",
-    "java-to-go":          "go",
-    "java-to-quarkus":     "java",
-    "tibco-to-springboot": "java",
-    "dotnet4-to-dotnet8":  "csharp",
-    "dotnet8-to-dotnet9":  "csharp",
-    "dotnet9-to-dotnet10": "csharp",
-    "dotnet10-to-dotnet11": "csharp",
-    "dotnet-to-java":      "java",
+    "java-8-to-25": "java",
+    "solr-4-to-9": "xml",
+    "oracle-19c-to-23ai": "sql",
+    "tibco-ems-to-pubsub": "java",
+    "jsp-to-react-bff": "tsx",
 }

@@ -29,3 +29,12 @@ GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 # Each cycle runs one validation agent call and (if validation fails) one fix
 # agent call.  Set to 0 to skip validation entirely.
 TEST_RETRY_ATTEMPTS: int = _int("TEST_RETRY_ATTEMPTS", 3)
+
+# ---------------------------------------------------------------------------
+# Build/validate/fix loop (all 4 workspace-based patterns)
+# ---------------------------------------------------------------------------
+
+# Maximum validate -> fix iterations per build_loop (per stage, for the
+# java-8-to-25 incremental strategy). The loop exits early as soon as
+# validator_agent calls signal_build_success.
+BUILD_LOOP_MAX_ITERATIONS: int = _int("BUILD_LOOP_MAX_ITERATIONS", 3)

@@ -1,16 +1,17 @@
 import { useRef, useState } from 'react';
 import { Upload, FolderOpen, FileCode2, X, ArrowLeft, Loader2 } from 'lucide-react';
-import type { PatternId } from '../types';
+import type { PatternId, JavaMigrationOptions } from '../types';
 import { PATTERNS } from '../data/patterns';
 import { uploadRepository } from '../api';
 
 interface Props {
   pattern: PatternId;
+  options?: JavaMigrationOptions | null;
   onSessionCreated: (sessionId: string) => void;
   onBack: () => void;
 }
 
-export function FileUpload({ pattern, onSessionCreated, onBack }: Props) {
+export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -21,7 +22,7 @@ export function FileUpload({ pattern, onSessionCreated, onBack }: Props) {
 
   const handleFile = (f: File) => {
     setError(null);
-    if (!f.name.endsWith('.zip') && !f.name.match(/\.(java|go|mod|gradle|xml|properties|yaml|yml|bwp|process|substvar|xsd|wsdl|xslt|xsl|cs|csproj|sln|config|razor|cshtml)$/)) {
+    if (!f.name.endsWith('.zip') && !f.name.match(/\.(java|gradle|kts|xml|properties|yaml|yml|json|sql|pks|pkb|ddl|plsql|bwp|process|substvar|conf|config|jsp|jspf|jspx|tag|tld)$/)) {
       setError('Please upload a .zip archive of your project or a single source file.');
       return;
     }
@@ -45,7 +46,7 @@ export function FileUpload({ pattern, onSessionCreated, onBack }: Props) {
     setUploading(true);
     setError(null);
     try {
-      const { session_id } = await uploadRepository(pattern, file);
+      const { session_id } = await uploadRepository(pattern, file, options);
       onSessionCreated(session_id);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
@@ -92,7 +93,7 @@ export function FileUpload({ pattern, onSessionCreated, onBack }: Props) {
         <input
           ref={fileRef}
           type="file"
-          accept=".zip,.java,.go,.mod,.xml,.gradle,.properties,.yaml,.yml,.bwp,.process,.substvar,.xsd,.wsdl,.xslt,.xsl,.cs,.csproj,.sln,.config,.razor,.cshtml"
+          accept=".zip,.java,.gradle,.kts,.xml,.properties,.yaml,.yml,.json,.sql,.pks,.pkb,.ddl,.plsql,.bwp,.process,.substvar,.conf,.config,.jsp,.jspf,.jspx,.tag,.tld"
           className="hidden"
           onChange={onInputChange}
         />
@@ -132,7 +133,7 @@ export function FileUpload({ pattern, onSessionCreated, onBack }: Props) {
               </button>
             </div>
             <p className="text-xs text-slate-600 mt-4">
-              Supported: .zip (recommended), .java, .go, .xml, .gradle, .bwp, .substvar, .xsd, .wsdl
+              Supported: .zip (recommended), .java, .xml, .gradle, .sql, .bwp, .substvar, .properties
             </p>
           </>
         )}
@@ -149,7 +150,12 @@ export function FileUpload({ pattern, onSessionCreated, onBack }: Props) {
       <div className="mt-6 glass rounded-xl p-4">
         <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">What happens next</p>
         <ol className="space-y-1.5">
-          {['AI reverse-engineers your codebase', 'You review and confirm the BRD', 'You review and confirm the migration plan', 'AI generates the fully migrated code'].map((s, i) => (
+          {[
+            'A deterministic scan builds a dependency graph & migration groups',
+            'AI reverse-engineers your codebase — BRD, tech spec & test inventory',
+            'You review, edit, or ask the planner to refine the BRD and plan',
+            'Migration agents apply the plan, then build/fix in a loop until it compiles',
+          ].map((s, i) => (
             <li key={i} className="flex items-start gap-2 text-xs text-slate-600">
               <span className="w-4 h-4 rounded-full bg-red-500/20 text-red-600 text-[10px] flex items-center justify-center shrink-0 mt-0.5">
                 {i + 1}

@@ -4,16 +4,16 @@ from enum import Enum
 
 
 class PatternType(str, Enum):
-    JAVA11_TO_JAVA25 = "java11-to-java25"
-    JAVA17_TO_JAVA25 = "java17-to-java25"
-    JAVA_TO_GO = "java-to-go"
-    JAVA_TO_QUARKUS = "java-to-quarkus"
-    TIBCO_TO_SPRINGBOOT = "tibco-to-springboot"
-    DOTNET4_TO_DOTNET8 = "dotnet4-to-dotnet8"
-    DOTNET8_TO_DOTNET9 = "dotnet8-to-dotnet9"
-    DOTNET9_TO_DOTNET10 = "dotnet9-to-dotnet10"
-    DOTNET10_TO_DOTNET11 = "dotnet10-to-dotnet11"
-    DOTNET_TO_JAVA = "dotnet-to-java"
+    JAVA_8_TO_25 = "java-8-to-25"
+    SOLR_4_TO_9 = "solr-4-to-9"
+    ORACLE_19C_TO_23AI = "oracle-19c-to-23ai"
+    TIBCO_EMS_TO_PUBSUB = "tibco-ems-to-pubsub"
+    JSP_TO_REACT_BFF = "jsp-to-react-bff"
+
+
+class MigrationStrategy(str, Enum):
+    BIGBANG = "bigbang"
+    INCREMENTAL = "incremental"
 
 
 class SessionStatus(str, Enum):
@@ -43,6 +43,20 @@ class ConfirmRequest(BaseModel):
     feedback: Optional[str] = None
     content: Optional[str] = None               # edited BRD text
     technical_spec_content: Optional[str] = None  # edited Technical Specification text
+
+
+class RefineRequest(BaseModel):
+    feedback: str
+
+
+class SelectCompanionsRequest(BaseModel):
+    selected: List[str] = []
+
+
+class ChangedFile(BaseModel):
+    path: str
+    status: str   # "added" | "modified" | "deleted"
+    diff: str
 
 
 class SessionInfo(BaseModel):
