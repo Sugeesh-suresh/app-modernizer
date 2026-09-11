@@ -130,14 +130,15 @@ INCREMENTAL_STAGES: list[IncrementalStage] = [
     IncrementalStage(
         7, 4, "Spring Boot 4 & Cloud Native", "Upgrade to Spring Boot 4.x", "25", True,
         ("springboot-war-to-boot4", "springboot-incremental-upgrade"),
-        "Keep `<packaging>war</packaging>` in this stage — the WAR → executable JAR conversion is the "
-        "next stage.",
+        "Keep `<packaging>war</packaging>` and the JSP views (with their JSP libraries) in this stage — "
+        "the executable JAR conversion and JSP → Thymeleaf are the next stage.",
     ),
     IncrementalStage(
         8, 4, "Spring Boot 4 & Cloud Native", "Convert WAR → Executable JAR (Embedded Container)", "25", True,
-        ("springboot-incremental-upgrade",),
+        ("springboot-war-to-boot4", "springboot-incremental-upgrade"),
         "Do not change the Java or Spring Boot versions — this stage only changes the packaging and "
-        "deployment model.",
+        "deployment model and converts JSP views to Thymeleaf. The result must be an executable JAR, "
+        "never a WAR.",
         build_goal="package",
     ),
 ]
@@ -202,10 +203,11 @@ modifier_agent = LlmAgent(
     instruction=(
         "Load and execute the `java-8-to-25-modify` skill to apply the confirmed migration plan "
         "to the files in the workspace, using the list_files, read_file and write_file tools. "
-        "If the plan's Spring Boot section targets Spring Boot 4 on an external servlet container "
-        "(WAR packaging preserved) rather than a standalone embedded-server JAR, also load and follow "
-        "the `springboot-war-to-boot4` skill for that portion of the plan — it supersedes the base "
-        "skill's generic Spring Boot guidance for that specific WAR/external-container case.\n\n"
+        "Spring Boot upgrade requested: {springboot_upgrade}. If true, also load and follow the "
+        "`springboot-war-to-boot4` skill for the plan's Spring Boot 4 Target section — the final state is "
+        "the newest Spring Boot 4.x as an executable JAR on an embedded Tomcat (never a WAR), with "
+        "Spring Data JPA, Thymeleaf instead of JSP, and every conflicting legacy library removed. It "
+        "supersedes the base skill's generic Spring Boot guidance.\n\n"
         "## Confirmed Migration Plan\n{plan}"
     ),
     tools=[
@@ -222,7 +224,12 @@ validator_agent = LlmAgent(
     name="validator_agent",
     model=_MODEL,
     description="Runs the real build (mvn/gradle compile) against the modified workspace and reports pass/fail as JSON.",
-    instruction="Load and execute the `java-8-to-25-validate` skill to build the workspace and report the result.",
+    instruction=(
+        "Load and execute the `java-8-to-25-validate` skill to build the workspace and report the result.\n\n"
+        "Spring Boot upgrade requested: {springboot_upgrade}. If true, run the `package` goal instead of "
+        "`compile` (`mvn -q -DskipTests package`, or `./gradlew assemble` for Gradle) so the executable "
+        "Spring Boot JAR is actually produced — a failed repackage is a failed build."
+    ),
     tools=[
         _skill("java-8-to-25-validate"),
         FunctionTool(fs_tools.run_command),
@@ -242,11 +249,14 @@ fixer_agent = LlmAgent(
     model=_MODEL,
     description="Reads the files implicated by validator_agent's build report and fixes them in place in the workspace.",
     instruction=(
-        "Load and execute the `java-8-to-25-fix` skill.\n\n"
+        "Load and execute the `java-8-to-25-fix` skill. For errors caused by the Spring Boot 4 migration "
+        "(dependencies, Jakarta namespace, Spring Data JPA, Thymeleaf, executable JAR packaging), also "
+        "load the `springboot-war-to-boot4` skill — fix within its target state, never by reverting to "
+        "a WAR or re-adding a removed conflicting library.\n\n"
         "## Build Report (errors to fix)\n{build_result}"
     ),
     tools=[
-        _skill("java-8-to-25-fix"),
+        _skills("java-8-to-25-fix", "springboot-war-to-boot4"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.read_file),
         FunctionTool(fs_tools.write_file),

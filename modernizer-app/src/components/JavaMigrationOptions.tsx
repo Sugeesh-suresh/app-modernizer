@@ -161,15 +161,13 @@ export function JavaMigrationOptions({ onContinue, onBack }: Props) {
             <div className="flex items-center gap-1.5">
               <Leaf size={14} className="text-slate-500" />
               <span className="text-sm font-medium text-slate-900">
-                {strategy === 'incremental'
-                  ? 'Upgrade Spring Boot (WAR → Boot 4 → executable JAR)'
-                  : 'Upgrade Spring Boot (javax → jakarta)'}
+                Upgrade to Spring Boot 4.x (executable JAR)
               </span>
             </div>
             <p className="text-xs text-slate-600 mt-0.5">
               {strategy === 'incremental'
-                ? 'Adds 4 steps: Spring Boot 2.7 (WAR intact) and 3.x (javax.* → jakarta.*) on Java 17 before the Java 25 step, then Spring Boot 4.x and an executable JAR on an embedded container.'
-                : 'Bumps Spring Boot to a current 3.x release and migrates javax.* imports to jakarta.* where found.'}
+                ? 'Adds 4 steps: Spring Boot 2.7 (WAR intact) and 3.x (javax.* → jakarta.*) on Java 17 before the Java 25 step, then Spring Boot 4.x with Spring Data JPA, and finally an executable JAR on an embedded container.'
+                : 'Moves to the latest Spring Boot 4.x as an executable JAR on an embedded container: javax.* → jakarta.*, Spring Data JPA, JSP → Thymeleaf, and conflicting libraries removed.'}
             </p>
           </div>
         </label>

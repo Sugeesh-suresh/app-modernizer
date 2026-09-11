@@ -18,7 +18,7 @@ Produce a concise markdown report, adapting the structure to which case you were
 # Migration Report: Java 8 → Java 25
 
 ## Summary
-One paragraph: what was migrated, which strategy was used, which phases ran, and the final outcome (build passing or not — for incremental, whether every stage that ran passed). For incremental runs, state the final deployment model (still a WAR on an external container, or a standalone executable JAR).
+One paragraph: what was migrated, which strategy was used, which phases ran, and the final outcome (build passing or not — for incremental, whether every stage that ran passed). When the Spring Boot upgrade ran, state the final deployment model — it should be a standalone executable JAR on Spring Boot 4.x; if the Modify/Build Results show it is still a WAR, report that as an unmet target.
 
 ## Build Status
 - Bigbang: final result PASSED or FAILED, from the Final Build Result JSON's `passed` field.
@@ -28,8 +28,8 @@ One paragraph: what was migrated, which strategy was used, which phases ran, and
 ## Changes Applied
 Summarise the files written and skipped from the Modify Result(s), grouped by category (build tooling, language modernisation, namespace migration, dependency bumps, JUnit migration, packaging / deployment) rather than repeating the raw list. For incremental, group by phase, then stage.
 
-## Deployment Impact (incremental runs with framework phases only)
-The runtime each framework stage requires (Tomcat 9 → 10.1 → 11 → standalone `java -jar`) and every container-provided resource the modifier flagged for ops (JNDI DataSources, context path, TLS, security realms).
+## Deployment Impact (runs with the Spring Boot upgrade only)
+The final runtime (standalone `java -jar` on an embedded Tomcat) and, for incremental runs, what each intermediate stage required (Tomcat 9 → 10.1 → 11). List every environment variable and container-provided resource the modifier flagged for ops (JNDI DataSources replaced by `spring.datasource.*`, context path, TLS, security realms), plus the conflicting libraries that were removed.
 
 ## Follow-up Recommendations
 Anything the automated pipeline could not verify and that should be checked manually before this is considered production-ready: test suite results (the build loop only compiles or packages, it does not run tests), runtime behaviour, performance, running the OpenRewrite dry runs that Stage 2 set up, and every manual follow-up the Modify Results listed.

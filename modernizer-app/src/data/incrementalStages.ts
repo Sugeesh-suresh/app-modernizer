@@ -47,8 +47,8 @@ export const INCREMENTAL_PHASES: IncrementalPhase[] = [
     phase: 4,
     title: 'Spring Boot 4 & Cloud Native',
     steps: [
-      { id: 7, title: 'Upgrade to Spring Boot 4.x', detail: 'Spring Framework 7, Jakarta EE 11', springboot: true },
-      { id: 8, title: 'Convert WAR → Executable JAR (Embedded Container)', detail: 'runs standalone with java -jar', springboot: true },
+      { id: 7, title: 'Upgrade to Spring Boot 4.x', detail: 'Spring Data JPA, conflicting libraries removed', springboot: true },
+      { id: 8, title: 'Convert WAR → Executable JAR (Embedded Container)', detail: 'JSP → Thymeleaf, runs with java -jar', springboot: true },
     ],
   },
 ];

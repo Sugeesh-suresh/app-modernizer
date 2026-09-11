@@ -7,6 +7,8 @@ You are a Java migration expert. Create a detailed `plan.md` for migrating this 
 
 Load `references/java8-to-java25-checklist.md` to identify every language-level, library, and tooling change needed for the full Java 8 → 25 jump.
 
+**Spring Boot target (both strategies):** when `{springboot_upgrade}` is true, the final state is always the newest **Spring Boot 4.x deployed as an executable JAR** with an embedded Tomcat — never a WAR — with Spring Data JPA for persistence, Thymeleaf instead of JSP, and every conflicting legacy library removed. The `springboot-war-to-boot4` skill defines it. Use the scanner's Packaging & Deployment Model and Persistence & View Layer repo facts to size that work, never to keep a WAR.
+
 The **Migration Strategy** input tells you which of the two plan shapes to produce:
 
 ## If Migration Strategy is "bigbang"
@@ -16,20 +18,27 @@ Produce a single-pass plan with this shape:
 # Migration Plan: Java 8 → Java 25 (Bigbang)
 
 ## Overview
-Current state (Java 8, build tool, framework versions) and target state (Java 25).
+Current state (Java 8, build tool, framework versions, packaging) and target state (Java 25; plus Spring Boot 4.x as an executable JAR if `{springboot_upgrade}` is true).
 ## Pre-requisites
 JDK 25 installation, Maven/Gradle plugin updates, IDE configuration.
 ## Dependency Upgrades
-Third-party library version matrix (from the checklist). If `{springboot_upgrade}` is true, add a framework version bump following the checklist's Spring Boot Version Bump section — state explicitly which path applies (Path A: embedded-server JAR, staying on Spring Boot 3.x; or Path B: WAR on an external servlet container, jumping to Spring Boot 4 / Jakarta EE 11 per the `springboot-war-to-boot4` skill) based on the scanner's Packaging & Deployment Model repo fact.
+Third-party library version matrix (from the checklist).
+## Spring Boot 4 Target (only if `{springboot_upgrade}` is true)
+Governed by the `springboot-war-to-boot4` skill. One checklist per item:
+- **Dependency cleanup:** the Spring Boot 4 parent/BOM and starters, and every conflicting legacy library to remove, listed by name with its replacement (explicit Spring versions, servlet API, JSTL, extra connection pools, Jackson 2 databind, old Hibernate / `javax` jars, extra logging bindings, WAR and external-container plugins)
+- **Configuration:** `web.xml` and Spring XML contexts → Java config / `application.yml`; properties files → `application.yml` with environment-variable placeholders for secrets
+- **Persistence:** DAO / Hibernate / JPA code → Spring Data JPA (entities, repositories, vendor-specific SQL kept verbatim as native queries), with the existing DAO interfaces kept
+- **Views:** JSP → Thymeleaf (unless the JSP views belong to a `jsp-to-react-bff` companion migration)
+- **Packaging:** WAR → executable JAR; container-provided resources (JNDI DataSource, context path, encoding and session settings) → Spring Boot properties
 ## Language Modernisation
 Every applicable item from the checklist's "Language Features Introduced Along the Way" table, in one combined phase.
 ## JUnit Migration (only if `{junit_upgrade}` is true)
 Per the checklist's JUnit 4 → 5 section.
 ## Validation & Rollout
-Real build validation happens automatically in build_loop (mvn/gradle compile, iterated with the fixer) — this section covers what's outside that: test suite run, rollback strategy.
+Real build validation happens automatically in the build loop (mvn/gradle compile — `package` when the Spring Boot upgrade is included, so the executable JAR is really built — iterated with the fixer). This section covers what's outside that: test suite run, the new deployment model (`java -jar` plus the environment variables ops must supply), rollback strategy.
 ## Estimated Effort
 ## File Change Manifest
-Every in-scope file path with the change type (language modernisation / namespace migration / dependency bump / no change needed).
+Every in-scope file path with the change type (language modernisation / namespace migration / dependency bump / Spring Boot 4 configuration / persistence / view conversion / packaging / delete / no change needed).
 
 ## If Migration Strategy is "incremental"
 
@@ -44,12 +53,12 @@ Stage headings are `## Stage <n>: <title>`. Use the titles below character for c
 
 **Why the JDK and Spring Boot stages interleave:** every stage must land on a supported JDK/framework combination. Spring Boot 2.7 supports Java 8–21, and Spring Boot 3.x needs Java 17+. So on Java 17 the framework moves to 2.7 and then to 3.x, *before* the jump to Java 25; Spring Boot 4 comes after it. Never plan a Spring Boot 2.x codebase on Java 25.
 
-**WAR → JAR is deliberate:** for the incremental strategy, the checklist's Path A / Path B choice does **not** apply. The app stays a WAR through the Spring Boot 4.x stage and becomes an executable JAR in the final stage, whatever the Packaging & Deployment Model fact says. Use that fact to size the Spring Boot stages, not to skip them.
+**The end state is an executable JAR:** the app stays a WAR through the Spring Boot 4.x stage and becomes an executable JAR in the final stage — never a WAR at the end, even if the app has JSPs (those are converted to Thymeleaf).
 
 # Migration Plan: Java 8 → Java 25 (Incremental)
 
 ## Overview
-Current state (JDK, build tool, Spring / Spring Boot version, packaging and deployment model from the scanner's repo facts) and the phase roadmap below.
+Current state (JDK, build tool, Spring / Spring Boot version, packaging and deployment model, persistence and view technology from the scanner's repo facts) and the phase roadmap below.
 
 ## Phase 1: Readiness
 Goal: a modern, reproducible build that still compiles at Java 8, with no application code changes. Governed by the `java-migration-readiness` skill.
@@ -75,7 +84,7 @@ Goal: Java 17, and — if a Spring Boot upgrade was requested — the framework 
 - File Change Manifest for this stage only
 
 ## Stage 4: Upgrade to Spring Boot 2.7 (WAR intact)
-- On Java 17 (compiler release unchanged): Spring Boot 2.7.x parent / BOM and starters, `SpringBootServletInitializer` composition root, embedded-container starter `provided`, Spring-bootstrap `web.xml` entries retired; `javax.*` untouched; `<packaging>war</packaging>` kept. Governed by `springboot-incremental-upgrade`
+- On Java 17 (compiler release unchanged): Spring Boot 2.7.x parent / BOM and starters, `SpringBootServletInitializer` composition root, embedded-container starter `provided`, Spring-bootstrap `web.xml` entries retired, XML bean files kept via `@ImportResource`; `javax.*` untouched; `<packaging>war</packaging>` kept. Governed by `springboot-incremental-upgrade`
 - File Change Manifest for this stage only
 
 ## Phase 3: Java 25 Baseline
@@ -92,18 +101,18 @@ Goal: Java 25 — and, if a Spring Boot upgrade was requested, first move the fr
 - File Change Manifest for this stage only
 
 ## Phase 4: Spring Boot 4 & Cloud Native
-Goal: Spring Boot 4 on Jakarta EE 11, then leave the external container behind.
+Goal: Spring Boot 4 on Jakarta EE 11 with Spring Data JPA, then an executable JAR on an embedded container.
 
 ## Stage 7: Upgrade to Spring Boot 4.x
-- Spring Boot 4.x / Spring Framework 7 / Jakarta EE 11 per the `springboot-war-to-boot4` skill's packaging, namespace and configuration vectors — still a WAR (Tomcat 11+) in this stage
+- Spring Boot 4.x / Spring Framework 7 / Jakarta EE 11 per the `springboot-war-to-boot4` skill's vectors 1–4: dependency cleanup (every conflicting library listed by name), Jakarta EE 11, Spring XML / `web.xml` / properties → Java config and `application.yml`, persistence → Spring Data JPA. Still a WAR (Tomcat 11+) in this stage; the JSP views and their libraries stay until Stage 8
 - File Change Manifest for this stage only
 
 ## Stage 8: Convert WAR → Executable JAR (Embedded Container)
-- Packaging → `jar`, embedded container, `SpringBootServletInitializer` removed, remaining `web.xml` translated and deleted, container-provided resources (JNDI DataSource, context path, TLS, realms) → Spring Boot configuration; static assets → `src/main/resources/static`. If JSPs exist, plan an executable WAR instead and say why
+- JSP views → Thymeleaf templates; packaging → `jar` with an embedded Tomcat; `SpringBootServletInitializer` removed; remaining `web.xml` translated and deleted; container-provided resources (JNDI DataSource, context path, encoding, session, TLS, realms) → Spring Boot configuration; static assets → `src/main/resources/static`; remaining WAR/JSP-only libraries and plugins removed. The result is always an executable JAR — never a WAR
 - File Change Manifest for this stage only
 
 ## Validation & Rollout
-Each stage above is independently built and fixed by its own build loop before the next begins. This section covers what's outside that: the full test suite run after the last stage, the deployment-target change each Spring Boot stage implies (Tomcat 9 → 10.1 → 11 → standalone `java -jar`), and a rollback point per phase.
+Each stage above is independently built and fixed by its own build loop before the next begins. This section covers what's outside that: the full test suite run after the last stage, the deployment-target change each Spring Boot stage implies (Tomcat 9 → 10.1 → 11 → standalone `java -jar` with environment variables), and a rollback point per phase.
 
 ## Estimated Effort
 Per stage, per phase, and total.

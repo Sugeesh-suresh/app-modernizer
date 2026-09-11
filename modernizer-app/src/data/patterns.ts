@@ -15,7 +15,7 @@ export const PATTERNS: PatternConfig[] = [
     benefits: [
       'Bigbang, or 4-phase incremental with a real build after every step',
       'Real repo scan + real mvn/gradle compile validation',
-      'Optional JUnit 4→5 and staged Spring Boot WAR → Boot 4 → executable JAR',
+      'Optional JUnit 4→5 and Spring Boot 4.x executable-JAR upgrade with Spring Data JPA',
       'Records, sealed types, pattern matching & virtual threads',
       'javax.* → jakarta.* namespace migration',
     ],
