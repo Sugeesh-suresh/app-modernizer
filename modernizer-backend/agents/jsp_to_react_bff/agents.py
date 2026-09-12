@@ -47,6 +47,7 @@ from google.adk.tools.skill_toolset import SkillToolset
 from .. import config
 from ..shared.callbacks import make_skill_update_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
+from ..shared.ux_designs import make_ux_design_callback
 from . import tools as fs_tools
 
 _MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -98,13 +99,16 @@ planner_agent = LlmAgent(
     model=_MODEL,
     description="Designs the target React + Spring Boot 4 BFF architecture and file manifests for both trees, from the confirmed BRD and Technical Specification.",
     instruction=(
-        "Load and execute the `jsp-to-react-bff-plan` skill to create the migration plan.\n\n"
+        "Load and execute the `jsp-to-react-bff-plan` skill to create the migration plan. If UX "
+        "design files are attached to this request, include the skill's UX Design Mapping section.\n\n"
         "## Confirmed Business Requirements Document\n{brd}\n\n"
         "## Confirmed Technical Specification (includes the frontend/backend classification)\n{technical_spec}"
     ),
     tools=[_skill("jsp-to-react-bff-plan")],
     output_key="plan",
     include_contents="none",
+    # Attaches the user's UX designs (if any) so the page/component map follows them.
+    before_model_callback=make_ux_design_callback(),
 )
 
 # ── code_pipeline: generate backend, then frontend, then validate both ─────────
@@ -123,6 +127,7 @@ backend_generator_agent = LlmAgent(
         _skill("spring-boot-bff-generate"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.read_file),
+        FunctionTool(fs_tools.replace_in_file),
         FunctionTool(fs_tools.write_file),
     ],
     output_key="backend_generate_result",
@@ -137,7 +142,9 @@ frontend_generator_agent = LlmAgent(
         "Load and execute the `react-frontend-generate` skill to generate the React app under the "
         "workspace subdirectory `frontend/`, reading the original JSP source (read-only reference) via "
         "list_files/read_file and writing new files via write_file. The BFF's API contract is in the "
-        "plan below — call it exactly as specified, do not invent different endpoint shapes.\n\n"
+        "plan below — call it exactly as specified, do not invent different endpoint shapes. If UX "
+        "design files are attached to this request, build the UI to match them, following the skill's "
+        "UX designs section and the plan's UX Design Mapping.\n\n"
         "## Confirmed Migration Plan\n{plan}\n\n"
         "## Backend Generation Result (for the actual BFF endpoints just generated)\n{backend_generate_result}"
     ),
@@ -145,10 +152,13 @@ frontend_generator_agent = LlmAgent(
         _skill("react-frontend-generate"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.read_file),
+        FunctionTool(fs_tools.replace_in_file),
         FunctionTool(fs_tools.write_file),
     ],
     output_key="frontend_generate_result",
     include_contents="none",
+    # Attaches the user's UX designs (if any) to every model call while the React app is written.
+    before_model_callback=make_ux_design_callback(),
 )
 
 validator_agent = LlmAgent(
@@ -183,6 +193,7 @@ fixer_agent = LlmAgent(
         _skill("jsp-to-react-bff-fix"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.read_file),
+        FunctionTool(fs_tools.replace_in_file),
         FunctionTool(fs_tools.write_file),
     ],
     output_key="fix_result",

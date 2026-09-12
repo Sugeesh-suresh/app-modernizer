@@ -36,3 +36,12 @@ Based on independent code reviews, future runs should be mindful of the followin
 - __MACOSX/Java 8_Spring WAR_Oracle 19 application/db/oracle/._00_create_user.sql: file does not end with a statement terminator (';' or '/') — possible truncated statement
 - __MACOSX/Java 8_Spring WAR_Oracle 19 application/db/oracle/._01_schema.sql: file does not end with a statement terminator (';' or '/') — possible truncated statement
 - __MACOSX/Java 8_Spring WAR_Oracle 19 application/db/oracle/._02_sample_data.sql: file does not end with a statement terminator (';' or '/') — possible truncated statement
+
+## Editing files
+
+Use `replace_in_file` for changes to an existing file: copy `old_text` verbatim from the `read_file`
+output, with enough surrounding lines to be unique, and make several small replacements rather than one
+sweeping one. Keep `write_file` for files you create or genuinely rewrite end to end — overwriting a file
+larger than one read window is refused unless you have read every window and pass
+`allow_full_overwrite=True`, because a full overwrite based on a partial read deletes the rest of the file.
+If a `read_file` header says you received only part of a file, call it again with the `start_line` it gives.

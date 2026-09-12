@@ -36,6 +36,7 @@ const INITIAL_STATE: WorkflowState = {
   currentStage: 0,
   stageTotal: 0,
   stageResults: [],
+  currentTask: null,
   codeReview: '',
   finalReport: '',
   skillCuratorSummary: '',
@@ -92,6 +93,7 @@ export default function App() {
             currentStage: 0,
             stageTotal: 0,
             stageResults: [],
+            currentTask: null,
           }));
         }
         break;
@@ -123,12 +125,33 @@ export default function App() {
           ...s,
           currentStage: event.stage ?? s.currentStage,
           stageTotal: event.total ?? s.stageTotal,
+          currentTask: null,
           codeSubStep: 'generating',
           streamingContent: '',
           validationIteration: 0,
           validationResult: null,
           progressMessage: `Step ${event.stage}/${event.total ?? s.stageTotal} · Phase ${event.phase}: ${event.title}`,
         }));
+        break;
+
+      // Each plan task is applied by its own modifier run, within the current stage
+      case 'task-start':
+        setState((s) => ({
+          ...s,
+          codeSubStep: 'generating',
+          streamingContent: '',
+          currentTask: {
+            id: event.task_id ?? '',
+            title: event.task_title ?? '',
+            index: event.task_index ?? 0,
+            total: event.task_total ?? 0,
+          },
+          progressMessage: `Step ${event.stage}/${event.total} · Task ${event.task_index}/${event.task_total}: ${event.task_title}`,
+        }));
+        break;
+
+      case 'task-complete':
+        setState((s) => ({ ...s, currentTask: null }));
         break;
 
       case 'stage-complete':
@@ -462,6 +485,7 @@ export default function App() {
             currentStage={state.currentStage}
             stageTotal={state.stageTotal}
             stageResults={state.stageResults}
+            currentTask={state.currentTask}
             springbootUpgrade={state.javaOptions?.springbootUpgrade ?? false}
           />
         )}

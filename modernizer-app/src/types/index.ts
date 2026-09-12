@@ -78,6 +78,14 @@ export interface StageResult extends ValidationResult {
   title: string;
 }
 
+/** One task of the current incremental stage (java-8-to-25 only) — the modifier runs once per task */
+export interface TaskProgress {
+  id: string;
+  title: string;
+  index: number;
+  total: number;
+}
+
 export interface WorkflowState {
   sessionId: string | null;
   pattern: PatternId | null;
@@ -106,6 +114,8 @@ export interface WorkflowState {
   stageTotal: number;
   /** Completed stage results so far, in order (java-8-to-25 incremental only) */
   stageResults: StageResult[];
+  /** Task the current stage's modifier is applying, when the plan has a task breakdown */
+  currentTask: TaskProgress | null;
   /** code_reviewer_agent's independent findings, set when code-review-ready fires (runs after the build loop, before the reporter) */
   codeReview: string;
   /** reporter_agent's closing summary, set when report-ready fires */
@@ -145,6 +155,11 @@ export interface SSEEvent {
   phase?: number;
   phase_title?: string;
   title?: string;
+  /** Sent with task-start / task-complete */
+  task_id?: string;
+  task_title?: string;
+  task_index?: number;
+  task_total?: number;
   /** Sent with companion-recommendations */
   companions?: CompanionRecommendation[];
 }

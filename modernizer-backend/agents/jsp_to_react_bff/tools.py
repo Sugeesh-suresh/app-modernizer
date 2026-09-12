@@ -14,6 +14,7 @@ from ..shared.workspace_tools import (
     list_files,
     make_run_command,
     read_file,
+    replace_in_file,
     signal_build_success,
     write_file,
 )
@@ -25,4 +26,4 @@ run_command = make_run_command({
     "npm", "npx", "node", "tsc",
 })
 
-__all__ = ["list_files", "read_file", "write_file", "run_command", "signal_build_success"]
+__all__ = ["list_files", "read_file", "replace_in_file", "write_file", "run_command", "signal_build_success"]

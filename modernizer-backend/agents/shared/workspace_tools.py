@@ -82,16 +82,24 @@ def list_files(tool_context: ToolContext, subdir: str = ".") -> str:
     return "\n".join(paths) if paths else "(no files found)"
 
 
-def read_file(tool_context: ToolContext, path: str) -> str:
-    """Read the full text content of one file in the repository workspace.
+def read_file(tool_context: ToolContext, path: str, start_line: int = 1, max_lines: int = 0) -> str:
+    """Read one file from the repository workspace, one window at a time.
+
+    A file too large for a single response comes back in windows. The header
+    line always says which lines you received and how to ask for the rest —
+    never assume the file ends where a window ends.
 
     Args:
         path: File path relative to the workspace root, exactly as
             returned by list_files.
+        start_line: 1-based line number to start reading from. Defaults to
+            the first line.
+        max_lines: Maximum number of lines to return. 0 (the default) means
+            as many as fit in one window.
 
     Returns:
-        The file's text content, or a string starting with "ERROR:" if
-        the file cannot be read.
+        A header line ("# <path> — lines A-B of N") followed by that window
+        of the file, or a string starting with "ERROR:" if it cannot be read.
     """
     try:
         target = resolve_within_workspace(tool_context, path)
@@ -103,21 +111,51 @@ def read_file(tool_context: ToolContext, path: str) -> str:
         content = target.read_text(encoding="utf-8", errors="replace")
     except Exception as exc:
         return f"ERROR: could not read '{path}': {exc}"
-    if len(content) > MAX_OUTPUT_CHARS:
-        return content[:MAX_OUTPUT_CHARS] + f"\n\n[TRUNCATED — file exceeds {MAX_OUTPUT_CHARS} chars]"
-    return content
+
+    lines = content.splitlines()
+    total = len(lines)
+    if total == 0:
+        return f"# {path} — empty file (0 lines)"
+    start = max(start_line, 1)
+    if start > total:
+        return f"ERROR: '{path}' has {total} lines; start_line={start} is past the end."
+
+    window = lines[start - 1:]
+    if max_lines > 0:
+        window = window[:max_lines]
+
+    # Trim to the output budget on a line boundary, so a window is never a half line.
+    kept: list[str] = []
+    used = 0
+    for line in window:
+        used += len(line) + 1
+        if used > MAX_OUTPUT_CHARS and kept:
+            break
+        kept.append(line)
+
+    end = start + len(kept) - 1
+    header = f"# {path} — lines {start}-{end} of {total}"
+    if end < total:
+        header += f" (not the whole file: call read_file again with start_line={end + 1})"
+    return header + "\n" + "\n".join(kept)
 
 
-def write_file(tool_context: ToolContext, path: str, content: str) -> str:
-    """Write (create or overwrite) one file in the repository workspace.
+def write_file(tool_context: ToolContext, path: str, content: str,
+               allow_full_overwrite: bool = False) -> str:
+    """Write a new file, or replace an existing file's entire content.
 
-    Parent directories are created automatically. Always write the
-    complete new content of the file — this is a full overwrite, not a
-    patch/diff.
+    Parent directories are created automatically. For an edit to an existing
+    file, prefer replace_in_file: it costs far fewer tokens and cannot drop
+    the parts of the file you did not send. Overwriting a file that is larger
+    than one read window is refused unless you have actually read every
+    window of it and pass allow_full_overwrite=True — otherwise the content
+    you never saw would be silently deleted.
 
     Args:
         path: File path relative to the workspace root.
         content: The complete new content of the file.
+        allow_full_overwrite: Set True only after reading the whole file, to
+            confirm a deliberate full rewrite of a large file.
 
     Returns:
         A short confirmation message, or a string starting with "ERROR:"
@@ -127,12 +165,83 @@ def write_file(tool_context: ToolContext, path: str, content: str) -> str:
         target = resolve_within_workspace(tool_context, path)
     except ValueError as exc:
         return f"ERROR: {exc}"
+
+    if target.is_file() and not allow_full_overwrite:
+        try:
+            existing = target.stat().st_size
+        except OSError:
+            existing = 0
+        if existing > MAX_OUTPUT_CHARS:
+            return (
+                f"ERROR: '{path}' is {existing} chars, larger than one {MAX_OUTPUT_CHARS}-char read "
+                "window, so a full overwrite would delete content you have not read. Use "
+                "replace_in_file for targeted edits, or read every window of the file first and "
+                "call write_file again with allow_full_overwrite=True."
+            )
+
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
     except Exception as exc:
         return f"ERROR: could not write '{path}': {exc}"
     return f"Wrote {len(content)} chars to {path}."
+
+
+def replace_in_file(tool_context: ToolContext, path: str, old_text: str, new_text: str,
+                    expected_count: int = 1) -> str:
+    """Replace an exact snippet inside one file, leaving everything else untouched.
+
+    This is the preferred way to edit an existing file — an import, an
+    annotation, a method body, a dependency block. It costs a fraction of the
+    tokens of a full rewrite and cannot truncate the rest of the file.
+
+    Args:
+        path: File path relative to the workspace root.
+        old_text: The exact text to replace, copied verbatim from read_file
+            output including indentation. Include enough surrounding lines to
+            make it unique within the file.
+        new_text: The replacement text. Pass "" to delete old_text.
+        expected_count: How many occurrences you expect to replace. The edit
+            is refused unless the file contains exactly this many.
+
+    Returns:
+        A short confirmation message, or a string starting with "ERROR:"
+        on failure.
+    """
+    try:
+        target = resolve_within_workspace(tool_context, path)
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+    if not target.is_file():
+        return f"ERROR: '{path}' is not a file in the workspace."
+    if not old_text:
+        return "ERROR: old_text is empty — use write_file to create or fully replace a file."
+    if old_text == new_text:
+        return "ERROR: old_text and new_text are identical — nothing to do."
+
+    try:
+        content = target.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return f"ERROR: could not read '{path}': {exc}"
+
+    found = content.count(old_text)
+    if found == 0:
+        return (
+            f"ERROR: old_text was not found in '{path}'. Copy it verbatim from read_file output "
+            "(indentation and line breaks must match exactly)."
+        )
+    if found != expected_count:
+        return (
+            f"ERROR: old_text occurs {found} times in '{path}', not {expected_count}. Add surrounding "
+            f"lines to make it unique, or pass expected_count={found} to replace them all."
+        )
+
+    updated = content.replace(old_text, new_text)
+    try:
+        target.write_text(updated, encoding="utf-8")
+    except Exception as exc:
+        return f"ERROR: could not write '{path}': {exc}"
+    return f"Replaced {found} occurrence(s) in {path} (file is now {len(updated)} chars)."
 
 
 def make_run_command(allowed_commands: set[str]):

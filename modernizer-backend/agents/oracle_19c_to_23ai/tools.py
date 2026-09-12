@@ -16,6 +16,7 @@ from ..shared.workspace_tools import (  # noqa: F401 (re-exported)
     EXCLUDED_DIRS,
     list_files,
     read_file,
+    replace_in_file,
     signal_build_success,
     workspace_root,
     write_file,

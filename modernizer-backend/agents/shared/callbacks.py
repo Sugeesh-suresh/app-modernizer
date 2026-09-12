@@ -1,5 +1,5 @@
 """
-Shared ADK agent callbacks for the App Modernizer pipeline.
+Shared ADK agent callbacks for the Stella Modernizer pipeline.
 """
 import json
 import pathlib

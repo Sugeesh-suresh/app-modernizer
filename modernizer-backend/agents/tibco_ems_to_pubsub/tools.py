@@ -20,6 +20,7 @@ from ..shared.workspace_tools import (  # noqa: F401 (re-exported)
     list_files,
     make_run_command,
     read_file,
+    replace_in_file,
     signal_build_success,
     workspace_root,
     write_file,
@@ -104,6 +105,6 @@ def validate_pubsub_mapping(tool_context: ToolContext) -> str:
 
 
 __all__ = [
-    "list_files", "read_file", "write_file", "run_command",
+    "list_files", "read_file", "replace_in_file", "write_file", "run_command",
     "signal_build_success", "validate_pubsub_mapping",
 ]

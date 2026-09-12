@@ -1,5 +1,5 @@
 """
-Centralised runtime configuration for the App Modernizer agents.
+Centralised runtime configuration for the Stella Modernizer agents.
 
 All values are driven by environment variables so that local (.env) and
 production (cloud secret / env injection) environments can co-exist without

@@ -214,6 +214,7 @@ modifier_agent = LlmAgent(
         _skills("java-8-to-25-modify", "springboot-war-to-boot4"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.read_file),
+        FunctionTool(fs_tools.replace_in_file),
         FunctionTool(fs_tools.write_file),
     ],
     output_key="modify_result",
@@ -259,6 +260,7 @@ fixer_agent = LlmAgent(
         _skills("java-8-to-25-fix", "springboot-war-to-boot4"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.read_file),
+        FunctionTool(fs_tools.replace_in_file),
         FunctionTool(fs_tools.write_file),
     ],
     output_key="fix_result",
@@ -345,22 +347,24 @@ def _make_stage(stage: IncrementalStage) -> SequentialAgent:
         model=_MODEL,
         description=f"Applies ONLY the {stage_label} portion of the confirmed migration plan to the workspace.",
         instruction=(
-            "Load and execute the `java-8-to-25-modify` skill, applying ONLY the section of the "
-            f"confirmed migration plan headed '## Stage <n>: {stage_label}' below (find it by that title — "
-            "its number depends on which stages this run includes) -- ignore every other stage "
-            "section: earlier stages have already been applied to the workspace and later ones run in "
-            "separate passes. Use the list_files, read_file and write_file tools.\n\n"
+            "Load and execute the `java-8-to-25-modify` skill and apply ONLY the work described under "
+            "'## Your Task' below. It is one task of the "
+            f"'{stage_label}' stage; earlier tasks and stages are already applied to the workspace, and "
+            "the remaining ones run as separate passes — do not do their work, and do not re-do work "
+            "that is already in place. Use the list_files, read_file, replace_in_file and write_file "
+            "tools, preferring replace_in_file for edits to existing files.\n\n"
             f"This is {phase_label} of an incremental migration. After this stage the build's compiler "
             "release level (`maven.compiler.release` / `sourceCompatibility` / `targetCompatibility` / "
             f"toolchain) must be exactly {stage.java_release}.\n\n"
             f"Guardrail for this stage: {stage.guardrail}\n\n"
             + skills_note
-            + "## Confirmed Migration Plan (full -- find your stage's section)\n{plan}"
+            + "## Your Task\n{current_task}"
         ),
         tools=[
             _skills("java-8-to-25-modify", *stage.extra_skills),
             FunctionTool(fs_tools.list_files),
             FunctionTool(fs_tools.read_file),
+            FunctionTool(fs_tools.replace_in_file),
             FunctionTool(fs_tools.write_file),
         ],
         output_key=f"modify_result_stage{idx}",
@@ -412,6 +416,7 @@ def _make_stage(stage: IncrementalStage) -> SequentialAgent:
             _skills("java-8-to-25-fix", *stage.extra_skills),
             FunctionTool(fs_tools.list_files),
             FunctionTool(fs_tools.read_file),
+            FunctionTool(fs_tools.replace_in_file),
             FunctionTool(fs_tools.write_file),
         ],
         output_key=f"fix_result_stage{idx}",
@@ -438,6 +443,11 @@ def _make_stage(stage: IncrementalStage) -> SequentialAgent:
 
 
 STAGE_PIPELINES: list[SequentialAgent] = [_make_stage(stage) for stage in INCREMENTAL_STAGES]
+
+# main.py drives the two halves of a stage separately: the modifier runs once per plan task
+# (a fresh context each time), then the build loop runs once over the finished stage.
+STAGE_MODIFIERS: list[LlmAgent] = [pipeline.sub_agents[0] for pipeline in STAGE_PIPELINES]
+STAGE_BUILD_LOOPS: list[LoopAgent] = [pipeline.sub_agents[1] for pipeline in STAGE_PIPELINES]
 
 _incremental_stage_results = (
     "Stages are listed in execution order. Stages whose Modify Result and Final Build Result are "

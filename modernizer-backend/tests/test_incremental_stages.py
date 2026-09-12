@@ -28,10 +28,35 @@ BOOT_4 = "Upgrade to Spring Boot 4.x"
 WAR_TO_JAR = "Convert WAR → Executable JAR (Embedded Container)"
 
 
-def _state(springboot_upgrade: bool) -> dict:
-    return main._initial_state(
+PLAN_WITH_TASKS = """# Migration Plan: Java 8 → Java 25 (Incremental)
+
+## Stage 1: Modernize Build Systems (Maven/Gradle)
+
+### Task 1.1: Pin the build plugin versions
+- Files: `pom.xml`
+- Change: pin every plugin version
+
+### Task 1.2: Consolidate dependency versions
+- Files: `pom.xml`
+- Change: move versions into properties
+
+## Stage 2: Automate Code Analysis (OpenRewrite)
+
+### Task 2.1: Add rewrite.yml
+- Files: `rewrite.yml`
+- Change: declare the composite recipes
+
+## Stage 3: Java 8 → Java 17 LTS
+- No task breakdown here, so this stage runs as one pass.
+"""
+
+
+def _state(springboot_upgrade: bool, plan: str = "") -> dict:
+    state = main._initial_state(
         "java-8-to-25", "", "", "{}", "incremental", False, springboot_upgrade,
     )
+    state["plan"] = plan
+    return state
 
 
 def test_without_springboot_only_readiness_and_jdk_stages_run():
@@ -79,6 +104,9 @@ def test_a_runner_is_registered_per_stage():
     runners = PATTERN_RUNNERS["java-8-to-25"]
     for stage in INCREMENTAL_STAGES:
         assert f"code_stage_{stage.idx}" in runners
+        # The modifier runs per task and the build loop per stage, so each half is addressable.
+        assert f"code_stage_{stage.idx}_modify" in runners
+        assert f"code_stage_{stage.idx}_build" in runners
 
 
 def test_incremental_reporter_placeholders_are_all_initialised():
@@ -98,9 +126,10 @@ class _SilentRunner:
         yield  # makes this an async generator that produces no events
 
 
-def _run_incremental(monkeypatch, springboot_upgrade: bool) -> tuple[list[tuple[str, dict]], list[str]]:
+def _run_incremental(monkeypatch, springboot_upgrade: bool,
+                     plan: str = "") -> tuple[list[tuple[str, dict]], list[str]]:
     session = asyncio.run(session_service.create_session(
-        app_name=APP_NAME, user_id=USER_ID, state=_state(springboot_upgrade),
+        app_name=APP_NAME, user_id=USER_ID, state=_state(springboot_upgrade, plan),
     ))
     events: list[tuple[str, dict]] = []
     calls: list[str] = []
@@ -124,8 +153,33 @@ def test_orchestrator_skips_spring_boot_stages_but_numbers_steps_consecutively(m
     assert {e["total"] for e in starts} == {4}
     assert starts[3]["title"] == JAVA_25
     assert [c for c in calls if c.startswith("code_stage_")] == [
-        "code_stage_1", "code_stage_2", "code_stage_3", "code_stage_6",
+        "code_stage_1_modify", "code_stage_1_build",
+        "code_stage_2_modify", "code_stage_2_build",
+        "code_stage_3_modify", "code_stage_3_build",
+        "code_stage_6_modify", "code_stage_6_build",
     ]
+
+
+def test_each_plan_task_gets_its_own_modifier_run(monkeypatch):
+    events, calls = _run_incremental(monkeypatch, springboot_upgrade=False, plan=PLAN_WITH_TASKS)
+
+    starts = [e for t, e in events if t == "task-start"]
+    assert [(e["stage"], e["task_id"]) for e in starts] == [(1, "1.1"), (1, "1.2"), (2, "2.1")]
+    assert [e["task_total"] for e in starts] == [2, 2, 1]
+    # Two tasks in stage 1 mean two modifier runs — each with its own fresh context — and
+    # still one build loop for the finished stage.
+    assert calls.count("code_stage_1_modify") == 2
+    assert calls.count("code_stage_1_build") == 1
+    # Stage 3 has no task blocks, so it runs as a single pass and reports no task events.
+    assert calls.count("code_stage_3_modify") == 1
+    assert [e for e in starts if e["stage"] == 3] == []
+
+
+def test_every_task_reports_completion(monkeypatch):
+    events, _calls = _run_incremental(monkeypatch, springboot_upgrade=False, plan=PLAN_WITH_TASKS)
+
+    completes = [e for t, e in events if t == "task-complete"]
+    assert [e["task_id"] for e in completes] == ["1.1", "1.2", "2.1"]
 
 
 def test_orchestrator_runs_all_eight_stages_with_springboot(monkeypatch):

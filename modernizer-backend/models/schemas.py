@@ -37,6 +37,8 @@ class UploadResponse(BaseModel):
     session_id: str
     message: str
     files_found: int
+    # Number of UX design files attached (JSP -> React only)
+    ux_designs: int = 0
 
 
 class ConfirmRequest(BaseModel):

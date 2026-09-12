@@ -26,7 +26,7 @@ if not os.getenv("GOOGLE_API_KEY") and os.getenv("GEMINI_API_KEY"):
 
 from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, session_service
 from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
-from agents.shared import companion_detector, dependency_graph, diffing
+from agents.shared import companion_detector, dependency_graph, diffing, plan_tasks, ux_designs
 from agents.shared.file_parser import extract_text
 from models.schemas import (
     PatternType, UploadResponse, ConfirmRequest, RefineRequest,
@@ -360,12 +360,19 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
     pipeline, executed strictly in order — see
     agents/java_8_to_25/agents.py's INCREMENTAL_STAGES / _make_stage.
 
-    Emits `stage-start` before each stage and `stage-complete` (with that
-    stage's parsed build result) after it, then runs the separate
-    incremental reviewer/reporter/curator runners once, over every stage.
+    Each stage's modifier runs once per plan task (`### Task <id>: ...` blocks
+    parsed by agents/shared/plan_tasks.py), so its context holds only that
+    task's files instead of the whole stage's — on a large repository a single
+    pass would otherwise accumulate every file it reads and writes. The
+    stage's build loop then runs once, over the finished stage.
+
+    Emits `stage-start`/`stage-complete` per stage, `task-start`/`task-complete`
+    per task, then runs the separate incremental reviewer/reporter/curator
+    runners once, over every stage.
     """
     state = await _get_state(session_id)
     stages = incremental_stages(state.get("springboot_upgrade") == "true")
+    plan_text = state.get("plan", "")
     total = len(stages)
 
     for position, stage in enumerate(stages, start=1):
@@ -376,35 +383,90 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
         }
         await _push(session_id, "stage-start", **stage_meta)
 
-        runner = PATTERN_RUNNERS["java-8-to-25"][f"code_stage_{idx}"]
-        content = types.Content(role="user", parts=[types.Part(text=(
-            f"Apply ONLY the '{stage.title}' stage (step {position} of {total}, Phase {stage.phase}: "
-            f"{stage.phase_title}) of the confirmed migration plan to the workspace, then validate and "
-            "fix any errors for this stage."
-        ))])
+        # Falls back to one whole-stage unit when the plan has no task blocks (e.g. hand-edited).
+        units, from_plan = plan_tasks.stage_units(plan_text, stage.title)
+        preamble = (
+            f"You are applying the '{stage.title}' stage (step {position} of {total}, Phase "
+            f"{stage.phase}: {stage.phase_title}) of the confirmed migration plan."
+        )
 
+        modifier_runner = PATTERN_RUNNERS["java-8-to-25"][f"code_stage_{idx}_modify"]
         modifier_name = f"modifier_stage{idx}"
+        progress = 5
+        summaries: list[str] = []
+
+        for task_index, task in enumerate(units, start=1):
+            task_meta = {
+                "task_id": task.id, "task_title": task.title,
+                "task_index": task_index, "task_total": len(units),
+            }
+            if from_plan:
+                await _push(session_id, "task-start", **stage_meta, **task_meta)
+
+            # Rendered into the modifier's instruction as {current_task}; a separate runner call
+            # per task means each one starts with a fresh model context.
+            await _update_state(session_id, {"current_task": f"{preamble}\n\n{task.body}"})
+            message = types.Content(role="user", parts=[types.Part(text=(
+                f"Apply task {task.id} ({task.title}) of the '{stage.title}' stage to the workspace."
+            ))])
+
+            try:
+                async for event in modifier_runner.run_async(
+                    session_id=session_id,
+                    user_id=USER_ID,
+                    new_message=message,
+                ):
+                    if (getattr(event, "author", "") or "") != modifier_name:
+                        continue
+                    if not event.content or not event.content.parts:
+                        continue
+                    for part in event.content.parts:
+                        text = getattr(part, "text", None)
+                        if text:
+                            progress = min(progress + 2, 80)
+                            await _push(session_id, "code-stream", content=text, progress=progress, stage=position)
+                            await asyncio.sleep(0)
+            except Exception:
+                # One failed task must not abandon the rest of the stage — the build loop still runs.
+                traceback.print_exc()
+                summaries.append(f"### Task {task.id}: {task.title}\nFAILED — see the server log.")
+                continue
+
+            task_state = await _get_state(session_id)
+            summaries.append(
+                f"### Task {task.id}: {task.title}\n"
+                f"{(task_state.get(f'modify_result_stage{idx}') or '').strip()}"
+            )
+            if from_plan:
+                await _push(session_id, "task-complete", **stage_meta, **task_meta)
+
+        # The reviewer, reporter and curator read one modify result per stage, not one per task.
+        await _update_state(session_id, {f"modify_result_stage{idx}": "\n\n".join(summaries).strip()})
+
+        build_runner = PATTERN_RUNNERS["java-8-to-25"][f"code_stage_{idx}_build"]
         validator_name = f"validator_stage{idx}"
         fixer_name = f"fixer_stage{idx}"
+        build_message = types.Content(role="user", parts=[types.Part(text=(
+            f"Build the workspace after the '{stage.title}' stage and fix any errors it reports."
+        ))])
 
         prev_author = ""
         iteration = 0
-        progress = 5
 
         try:
-            async for event in runner.run_async(
+            async for event in build_runner.run_async(
                 session_id=session_id,
                 user_id=USER_ID,
-                new_message=content,
+                new_message=build_message,
             ):
                 author = getattr(event, "author", "") or ""
 
                 if author and author != prev_author:
                     if author == validator_name:
                         iteration += 1
-                        await _push(session_id, "validation-agent-start", iteration=iteration, stage=idx)
+                        await _push(session_id, "validation-agent-start", iteration=iteration, stage=position)
                     elif author == fixer_name:
-                        await _push(session_id, "fix-agent-start", iteration=iteration, stage=idx)
+                        await _push(session_id, "fix-agent-start", iteration=iteration, stage=position)
                     prev_author = author
 
                 if not event.content or not event.content.parts:
@@ -414,8 +476,6 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
                     sse_type = "validate-stream"
                 elif author == fixer_name:
                     sse_type = "fix-stream"
-                elif author == modifier_name:
-                    sse_type = "code-stream"
                 else:
                     continue
 
@@ -423,11 +483,11 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
                     text = getattr(part, "text", None)
                     if text:
                         progress = min(progress + 2, 92)
-                        await _push(session_id, sse_type, content=text, progress=progress, stage=idx)
+                        await _push(session_id, sse_type, content=text, progress=progress, stage=position)
                         await asyncio.sleep(0)
         except Exception:
             if iteration == 0:
-                raise  # this stage failed before its build/compile loop started — surface it
+                raise  # the build/compile loop never started — surface it
             # The stage's build/compile loop has run: treat the stage as complete regardless of errors.
             traceback.print_exc()
 
@@ -524,7 +584,7 @@ def _inject_dependency_graph(tech_spec: str, graph_json: str, pattern: str) -> s
 
 def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_json: str,
                     migration_strategy: str, junit_upgrade: bool, springboot_upgrade: bool,
-                    companion_recommendations_json: str = "[]") -> dict:
+                    companion_recommendations_json: str = "[]", ux_designs_json: str = "[]") -> dict:
     state = {
         "pattern": pattern,
         "workspace_dir": workspace_dir,
@@ -534,12 +594,16 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         "junit_upgrade": "true" if junit_upgrade else "false",
         "springboot_upgrade": "true" if springboot_upgrade else "false",
         "companion_recommendations_json": companion_recommendations_json,
+        # JSP -> React only: manifest of the user's UX design files (see agents/shared/ux_designs.py).
+        ux_designs.STATE_KEY: ux_designs_json,
         "companion_patterns_json": "[]",
         "analysis": "",
         "brd": "",
         "technical_spec": "",
         "test_inventory": "",
         "plan": "",
+        # One plan task at a time, rendered into the stage modifier's instruction (see plan_tasks).
+        "current_task": "",
         "additional_context": "",
         "generated_files_json": "[]",
         "changed_files_json": "[]",
@@ -748,6 +812,7 @@ async def _run_bundle_plan(session_id: str, bundle: list[str], feedback: str | N
 async def _create_pattern_session(
     pattern: str, workspace_dir: str, baseline_dir: str, plan: str,
     migration_strategy: str, junit_upgrade: str, springboot_upgrade: str,
+    ux_designs_json: str = "[]",
 ) -> str:
     """Creates a fresh, isolated ADK session for running one bundled pattern's
     code_pipeline. Required because every pattern's code_pipeline
@@ -765,6 +830,7 @@ async def _create_pattern_session(
         migration_strategy, junit_upgrade == "true", springboot_upgrade == "true",
     )
     state["plan"] = plan
+    state[ux_designs.STATE_KEY] = ux_designs_json
     session = await session_service.create_session(app_name=APP_NAME, user_id=USER_ID, state=state)
     return session.id
 
@@ -792,6 +858,7 @@ async def _run_bundle_code_generation(session_id: str, bundle: list[str]) -> Non
             run_session_id = await _create_pattern_session(
                 pattern, workspace_dir, baseline_dir, plan_for_pattern,
                 migration_strategy, junit_upgrade, springboot_upgrade,
+                outward_state.get(ux_designs.STATE_KEY, "[]"),
             )
         else:
             if plan_for_pattern:
@@ -954,7 +1021,7 @@ async def _run_workflow(session_id: str) -> None:
 async def lifespan(_: FastAPI):
     yield
 
-app = FastAPI(title="App Modernizer API (ADK-powered)", lifespan=lifespan)
+app = FastAPI(title="Stella Modernizer API (ADK-powered)", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -975,7 +1042,17 @@ async def upload_repository(
     migration_strategy: str = Form("bigbang"),
     junit_upgrade: bool = Form(False),
     springboot_upgrade: bool = Form(False),
+    ux_files: list[UploadFile] | None = File(None),
 ):
+    # Optional UX designs (JSP -> React only) — checked before any workspace is created.
+    ux_uploads = [(u.filename or "design", await u.read()) for u in (ux_files or [])]
+    if ux_uploads and pattern.value != "jsp-to-react-bff":
+        raise HTTPException(status_code=400, detail="UX designs can only be attached to the JSP → React migration.")
+    try:
+        ux_designs.validate(ux_uploads)
+    except ux_designs.UxDesignError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     raw = await file.read()
 
     ws_path = Path(tempfile.mkdtemp(prefix="modernizer-ws-"))
@@ -991,6 +1068,10 @@ async def upload_repository(
 
     workspace_dir = str(ws_path)
     baseline_dir = diffing.snapshot_workspace(workspace_dir)
+    # Stored outside the workspace, so the designs never show up in the code diff.
+    ux_manifest = (
+        ux_designs.save(ux_uploads, Path(tempfile.mkdtemp(prefix="modernizer-ux-"))) if ux_uploads else []
+    )
     graph = dependency_graph.build_dependency_graph(workspace_dir, pattern.value)
     graph_json = json.dumps(graph)
 
@@ -1008,6 +1089,7 @@ async def upload_repository(
             pattern.value, workspace_dir, baseline_dir, graph_json,
             migration_strategy, junit_upgrade, springboot_upgrade,
             companion_recs_json,
+            ux_designs_json=json.dumps(ux_manifest),
         ),
     )
     session_id = session.id
@@ -1024,6 +1106,7 @@ async def upload_repository(
         session_id=session_id,
         message="Upload successful. Workflow started.",
         files_found=files_found,
+        ux_designs=len(ux_manifest),
     )
 
 

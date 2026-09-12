@@ -8,7 +8,7 @@ export function Header() {
           <Cpu size={18} className="text-white" />
         </div>
         <div>
-          <h1 className="text-base font-semibold text-slate-900 leading-none">App Modernizer</h1>
+          <h1 className="text-base font-semibold text-slate-900 leading-none">Stella Modernizer</h1>
           <p className="text-xs text-slate-500 mt-0.5">Agentic code migration platform</p>
         </div>
         <div className="ml-auto flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-400/10 border border-emerald-400/20 rounded-full px-3 py-1">

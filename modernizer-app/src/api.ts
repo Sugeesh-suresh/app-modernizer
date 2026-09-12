@@ -6,10 +6,13 @@ export async function uploadRepository(
   pattern: PatternId,
   file: File,
   options?: JavaMigrationOptions | null,
-): Promise<{ session_id: string; files_found: number }> {
+  uxFiles: File[] = [],
+): Promise<{ session_id: string; files_found: number; ux_designs: number }> {
   const form = new FormData();
   form.append('pattern', pattern);
   form.append('file', file);
+  // Optional UX designs — the backend only accepts them for the JSP → React pattern.
+  for (const design of uxFiles) form.append('ux_files', design);
   if (options) {
     form.append('migration_strategy', options.strategy);
     form.append('junit_upgrade', String(options.junitUpgrade));

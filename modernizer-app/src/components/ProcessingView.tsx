@@ -1,5 +1,5 @@
 import { Brain, FileText, GitBranch, Code2, ShieldCheck, Wrench, CheckCircle2, Network, Search, Sparkles, Circle, Loader2 } from 'lucide-react';
-import type { PatternId, WorkflowStep, CodeSubStep, ValidationResult, StageResult } from '../types';
+import type { PatternId, WorkflowStep, CodeSubStep, ValidationResult, StageResult, TaskProgress } from '../types';
 import { phasesForRun } from '../data/incrementalStages';
 
 const SUB_STEP_BADGE: Partial<Record<CodeSubStep, { icon: React.ReactNode; label: string; color: string }>> = {
@@ -67,6 +67,8 @@ interface Props {
   currentStage: number;
   stageTotal: number;
   stageResults: StageResult[];
+  /** Task the current step's modifier is applying, when the plan has a task breakdown */
+  currentTask: TaskProgress | null;
   /** Whether the Spring Boot steps are part of this incremental run */
   springbootUpgrade: boolean;
 }
@@ -84,6 +86,7 @@ export function ProcessingView({
   currentStage,
   stageTotal,
   stageResults,
+  currentTask,
   springbootUpgrade,
 }: Props) {
   const config = STEP_CONFIG[step] ?? STEP_CONFIG['reverse-engineering'];
@@ -171,7 +174,14 @@ export function ProcessingView({
                           <Circle size={13} className="shrink-0" />
                         )}
                         <span className="font-mono text-[10px] opacity-70 shrink-0">Step {step.stage}</span>
-                        <span className="flex-1 min-w-0">{step.title}</span>
+                        <span className="flex-1 min-w-0">
+                          {step.title}
+                          {isCurrent && currentTask && (
+                            <span className="block text-[10px] opacity-80 truncate">
+                              Task {currentTask.index}/{currentTask.total}: {currentTask.title}
+                            </span>
+                          )}
+                        </span>
                         {done && <span className="text-[10px] font-medium shrink-0">complete</span>}
                         {inBuildLoop && (
                           <span className="text-[10px] font-mono shrink-0">

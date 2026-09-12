@@ -1,4 +1,4 @@
-# App Modernizer
+# Stella Modernizer
 
 An AI-powered application modernization platform that helps engineering teams migrate legacy codebases to modern architectures. The platform uses an agentic workflow driven by **Google Gemini** to reverse-engineer source code, generate a Business Requirements Document (BRD) and Technical Specification, produce a migration plan, and finally generate the target codebase — with human review and approval at every key step.
 

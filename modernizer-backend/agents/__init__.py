@@ -1,5 +1,5 @@
 """
-ADK agent registry for the App Modernizer.
+ADK agent registry for the Stella Modernizer.
 
 All 4 patterns share one shape: `re` (reverse-engineering -> Analysis/BRD/
 TechSpec/Test Inventory) -> HITL brd-review -> `plan` (from confirmed BRD/
@@ -26,6 +26,8 @@ from .java_8_to_25.agents import (
     planner_agent as j8_plan,
     code_pipeline_bigbang as j8_code_bigbang,
     INCREMENTAL_STAGES as j8_incremental_stages,
+    STAGE_BUILD_LOOPS as j8_stage_build_loops,
+    STAGE_MODIFIERS as j8_stage_modifiers,
     STAGE_PIPELINES as j8_stage_pipelines,
     incremental_code_reviewer_agent as j8_incremental_code_reviewer,
     incremental_reporter_agent as j8_incremental_reporter,
@@ -64,9 +66,18 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
         "re": _runner(j8_re),
         "plan": _runner(j8_plan),
         "code_bigbang": _runner(j8_code_bigbang),
+        # Per stage: the whole pipeline, plus its halves — main.py runs the modifier once per
+        # plan task and the build loop once per stage (see _run_java8_incremental_code_step).
         **{
-            f"code_stage_{stage.idx}": _runner(pipeline)
-            for stage, pipeline in zip(j8_incremental_stages, j8_stage_pipelines)
+            key: _runner(agent)
+            for stage, pipeline, modifier, build_loop in zip(
+                j8_incremental_stages, j8_stage_pipelines, j8_stage_modifiers, j8_stage_build_loops,
+            )
+            for key, agent in (
+                (f"code_stage_{stage.idx}", pipeline),
+                (f"code_stage_{stage.idx}_modify", modifier),
+                (f"code_stage_{stage.idx}_build", build_loop),
+            )
         },
         "incremental_code_reviewer": _runner(j8_incremental_code_reviewer),
         "incremental_reporter": _runner(j8_incremental_reporter),

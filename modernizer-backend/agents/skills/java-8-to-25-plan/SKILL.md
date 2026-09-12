@@ -51,6 +51,22 @@ Stage headings are `## Stage <n>: <title>`. Use the titles below character for c
 - If `{springboot_upgrade}` is **false**, leave out every Spring Boot stage and the whole of Phase 4, and number the remaining stages consecutively. The plan then has exactly these four stage headings, in this order: `## Stage 1: Modernize Build Systems (Maven/Gradle)`, `## Stage 2: Automate Code Analysis (OpenRewrite)`, `## Stage 3: Java 8 → Java 17 LTS`, `## Stage 4: Java 17 → Java 25 LTS`. Say in the Overview that the Spring Boot stages were not requested.
 - If a stage genuinely has nothing to do for this codebase (e.g. no Spring at all), still emit its heading with "No changes needed — <reason>" and an empty manifest.
 
+**Every stage's work is a list of tasks.** A stage's File Change Manifest is expressed as task blocks, because each task is applied by its own modifier run with its own fresh context — a stage applied in one pass would otherwise accumulate every file it touches and overflow the model's window on a large repository. Inside each stage section, emit:
+
+```
+### Task <stage number>.<task number>: <short imperative title>
+- Files: `path/one.java`, `path/two.java`
+- Depends on: Task 3.1 (or "none")
+- Change: what to do to those files, specifically enough to act on without seeing the rest of the plan
+- Done when: the observable result (e.g. "no javax.persistence imports remain in these files")
+```
+
+Sizing rules, which matter more than tidiness:
+- **5–15 files per task**, and every file appears in exactly one task per stage.
+- Group by the Dependency Graph & Migration Groups section of the Technical Specification: files that change together (an interface and its implementors, an entity and its DAO) belong in **one** task, or the edits will be made in separate contexts and disagree.
+- Order tasks so dependencies come first, and say so in `Depends on:`.
+- A task must be self-contained: its `Change:` text is all the modifier will see of the plan, besides the stage heading.
+
 **Why the JDK and Spring Boot stages interleave:** every stage must land on a supported JDK/framework combination. Spring Boot 2.7 supports Java 8–21, and Spring Boot 3.x needs Java 17+. So on Java 17 the framework moves to 2.7 and then to 3.x, *before* the jump to Java 25; Spring Boot 4 comes after it. Never plan a Spring Boot 2.x codebase on Java 25.
 
 **The end state is an executable JAR:** the app stays a WAR through the Spring Boot 4.x stage and becomes an executable JAR in the final stage — never a WAR at the end, even if the app has JSPs (those are converted to Thymeleaf).
@@ -119,4 +135,4 @@ Per stage, per phase, and total.
 
 ---
 
-Use markdown with task checkboxes `- [ ]` for every actionable item. Each stage's File Change Manifest is what that stage's modifier agent will work through file by file — be exhaustive and precise with paths, and do not let changes bleed across stages. A file changed in one stage may need further changes in a later one (e.g. the Java 17 stage and then the Spring Boot 3.x stage); list it again there rather than assuming the earlier stage finished it.
+Use markdown with task checkboxes `- [ ]` for every actionable item. Each stage's tasks are what that stage's modifier agent will work through, one run per task — be exhaustive and precise with paths, and do not let changes bleed across stages. A file changed in one stage may need further changes in a later one (e.g. the Java 17 stage and then the Spring Boot 3.x stage); list it again in that stage's tasks rather than assuming the earlier stage finished it.
