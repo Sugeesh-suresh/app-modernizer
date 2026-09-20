@@ -85,6 +85,78 @@ This one changes observable behaviour: Ehcache 2's `getQuiet()` read without tou
 | `mockito-all` | 1.9.5 | Removed | `mockito-core` | Stage 1 |
 | `cargo-maven2-plugin` | 1.4.5 | Dead | Removed | Stage 1 |
 
+### File Change Manifest
+
+Every file this migration touches, across all eight stages. One row per file; a file touched by two stages carries both.
+
+**Build and analysis files**
+
+| File | Change Type | Owning Stage | What Changes |
+|---|---|---|---|
+| `pom.xml` | dependency bump, packaging | Stages 1, 2, 3, 4, 5, 6, 7, 8 | S1: `release`=8, plugins pinned, versions to properties, test stack bumped (`mockito-all`→`mockito-core` 4.11.0, JUnit 4.13.2, surefire/failsafe 3.2.5), `maven-svn-revision-number-plugin` and `cargo-maven2-plugin` deleted. S2: `rewrite-maven-plugin`, no executions bound. S3: Spring 5.3.39, Hibernate 5.6.15, Jackson 2.17 via BOM, Ehcache 3, Logback, Guava BOM, `ojdbc11`, Mockito 5, `release`=17; cglib/javassist/google-collections/log4j removed. S4: Boot 2.7.18 parent, container starter `provided`. S5: Boot 3.5.x, Jakarta modules. S6: `release`=25. S7: Boot 4.x parent, conflicting libs removed, `data-jpa` starter. S8: `<packaging>jar</packaging>`, `spring-boot-maven-plugin`, Thymeleaf starter; JSP/JSTL and WAR plugins removed |
+| `rewrite.yml` | language modernisation | Stage 2 | New. Five composite recipes — `Java17`, `SpringBoot27`, `SpringBoot3`, `Java25`, `SpringBoot4` — one per remaining stage |
+| `docs/migration/openrewrite-analysis.md` | language modernisation | Stage 2 | New. Per-recipe expected touch points and the exact dry-run command for each |
+
+**Configuration and composition root**
+
+| File | Change Type | Owning Stage | What Changes |
+|---|---|---|---|
+| `src/main/java/com/acme/orders/Application.java` | Spring Boot configuration, packaging | Stages 4, 8 | S4: new — `SpringBootServletInitializer` composition root. S8: initializer removed, plain `SpringApplication.run` |
+| `src/main/java/com/acme/orders/config/AppConfig.java` | dependency bump | Stage 3 | Spring 5.3 configuration API changes |
+| `src/main/java/com/acme/orders/config/HibernateConfig.java` | dependency bump | Stage 3 | `orm.hibernate3.LocalSessionFactoryBean`/`HibernateTransactionManager`/`HibernateTemplate` → `orm.hibernate5.*`; `Oracle10gDialect` setting dropped; audit `Integrator` registered |
+| `src/main/java/com/acme/orders/config/CacheConfig.java` | dependency bump | Stage 3 | `EhCacheCacheManager`/`EhCacheManagerFactoryBean` → `JCacheCacheManager` over Ehcache 3's JSR-107 provider |
+| `src/main/java/com/acme/orders/config/WebConfig.java` | dependency bump, Spring Boot configuration | Stages 3, 7 | S3: `MappingJacksonHttpMessageConverter` bean rewritten as `MappingJackson2HttpMessageConverter`. S7: custom `ObjectMapper` bean dropped in favour of `spring.jackson.*` properties |
+| `src/main/java/com/acme/orders/config/JndiConfig.java` | no change needed | — | Uses `javax.sql.DataSource` and `javax.naming.InitialContext` — Java SE, never part of the Jakarta rename. Its JNDI lookup is replaced by configuration in Stage 8, but this file is not edited |
+
+**Web tier**
+
+| File | Change Type | Owning Stage | What Changes |
+|---|---|---|---|
+| `src/main/java/com/acme/orders/web/OrderServlet.java` | dependency bump, namespace migration | Stages 3, 5 | S3: `org.apache.log4j.Logger` → `org.slf4j.Logger`, concatenation → `{}` parameters. S5: `javax.servlet.*` → `jakarta.servlet.*`. No logic change in either; all 5 routes keep their paths and payloads |
+| `src/main/java/com/acme/orders/web/OrderFilter.java` | namespace migration | Stage 5 | `javax.servlet.Filter`/`FilterChain` → `jakarta.servlet.*` |
+| `src/main/java/com/acme/orders/web/OrderJsonController.java` | dependency bump | Stages 3, 7 | S3: `org.codehaus.jackson.*` → `com.fasterxml.jackson.*`; `SerializationConfig.Feature` → `SerializationFeature`; `JsonMethod` → `PropertyAccessor`. S7: → `tools.jackson.*`; `JsonProcessingException` → unchecked `JacksonException`. JSON field names unchanged throughout |
+| `src/main/java/com/acme/orders/web/ProductJsonController.java` | dependency bump | Stages 3, 7 | Same Jackson 1 → 2 → 3 path as `OrderJsonController`; field names unchanged |
+| `src/main/java/com/acme/orders/cache/CacheAdminController.java` | dependency bump | Stage 3 | Ehcache 2 → 3: `getKeys()` and `getQuiet()` have no equivalent, so the `GET /admin/cache/dump` endpoint is rewritten to iterate `Cache.Entry`. **Behavioural change** — the Ehcache 2 read did not touch statistics or TTL; the Ehcache 3 iteration gives no such guarantee. Response shape unchanged |
+
+**Domain, persistence and services**
+
+| File | Change Type | Owning Stage | What Changes |
+|---|---|---|---|
+| `src/main/java/com/acme/orders/model/Order.java` | namespace migration | Stage 5 | `javax.persistence.*` → `jakarta.persistence.*`; no mapping or column change |
+| `src/main/java/com/acme/orders/model/OrderLine.java` | namespace migration | Stage 5 | `javax.persistence.*` → `jakarta.persistence.*` |
+| `src/main/java/com/acme/orders/model/Product.java` | namespace migration | Stage 5 | `javax.persistence.*` and `javax.validation.*` → `jakarta.*`; constraint annotations keep their messages |
+| `src/main/java/com/acme/orders/model/Address.java` | no change needed | — | Plain POJO, no legacy API, no JPA annotations |
+| `src/main/java/com/acme/orders/dao/OrderDao.java` | namespace migration | Stage 5 | `javax.persistence.EntityManager` → `jakarta.persistence.EntityManager`. The interface itself is kept in Stage 7 so callers are untouched |
+| `src/main/java/com/acme/orders/dao/OrderDaoImpl.java` | persistence | Stage 7 | Hibernate native API → Spring Data JPA behind `OrderRepository`. The three Oracle-specific queries (`ROWNUM`, `FETCH FIRST`, `seq_order.NEXTVAL`) are kept **byte-identical** as `@Query(nativeQuery = true)` |
+| `src/main/java/com/acme/orders/dao/ProductDao.java` | persistence | Stage 7 | Interface kept; implementation delegates to `ProductRepository` |
+| `src/main/java/com/acme/orders/dao/ProductDaoImpl.java` | persistence | Stage 7 | Hibernate native API → Spring Data JPA. The `RANK() OVER` analytic query kept byte-identical as a native query |
+| `src/main/java/com/acme/orders/repository/OrderRepository.java` | persistence | Stage 7 | New. `JpaRepository<Order, Long>` behind the existing `OrderDao` interface |
+| `src/main/java/com/acme/orders/repository/ProductRepository.java` | persistence | Stage 7 | New. `JpaRepository<Product, Long>` behind the existing `ProductDao` interface |
+| `src/main/java/com/acme/orders/audit/AuditInterceptor.java` | dependency bump | Stage 3 | `org.hibernate.Interceptor`'s `onSave`/`onFlushDirty` signatures changed across 3 → 5. Replaced by `PreInsertEventListener` + `PreUpdateEventListener` registered via an `Integrator`. The `modified_by` thread-local mechanism and the audit columns written are preserved exactly |
+| `src/main/java/com/acme/orders/cache/OrderCacheService.java` | dependency bump | Stage 3 | Ehcache 2 `Element` wrapper API → Ehcache 3 `get`/`put` returning the value directly |
+| `src/main/java/com/acme/orders/service/OrderService.java` | language modernisation | Stage 6 | `get(0)`/`get(size()-1)` → sequenced-collection accessors. No behaviour change |
+| `src/main/java/com/acme/orders/service/PricingService.java` | language modernisation | Stage 6 | Discount dispatch `if/else` chain → pattern matching for `switch`. Every branch outcome identical |
+| `src/main/java/com/acme/orders/batch/NightlyReconciliation.java` | language modernisation | Stage 6 | Fixed thread pool blocking on JDBC → virtual threads. Schedule (02:00) and logic unchanged |
+| `src/main/java/com/acme/orders/util/OrderKeys.java` | dependency bump | Stage 3 | `Objects.toStringHelper` → `MoreObjects.toStringHelper` (removed from modern Guava) |
+| `src/main/java/com/acme/orders/util/Timing.java` | dependency bump | Stage 3 | `new Stopwatch()` → `Stopwatch.createStarted()`; `elapsedMillis()` → `elapsed(TimeUnit.MILLISECONDS)` |
+| _23 files under_ `src/main/java/com/acme/orders/` | dependency bump | Stage 3 | `org.apache.log4j.Logger` → `org.slf4j.Logger` + `LoggerFactory.getLogger(X.class)`; `"order=" + id` → `"order={}", id`. Logger names and levels preserved. Listed individually in Task 3.5 |
+
+**Resources and webapp**
+
+| File | Change Type | Owning Stage | What Changes |
+|---|---|---|---|
+| `src/main/resources/ehcache.xml` | dependency bump, namespace migration | Stages 3, 5 | S3: Ehcache 3 schema; cache names, sizes and TTLs carried over; **the JGroups replication block is removed with no replacement** — see Open Questions. S5: `jakarta` classifier variant of the schema |
+| `src/main/resources/log4j.properties` | delete | Stage 3 | Replaced by `logback.xml` |
+| `src/main/resources/logback.xml` | dependency bump | Stage 3 | New. Appenders, levels and the rolling policy carried over from `log4j.properties` unchanged |
+| `src/main/resources/application.properties` | Spring Boot configuration, delete | Stages 4, 7 | S4: new — DataSource, JPA and server properties. S7: replaced by `application.yml` |
+| `src/main/resources/application.yml` | Spring Boot configuration, packaging | Stages 7, 8 | S7: new — every key name from `application.properties` preserved, secrets become env-var placeholders. S8: JNDI DataSource → `spring.datasource.*`, plus context path, encoding, session timeout, TLS and security realm |
+| `src/main/webapp/WEB-INF/web.xml` | dependency bump, namespace migration, delete | Stages 3, 4, 5, 8 | S3: the two `ehcache-web` page-caching filters removed. S4: Spring bootstrap servlet/listener entries retired. S5: schema → `jakarta.ee` namespace, `version="6.0"`. S8: fully translated into Spring Boot configuration and deleted |
+| _14 files_ `src/main/webapp/WEB-INF/jsp/*.jsp` | delete | Stage 8 | Replaced by Thymeleaf templates |
+| _14 files_ `src/main/resources/templates/*.html` | view conversion | Stage 8 | New. Markup, form field names and validation messages preserved exactly; JSTL → `th:each`/`th:if`/`th:text` |
+| _9 files_ `src/main/webapp/static/` | packaging | Stage 8 | Moved to `src/main/resources/static/`; contents unchanged |
+
+**Not touched, and deliberately so** — see question 2 for the reasoning: `src/main/java/com/acme/orders/legacy/XmlExportService.java` (possible dead code, external caller unconfirmed), and all 41 JUnit 4 test classes under `src/test/java/` (JUnit upgrade not requested).
+
 ## Phase 1: Readiness
 Goal: a modern, reproducible build that still compiles at Java 8, with no application code changes.
 
@@ -108,11 +180,6 @@ Goal: a modern, reproducible build that still compiles at Java 8, with no applic
 - Change: remove `maven-svn-revision-number-plugin` and the stale SVN `<scm>` URL; remove `cargo-maven2-plugin` (embedded Jetty 6); de-duplicate the two `commons-lang` declarations
 - Done when: no removed plugin appears in `mvn dependency:tree`
 
-### File Change Manifest — Stage 1
-
-| File | Change Type | What Changes |
-|---|---|---|
-| `pom.xml` | dependency bump | `release`=8, plugins pinned, versions to properties, test stack bumped, dead plugins deleted |
 
 ## Stage 2: Automate Code Analysis (OpenRewrite)
 
@@ -122,13 +189,6 @@ Goal: a modern, reproducible build that still compiles at Java 8, with no applic
 - Change: add `rewrite.yml` with one composite recipe per remaining stage (`Java17`, `SpringBoot27`, `SpringBoot3`, `Java25`, `SpringBoot4`); declare `rewrite-maven-plugin` with no lifecycle executions; write the analysis doc naming each recipe's expected touch points and its dry-run command
 - Done when: `mvn rewrite:dryRun -Drewrite.activeRecipe=Java17` runs and writes a patch without modifying sources
 
-### File Change Manifest — Stage 2
-
-| File | Change Type | What Changes |
-|---|---|---|
-| `pom.xml` | dependency bump | `rewrite-maven-plugin` declared, no executions bound |
-| `rewrite.yml` | language modernisation | new — five composite recipes, one per remaining stage |
-| `docs/migration/openrewrite-analysis.md` | language modernisation | new — per-recipe expected touch points and dry-run commands |
 
 ## Phase 2: Java 17 Baseline
 Goal: Java 17, with the framework on Spring Boot 2.7 — the newest line that still uses `javax`.
@@ -177,28 +237,6 @@ Goal: Java 17, with the framework on Spring Boot 2.7 — the newest line that st
 - Change: `maven.compiler.release` = 17, not further. Add `--add-opens` to the surefire `argLine` **only** if a test genuinely needs deep reflective access — never to silence an `InaccessibleObjectException` from a stale library, which is a signal that Task 3.1's cglib removal is incomplete
 - Done when: `mvn -q -DskipTests package` succeeds at release 17
 
-### File Change Manifest — Stage 3
-
-| File | Change Type | What Changes |
-|---|---|---|
-| `pom.xml` | dependency bump | Spring 5.3.39, Hibernate 5.6.15, Jackson 2.17 via BOM, Ehcache 3, Logback, Guava BOM, ojdbc11, Mockito 5, release 17; cglib/javassist/google-collections/log4j removed |
-| `src/main/java/com/acme/orders/config/HibernateConfig.java` | dependency bump | `orm.hibernate3.*` → `orm.hibernate5.*`; dialect setting removed; `Integrator` registered |
-| `src/main/java/com/acme/orders/config/AppConfig.java` | dependency bump | Spring 5.3 config API changes |
-| `src/main/java/com/acme/orders/audit/AuditInterceptor.java` | dependency bump | `org.hibernate.Interceptor` → `PreInsertEventListener`/`PreUpdateEventListener` |
-| `src/main/java/com/acme/orders/web/OrderJsonController.java` | dependency bump | Jackson 1 → 2 imports and feature enums |
-| `src/main/java/com/acme/orders/web/ProductJsonController.java` | dependency bump | Jackson 1 → 2 imports and feature enums |
-| `src/main/java/com/acme/orders/config/WebConfig.java` | dependency bump | `MappingJacksonHttpMessageConverter` bean rewritten as `MappingJackson2HttpMessageConverter` |
-| `src/main/java/com/acme/orders/cache/CacheAdminController.java` | dependency bump | `getKeys()`/`getQuiet()` loop → `Cache.Entry` iteration — **behavioural change**, see Open Questions |
-| `src/main/java/com/acme/orders/cache/OrderCacheService.java` | dependency bump | Ehcache 2 `Element` API → Ehcache 3 `get`/`put` |
-| `src/main/java/com/acme/orders/config/CacheConfig.java` | dependency bump | `EhCacheCacheManager` → `JCacheCacheManager` |
-| `src/main/resources/ehcache.xml` | dependency bump | Ehcache 3 schema; JGroups replication block removed and flagged |
-| `src/main/webapp/WEB-INF/web.xml` | dependency bump | two `ehcache-web` filters removed |
-| `src/main/resources/log4j.properties` | delete | replaced by `logback.xml` |
-| `src/main/resources/logback.xml` | dependency bump | new — appenders, levels and rolling policy carried over |
-| `src/main/java/com/acme/orders/util/OrderKeys.java` | dependency bump | `Objects.toStringHelper` → `MoreObjects.toStringHelper` |
-| `src/main/java/com/acme/orders/util/Timing.java` | dependency bump | `new Stopwatch()` → `Stopwatch.createStarted()`; `elapsedMillis()` → `elapsed(MILLISECONDS)` |
-| _23 files under_ `src/main/java/com/acme/orders/` | dependency bump | `org.apache.log4j.Logger` → `org.slf4j.Logger`, concatenation → `{}` parameters |
-| `src/main/java/com/acme/orders/model/Address.java` | no change needed | plain POJO, no legacy API |
 
 ## Stage 4: Upgrade to Spring Boot 2.7 (WAR intact)
 
@@ -208,14 +246,6 @@ Goal: Java 17, with the framework on Spring Boot 2.7 — the newest line that st
 - Change: Spring Boot 2.7.18 parent and starters (`web`, `data-jpa` not yet); add `SpringBootServletInitializer`; scope the embedded container starter `provided`; retire the Spring-bootstrap entries from `web.xml`; keep the XML bean files via `@ImportResource`. `javax.*` untouched, `<packaging>war</packaging>` kept, compiler release stays 17
 - Done when: `mvn -q -DskipTests package` produces a WAR that still deploys to Tomcat 9
 
-### File Change Manifest — Stage 4
-
-| File | Change Type | What Changes |
-|---|---|---|
-| `pom.xml` | Spring Boot configuration | Boot 2.7.18 parent and starters; container starter `provided`; WAR packaging kept |
-| `src/main/java/com/acme/orders/Application.java` | Spring Boot configuration | new — `SpringBootServletInitializer` composition root |
-| `src/main/webapp/WEB-INF/web.xml` | Spring Boot configuration | Spring bootstrap servlet/listener entries removed; the rest kept |
-| `src/main/resources/application.properties` | Spring Boot configuration | new — DataSource, JPA and server properties |
 
 ## Phase 3: Java 25 Baseline
 Goal: Java 25 — reached only after the framework moves to Spring Boot 3.x, which supports it.
@@ -228,19 +258,6 @@ Goal: Java 25 — reached only after the framework moves to Spring Boot 3.x, whi
 - Change: Boot 3.5.x (a line that also supports Java 25); Jakarta EE `javax.servlet.*`, `javax.persistence.*`, `javax.validation.*`, `javax.annotation.*` → `jakarta.*`. **Never** rename Java SE `javax.sql`, `javax.naming`, `javax.crypto`, JAXP, or JSR-107 `javax.cache`. Swap `jackson-module-jaxb-annotations` → `jackson-module-jakarta-xmlbind-annotations` and Ehcache 3 → its `jakarta` classifier. Spring Security 6 and Spring MVC 6 changes. WAR kept; compiler release stays 17
 - Done when: no Jakarta EE `javax.*` import remains, the four Java SE `javax.*` families are untouched, and the WAR deploys to Tomcat 10.1
 
-### File Change Manifest — Stage 5
-
-| File | Change Type | What Changes |
-|---|---|---|
-| `pom.xml` | namespace migration | Boot 3.5.x; Jackson JAXB → Jakarta XMLBind module; Ehcache `jakarta` classifier |
-| `src/main/java/com/acme/orders/web/OrderServlet.java` | namespace migration | `javax.servlet.*` → `jakarta.servlet.*` |
-| `src/main/java/com/acme/orders/web/OrderFilter.java` | namespace migration | `javax.servlet.*` → `jakarta.servlet.*` |
-| `src/main/java/com/acme/orders/model/Order.java` | namespace migration | `javax.persistence.*` → `jakarta.persistence.*` |
-| `src/main/java/com/acme/orders/model/OrderLine.java` | namespace migration | `javax.persistence.*` → `jakarta.persistence.*` |
-| `src/main/java/com/acme/orders/model/Product.java` | namespace migration | `javax.persistence.*`, `javax.validation.*` → `jakarta.*` |
-| `src/main/java/com/acme/orders/dao/OrderDao.java` | namespace migration | `javax.persistence.EntityManager` → `jakarta.persistence.EntityManager` |
-| `src/main/java/com/acme/orders/config/JndiConfig.java` | no change needed | uses `javax.sql.DataSource` and `javax.naming` — Java SE, never renamed |
-| `src/main/webapp/WEB-INF/web.xml` | namespace migration | schema → `jakarta.ee` namespace, `version="6.0"` |
 
 ## Stage 6: Java 17 → Java 25 LTS
 
@@ -256,14 +273,6 @@ Goal: Java 25 — reached only after the framework moves to Spring Boot 3.x, whi
 - Change: virtual threads for the fixed pool in `NightlyReconciliation` that blocks on JDBC; pattern matching for `switch` in `PricingService`'s discount dispatch; sequenced collections where `get(0)`/`get(size()-1)` is used. Only where it meaningfully improves these specific files — no repo-wide rewrite
 - Done when: the build passes at release 25 and no `SecurityManager` reference remains
 
-### File Change Manifest — Stage 6
-
-| File | Change Type | What Changes |
-|---|---|---|
-| `pom.xml` | language modernisation | `release` 25; Lombok and Mockito bumps |
-| `src/main/java/com/acme/orders/service/OrderService.java` | language modernisation | sequenced-collection accessors |
-| `src/main/java/com/acme/orders/service/PricingService.java` | language modernisation | pattern matching for `switch` in the discount dispatch |
-| `src/main/java/com/acme/orders/batch/NightlyReconciliation.java` | language modernisation | fixed thread pool → virtual threads |
 
 ## Phase 4: Spring Boot 4 & Cloud Native
 Goal: Spring Boot 4 on Jakarta EE 11 with Spring Data JPA, then an executable JAR.
@@ -282,19 +291,6 @@ Goal: Spring Boot 4 on Jakarta EE 11 with Spring Data JPA, then an executable JA
 - Change: `spring-boot-starter-data-jpa`; each DAO becomes a `Repository` interface, keeping the existing DAO interface so callers are untouched. The four Oracle-specific queries (`ROWNUM`, the analytic `RANK() OVER`, the `FETCH FIRST`, the `seq_order.NEXTVAL`) are kept **verbatim** as `@Query(nativeQuery = true)` — never rewritten into JPQL
 - Done when: no `SessionFactory` or `HibernateTemplate` usage remains and every native query is byte-identical to the original SQL
 
-### File Change Manifest — Stage 7
-
-| File | Change Type | What Changes |
-|---|---|---|
-| `pom.xml` | Spring Boot configuration | Boot 4.x parent; conflicting libraries removed by name; `data-jpa` starter added |
-| `src/main/java/com/acme/orders/web/OrderJsonController.java` | Spring Boot configuration | Jackson 2 → 3 imports; `JacksonException` |
-| `src/main/java/com/acme/orders/web/ProductJsonController.java` | Spring Boot configuration | Jackson 2 → 3 imports; `JacksonException` |
-| `src/main/java/com/acme/orders/config/WebConfig.java` | Spring Boot configuration | custom `ObjectMapper` bean → `spring.jackson.*` properties |
-| `src/main/resources/application.yml` | Spring Boot configuration | new — replaces `application.properties`, env-var placeholders for secrets |
-| `src/main/java/com/acme/orders/dao/OrderDaoImpl.java` | persistence | Hibernate native API → Spring Data JPA; 3 native queries kept verbatim |
-| `src/main/java/com/acme/orders/dao/ProductDaoImpl.java` | persistence | Hibernate native API → Spring Data JPA; 1 native query kept verbatim |
-| `src/main/java/com/acme/orders/repository/OrderRepository.java` | persistence | new — `JpaRepository` behind the existing `OrderDao` interface |
-| `src/main/java/com/acme/orders/repository/ProductRepository.java` | persistence | new — `JpaRepository` behind the existing `ProductDao` interface |
 
 ## Stage 8: Convert WAR → Executable JAR (Embedded Container)
 
@@ -310,17 +306,6 @@ Goal: Spring Boot 4 on Jakarta EE 11 with Spring Data JPA, then an executable JA
 - Change: `<packaging>jar</packaging>` with `spring-boot-maven-plugin` and an embedded Tomcat; remove `SpringBootServletInitializer`; translate and delete the remaining `web.xml`; JNDI DataSource → `spring.datasource.*` env vars; context path, encoding, session timeout, TLS and the container security realm → Spring Boot configuration; static assets → `src/main/resources/static`. The result is always an executable JAR — never a WAR
 - Done when: `java -jar target/acme-orders.jar` starts and serves every migrated route
 
-### File Change Manifest — Stage 8
-
-| File | Change Type | What Changes |
-|---|---|---|
-| `pom.xml` | packaging | `<packaging>jar</packaging>`; `spring-boot-maven-plugin`; JSP/JSTL and WAR plugins removed; Thymeleaf starter added |
-| `src/main/java/com/acme/orders/Application.java` | packaging | `SpringBootServletInitializer` removed; plain `SpringApplication.run` |
-| `src/main/webapp/WEB-INF/web.xml` | delete | fully translated into Spring Boot configuration |
-| `src/main/resources/application.yml` | packaging | JNDI → `spring.datasource.*`; context path, encoding, session, TLS, realm |
-| _14 files_ `src/main/webapp/WEB-INF/jsp/*.jsp` | delete | replaced by Thymeleaf templates |
-| _14 files_ `src/main/resources/templates/*.html` | view conversion | new — markup, form fields and validation messages preserved |
-| `src/main/resources/static/**` (9 files) | packaging | moved from `src/main/webapp/` |
 
 ## 2. What Stays the Same
 

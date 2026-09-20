@@ -22,7 +22,8 @@ Ground every claim in the BRD, the Technical Specification and the Existing Test
 - `### Skill Composition` — reproduce the injected Skill Composition table **verbatim**. It names the skills that govern this run and the order they run in, which is what tells an approver whose instructions produced this plan and will execute it. You cannot see the roster any other way, so anything you write instead of copying is invented.
 - `### Dependency & Version Delta` — a table: Component | Current | Target | Owning stage | Why it must move. Cover at least the JDK, the build tool, Spring / Spring Boot, Hibernate, Jackson, the JDBC driver, the logging stack, the caching stack, the test stack, and every build plugin whose version changes. Take the current values from the Technical Specification's Repo Facts and Legacy Stack Blockers — never invent a version you were not told.
 - `### Sample Transformations` — two or three real before/after snippets in fenced blocks, each labelled with its file path, drawn from files the Technical Specification actually lists. Choose ones that carry the most information: a `javax.*` → `jakarta.*` rename, an API rewrite that is not a version bump (a Hibernate `Interceptor`, an Ehcache 2 `getKeys()` call site, a log4j logger), and a configuration or packaging change if the run includes one. One real diff tells a reviewer more than a paragraph of description. If the specification does not give you enough of a file to quote honestly, say so instead of fabricating a snippet.
-- The stage and task breakdown (incremental) or the change sections (bigbang), each closing with its **File Change Manifest** table.
+- `### File Change Manifest` — **one consolidated table covering the whole migration**, placed here in question 1 and nowhere else. This is the answer to "what changes"; a reader must not have to assemble it from eight stage sections. Format and rules are defined under the manifest heading in the strategy template below.
+- The stage and task breakdown (incremental) or the change sections (bigbang), which carry the *how* and the ordering. They never repeat the manifest — one table, one place, so the plan cannot contradict itself.
 
 ### 2. What Stays the Same
 
@@ -96,16 +97,20 @@ Per the checklist's JUnit 3/4 → JUnit Jupiter section. If `{junit_upgrade}` is
 ### File Change Manifest
 A table, one row per file, and the thing the human reviewer actually approves — it is the scope agreement for the run, and the code reviewer compares it against what really changed afterwards:
 
-| File | Change Type | What Changes |
-|---|---|---|
-| `src/main/java/com/acme/OrderServlet.java` | namespace migration | `javax.servlet.*` → `jakarta.servlet.*` imports; no logic change |
-| `src/main/java/com/acme/CacheAdmin.java` | dependency bump | Ehcache 2 → 3: `getKeys()` has no equivalent, so the cache dump endpoint is rewritten to iterate |
-| `src/main/java/com/acme/Address.java` | no change needed | plain POJO, nothing to migrate |
+| File | Change Type | Owning Stage | What Changes |
+|---|---|---|---|
+| `src/main/java/com/acme/OrderServlet.java` | dependency bump, namespace migration | Stages 3, 5 | Stage 3: `org.apache.log4j.Logger` → `org.slf4j.Logger`, concatenation → `{}` parameters. Stage 5: `javax.servlet.*` → `jakarta.servlet.*`. No logic change in either |
+| `src/main/java/com/acme/CacheAdmin.java` | dependency bump | Stage 3 | Ehcache 2 → 3: `getKeys()` has no equivalent, so the cache dump endpoint is rewritten to iterate |
+| `src/main/java/com/acme/Address.java` | no change needed | — | plain POJO, nothing to migrate |
+
+Drop the **Owning Stage** column for a bigbang plan, which has no stages. Keep it for an incremental one: it is what lets a reviewer see the whole scope in one table and still know when each file is touched.
 
 Rules that make the table checkable rather than decorative:
 - **The path is backticked and real** — copied from the repository scan, workspace-relative, never invented or guessed. An entry matching no file is reported against the plan.
 - **Every in-scope file gets a row**, including the ones whose change type is `delete` or `no change needed`. A file you leave out is a file nobody approved being edited.
-- **"What Changes" is specific to that file** — what will actually be different in it, not a restatement of the change type. Two files in the same task with different edits get different text.
+- **"What Changes" is specific to that file** — what will actually be different in it, not a restatement of the change type. Two files in the same task with different edits get different text. This column is what a reviewer reads to decide whether to approve, so "updated for Spring Boot 4" is not an answer; name the API, the import or the bean that changes.
+- **One row per file, even when several stages touch it.** A file changed in Stage 3 and again in Stage 5 gets a single row listing both stages, with "What Changes" saying what each stage does to it. Never emit the same path twice.
+- **Group the rows by source tree** (`src/main/java/...`, then `src/main/resources/...`, then `src/main/webapp/...`, then build files) so the scope is readable at a glance. Where a change is genuinely uniform across many files — 23 files swapping a logger import — one row may cover them as `_23 files under_ \`src/main/java/com/acme/orders/\``, but only when the change text is true of every one of them.
 - Change types: language modernisation / namespace migration / dependency bump / Spring Boot configuration / persistence / view conversion / packaging / test migration / delete / no change needed.
 
 ## 2. What Stays the Same
@@ -126,9 +131,9 @@ Stage headings are `## Stage <n>: <title>`. Use the titles below character for c
 **Which stages to include**
 - If `{springboot_upgrade}` is **true**, emit all eight stages exactly as in the template below.
 - If `{springboot_upgrade}` is **false**, leave out every Spring Boot stage and the whole of Phase 4, and number the remaining stages consecutively. The plan then has exactly these four stage headings, in this order: `## Stage 1: Modernize Build Systems (Maven/Gradle)`, `## Stage 2: Automate Code Analysis (OpenRewrite)`, `## Stage 3: Java 8 → Java 17 LTS`, `## Stage 4: Java 17 → Java 25 LTS`. Say in the Overview that the Spring Boot stages were not requested.
-- If a stage genuinely has nothing to do for this codebase (e.g. no Spring at all), still emit its heading with "No changes needed — <reason>" and an empty manifest.
+- If a stage genuinely has nothing to do for this codebase (e.g. no Spring at all), still emit its heading with "No changes needed — <reason>" and no task blocks, and give it no rows in the File Change Manifest.
 
-**Every stage's work is a list of tasks.** A stage's File Change Manifest is expressed as task blocks, because each task is applied by its own modifier run with its own fresh context — a stage applied in one pass would otherwise accumulate every file it touches and overflow the model's window on a large repository. Inside each stage section, emit:
+**Every stage's work is a list of tasks.** A stage is broken into task blocks because each task is applied by its own modifier run with its own fresh context — a stage applied in one pass would accumulate every file it touches and overflow the model's window on a large repository. Inside each stage section, emit:
 
 ```
 ### Task <stage number>.<task number>: <short imperative title>
@@ -143,9 +148,11 @@ Sizing rules, which matter more than tidiness:
 - Group by the Dependency Graph & Migration Groups section of the Technical Specification: files that change together (an interface and its implementors, an entity and its DAO) belong in **one** task, or the edits will be made in separate contexts and disagree.
 - Order tasks so dependencies come first, and say so in `Depends on:`.
 - A task must be self-contained: its `Change:` text is all the modifier will see of the plan, besides the stage heading.
-- When the files in one task get materially different edits, `Change:` says which file gets which — the per-file detail belongs there as well as in the stage's File Change Manifest table.
+- When the files in one task get materially different edits, `Change:` says which file gets which — the per-file detail belongs there as well as in the consolidated File Change Manifest.
 
-Each stage then closes with its own **File Change Manifest** table in the format defined above, covering every file that stage's tasks touch. The tasks are what the modifier executes; the table is what the human reviewer approves and what the code reviewer checks the result against, so the two must agree.
+A stage section is its task blocks and nothing else — **no per-stage manifest table.** Every file a stage touches already appears in the consolidated File Change Manifest in question 1, tagged with that stage in the Owning Stage column. Two tables of the same thing drift, and when they disagree the reviewer cannot tell which one was approved.
+
+The tasks are what the modifier executes, one run per task; the consolidated manifest is what the human approves and what the code reviewer checks the result against. Every file on a task's `Files:` line must have a row in that manifest naming that task's stage, or the run will do work nobody approved.
 
 **Why the JDK and Spring Boot stages interleave:** every stage must land on a supported JDK/framework combination. Spring Boot 2.7 supports Java 8–21, and Spring Boot 3.x needs Java 17+. So on Java 17 the framework moves to 2.7 and then to 3.x, *before* the jump to Java 25; Spring Boot 4 comes after it. Never plan a Spring Boot 2.x codebase on Java 25.
 
@@ -157,7 +164,11 @@ Each stage then closes with its own **File Change Manifest** table in the format
 Current state (JDK, build tool, Spring / Spring Boot version, packaging and deployment model, persistence and view technology from the scanner's repo facts) and the phase roadmap below.
 
 ## 1. What Changes
-`### Skill Composition`, `### Dependency & Version Delta` and `### Sample Transformations` exactly as specified above, then `### Deprecated Libraries`, then the phase and stage breakdown that follows. The `## Phase` and `## Stage` headings below stay at `##` level — they are parsed by stage title, so never renumber them or nest them under this section.
+`### Skill Composition`, `### Dependency & Version Delta` and `### Sample Transformations` exactly as specified above, then `### Deprecated Libraries`, then `### File Change Manifest` — **the one consolidated table for the whole migration**, in the format defined above and including the Owning Stage column, listing every source, resource, webapp and build file the run touches across all eight stages.
+
+Put it here, before the stages. A reader asking "what changes?" must see the files and their changes in this section, not have to assemble them from the stage breakdown. The stages that follow give the ordering and the task-level detail; they do not repeat the table.
+
+The `## Phase` and `## Stage` headings below stay at `##` level — they are parsed by stage title, so never renumber them or nest them under this section.
 
 ### Deprecated Libraries
 Per the checklist's "Deprecated Libraries — always called out" section: Library | Version found | Status (deprecated / EOL / insecure) | Replacement | Owning stage (or "not in scope for this run"). Always include JUnit 3/4 and `junit-vintage-engine` (with test-class counts), Jackson 1 / old Jackson 2 / Jackson 2 on a Spring Boot 4 target, Ehcache 2 with its Spring, Hibernate and `ehcache-web` integrations, and google-collections / old Guava — including the ones a toggle keeps out of scope.
@@ -169,11 +180,10 @@ Goal: a modern, reproducible build that still compiles at Java 8, with no applic
 - `maven.compiler.release` (or Gradle `options.release`) = 8; plugin versions pinned to the readiness skill's minimums; versions consolidated into properties; `http://` repositories → `https://`; Gradle wrapper and deprecated configurations if Gradle
 - **Baseline safety net — the test stack goes first:** `mockito-all`/`mockito-core` 1.x → `mockito-core` 4.11.0 (Mockito 1.x mocks via cglib and breaks outright on JDK 9+; 5.x waits for the Java 17 stage, where the runtime floor becomes Java 11+), `junit` 4.x → 4.13.2 (a bridge only — JUnit 3/4 stay flagged as deprecated), surefire/failsafe 2.x → 3.2.5+ (2.x cannot fork a test JVM on JDK 9+). This is the only place a dependency version *value* changes in Phase 1, and it is limited to test-scoped artifacts
 - **Dead build cruft removed:** `maven-svn-revision-number-plugin` and any stale SVN `<scm>` URL, `cargo-maven2-plugin` (embedded Jetty 6 won't run on a modern JDK) → current `jetty-maven-plugin` or nothing, duplicate declarations
-- File Change Manifest for this stage only (build files, plus test-scoped dependency entries — no `src/main/` files)
+- Manifest rows for this stage are build files plus test-scoped dependency entries only — no `src/main/` file may carry Stage 1
 
 ## Stage 2: Automate Code Analysis (OpenRewrite)
 - `rewrite.yml` with one composite recipe per remaining stage in this plan, named by purpose (`Java17`, `SpringBoot27`, `SpringBoot3`, `Java25`, `SpringBoot4`); the OpenRewrite build plugin declared with no lifecycle executions (Maven) or a standalone init script (Gradle); `docs/migration/openrewrite-analysis.md`
-- File Change Manifest for this stage only
 
 ## Phase 2: Java 17 Baseline
 Goal: Java 17, and — if a Spring Boot upgrade was requested — the framework on Spring Boot 2.7, the newest line that still uses `javax`.
@@ -193,18 +203,16 @@ Goal: Java 17, and — if a Spring Boot upgrade was requested — the framework 
   - `ojdbc6`/`ojdbc14` → `ojdbc11`; `google-collections` (and any older Guava) → the newest `com.google.guava:guava` `-jre` release, pinned once via `guava-bom`, with removed Guava APIs rewritten (`Objects.toStringHelper` → `MoreObjects`, `new Stopwatch()` → `Stopwatch.createStarted()`, `MapMaker.makeComputingMap` → `CacheBuilder`, `sameThreadExecutor` → `directExecutor`, executor-less `Futures.transform`/`addCallback`); `spring-mock` removed from runtime scope (real `HttpServletRequestWrapper`/`ServletOutputStream` instead); `javax.xml.bind` usage anywhere in the repo → an explicit JAXB 2.3.x dependency
 - Remaining library bumps needed to build on 17 (Lombok, Mockito 4.11 → 5.x, ByteBuddy)
 - If `{junit_upgrade}` is true, do the JUnit 3/4 → JUnit Jupiter migration in this stage and remove `junit:junit` and `junit-vintage-engine` once the last test is converted; if false, leave the test code alone and keep the JUnit 3/4 classes listed under Deprecated Libraries
-- File Change Manifest for this stage only
 
 ## Stage 4: Upgrade to Spring Boot 2.7 (WAR intact)
 - On Java 17 (compiler release unchanged): Spring Boot 2.7.x parent / BOM and starters, `SpringBootServletInitializer` composition root, embedded-container starter `provided`, Spring-bootstrap `web.xml` entries retired, XML bean files kept via `@ImportResource`; `javax.*` untouched; `<packaging>war</packaging>` kept. Governed by `springboot-incremental-upgrade`
-- File Change Manifest for this stage only
 
 ## Phase 3: Java 25 Baseline
 Goal: Java 25 — and, if a Spring Boot upgrade was requested, first move the framework to Spring Boot 3.x (Jakarta), which supports it.
 
 ## Stage 5: Upgrade to Spring Boot 3.x (Jakarta namespace transition)
 - Still on Java 17 (compiler release unchanged): Spring Boot 3.5.x (a release that also supports Java 25, the next stage); Jakarta EE `javax.*` → `jakarta.*` (never Java SE `javax.sql` / `javax.naming` / `javax.crypto` / JAXP …) with matching artifact swaps (including `jackson-module-jaxb-annotations` → `jackson-module-jakarta-xmlbind-annotations` and Ehcache 3's `jakarta` classifier; any surviving Spring `EhCacheCacheManager` must go, since Spring 6 removed it); Spring Security 6 / Spring MVC 6 changes; WAR kept; the external container must become Tomcat 10.1+. Governed by `springboot-incremental-upgrade`
-- File Change Manifest for this stage only — list every file containing a Jakarta EE `javax.*` import
+- Every file containing a Jakarta EE `javax.*` import carries this stage in the consolidated manifest
 
 ## Stage 6: Java 17 → Java 25 LTS
 - Compiler release → 25
@@ -212,18 +220,15 @@ Goal: Java 25 — and, if a Spring Boot upgrade was requested, first move the fr
 - Library bumps needed for JDK 25 (e.g. Lombok 1.18.40+, Mockito 5.x) — never the Spring Boot version
 - **Verification that Phase 2's legacy cleanup really finished:** no `cglib`/`javassist` anywhere in the dependency tree (including transitively) — JDK 17+ strong encapsulation makes them throw `InaccessibleObjectException`, and `--add-opens` is not the fix; no remaining reflective access to JDK internals
 - **If `{springboot_upgrade}` is false and the app is on plain Spring 5.3:** Spring must move to 6.x in this stage, since 5.3 does not support Java 25 — which forces the Jakarta EE `javax.*` → `jakarta.*` rename here (never the Java SE `javax.sql`/`javax.naming`/`javax.crypto`/JAXP packages). List every renamed file. Never leave a Spring 5.3 application compiled at release 25
-- File Change Manifest for this stage only
 
 ## Phase 4: Spring Boot 4 & Cloud Native
 Goal: Spring Boot 4 on Jakarta EE 11 with Spring Data JPA, then an executable JAR on an embedded container.
 
 ## Stage 7: Upgrade to Spring Boot 4.x
 - Spring Boot 4.x / Spring Framework 7 / Jakarta EE 11 per the `springboot-war-to-boot4` skill's vectors 1–4: dependency cleanup (every conflicting library listed by name), Jakarta EE 11, Spring XML / `web.xml` / properties → Java config and `application.yml`, persistence → Spring Data JPA; Jackson 2 → Jackson 3 (`tools.jackson.*`, immutable `JsonMapper`, unchecked `JacksonException`) — Boot 4's Jackson 2 support is deprecated and never the end state; JUnit 4 tests flagged again, since Spring Framework 7 deprecates `SpringRunner` and JUnit 6 deprecates the Vintage engine. Still a WAR (Tomcat 11+) in this stage; the JSP views and their libraries stay until Stage 8
-- File Change Manifest for this stage only
 
 ## Stage 8: Convert WAR → Executable JAR (Embedded Container)
 - JSP views → Thymeleaf templates; packaging → `jar` with an embedded Tomcat; `SpringBootServletInitializer` removed; remaining `web.xml` translated and deleted; container-provided resources (JNDI DataSource, context path, encoding, session, TLS, realms) → Spring Boot configuration; static assets → `src/main/resources/static`; remaining WAR/JSP-only libraries and plugins removed. The result is always an executable JAR — never a WAR
-- File Change Manifest for this stage only
 
 ## 2. What Stays the Same
 ## 3. Why This Is Safe

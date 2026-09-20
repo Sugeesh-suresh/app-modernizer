@@ -148,6 +148,19 @@ class TestManifestParsing:
 
         assert [e.path for e in parse_plan_manifest(plan)] == ["pom.xml", "rewrite.yml"]
 
+    def test_a_dash_only_cell_is_a_blank_not_content(self):
+        """A "no change needed" row leaves the owning-stage cell as a dash;
+        joining it into the description gives "x — — — y"."""
+        plan = (
+            "| File | Change Type | Owning Stage | What Changes |\n|---|---|---|---|\n"
+            "| `src/main/java/Address.java` | no change needed | — | Plain POJO |\n"
+        )
+
+        entry = parse_plan_manifest(plan)[0]
+
+        assert entry.change == "no change needed — Plain POJO"
+        assert entry.no_change_expected
+
     def test_a_plan_with_no_manifest_parses_to_nothing(self):
         assert parse_plan_manifest("## Overview\nWe will modernise the build.\n") == []
 
@@ -360,7 +373,16 @@ class TestSkillContract:
         # Task blocks stay load-bearing for the per-task modifier runs.
         assert "### Task <stage number>.<task number>" in body
         assert "- Files: `path/one.java`, `path/two.java`" in body
-        assert "Each stage then closes with its own **File Change Manifest** table" in body
+
+    def test_there_is_exactly_one_manifest_and_it_lives_in_what_changes(self):
+        """A reader asking "what changes?" must see the files there, not have to
+        assemble them from eight stage sections — and two tables of the same
+        thing drift, leaving the reviewer unable to tell which was approved."""
+        body = self._skill("java-8-to-25-plan")
+
+        assert "one consolidated table covering the whole migration" in body
+        assert "no per-stage manifest table" in body
+        assert "| File | Change Type | Owning Stage | What Changes |" in body
 
     def test_the_review_runs_the_plan_check_and_reports_both_directions(self):
         body = self._skill("code-review")

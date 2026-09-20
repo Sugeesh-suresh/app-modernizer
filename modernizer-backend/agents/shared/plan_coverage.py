@@ -162,7 +162,9 @@ def parse_plan_manifest(plan: str) -> list[PlannedFile]:
         candidate = (backticked[0] if backticked else cells[0]).strip()
         if not _looks_like_path(candidate):
             continue
-        change = _clip(" — ".join(c for c in cells[1:] if c))
+        # A cell holding only a dash is a deliberate blank (an unowned stage for a
+        # "no change needed" row), not content — joining it yields "x — — — y".
+        change = _clip(" — ".join(c for c in cells[1:] if c.strip(" -—–") ))
         _add(out, PlannedFile(candidate, change, "manifest table", bool(_NO_CHANGE.search(change))))
 
     # 3 — bullet / checkbox lines whose first backticked span is a path.
