@@ -98,6 +98,15 @@ QUESTIONS: tuple[Question, ...] = (
 )
 
 _HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(?P<text>.+?)\s*#*\s*$", re.MULTILINE)
+#: Marks the appended block so a later pass can strip it. The refine flow feeds
+#: the previous plan back to the planner, which reliably carries trailing blocks
+#: forward, so the block must be removed before re-checking or a stale warning
+#: outlives the gaps it described.
+_WARNING_MARKER = "## \u26a0 Plan Completeness Check"
+_WARNING_BLOCK = re.compile(
+    r"\n*(?:^|\n)---\s*\n+" + re.escape(_WARNING_MARKER) + r".*?(?=\Z)",
+    re.DOTALL,
+)
 _FILLER = re.compile(r"\b(?:the|a|an|and|or|of|for|in|to|this|its|we|we'll|will|is|are|be)\b")
 
 
@@ -122,8 +131,21 @@ class ContractResult:
         return not self.missing_questions and not self.missing_parts
 
 
+def strip_warning(plan: str) -> str:
+    """The plan without any previously appended completeness warning."""
+    if _WARNING_MARKER not in plan:
+        return plan
+    return _WARNING_BLOCK.sub("", plan).rstrip() + "\n"
+
+
 def check(plan: str) -> ContractResult:
-    """Which of the six questions, and which of their parts, the plan does not answer."""
+    """Which of the six questions, and which of their parts, the plan does not answer.
+
+    Any previously appended warning is stripped first: its "Missing entirely"
+    list names headings, and leaving it in would let a stale warning satisfy the
+    very check it was reporting on.
+    """
+    plan = strip_warning(plan)
     result = ContractResult()
     if not plan or not plan.strip():
         result.missing_questions = list(QUESTIONS)
@@ -191,13 +213,17 @@ def make_plan_contract_callback(plan_key: str = "plan"):
 
     def _check_plan(callback_context: CallbackContext) -> Optional[genai_types.Content]:
         state = callback_context.state
-        plan = (state or {}).get(plan_key, "") or ""
-        if not plan.strip():
+        raw = (state or {}).get(plan_key, "") or ""
+        if not raw.strip():
             return None
+        # Re-check the plan itself, never a warning carried over from a previous
+        # pass, and replace rather than append: a refine cycle that fixed the
+        # gaps must not still be labelled with them.
+        plan = strip_warning(raw)
         warning = to_markdown(check(plan))
-        if not warning or "## ⚠ Plan Completeness Check" in plan:
-            return None
-        state[plan_key] = plan + "\n" + warning
+        updated = plan + "\n" + warning if warning else plan
+        if updated != raw:
+            state[plan_key] = updated
         return None
 
     return _check_plan

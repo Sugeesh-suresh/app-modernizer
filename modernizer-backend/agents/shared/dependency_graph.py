@@ -20,9 +20,17 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import TypedDict
 
+#: Directories that are never repository source: VCS metadata, IDE state, and
+#: build output for every toolchain the patterns generate into. Missing the
+#: JS/TS outputs meant a generated frontend's `dist/` (~40 files from one
+#: `npm run build`) dominated the change audit and the Changed Files view.
 EXCLUDED_DIRS = {
-    ".git", "target", "build", "node_modules", ".gradle",
-    "__pycache__", "bin", "obj", ".idea", ".vscode",
+    ".git", ".gradle", ".idea", ".vscode", "__pycache__",
+    # JVM build output
+    "target", "build", "bin", "obj",
+    # JS/TS dependencies and build output
+    "node_modules", "dist", "out", "coverage",
+    ".next", ".nuxt", ".svelte-kit", ".output", ".turbo", ".parcel-cache", ".vite",
 }
 
 

@@ -51,6 +51,22 @@ PLAN_WITH_TASKS = """# Migration Plan: Java 8 → Java 25 (Incremental)
 """
 
 
+PLAN_ALL_FOUR_STAGES = """# Migration Plan: Java 8 → Java 25 (Incremental)
+
+## Stage 1: Modernize Build Systems (Maven/Gradle)
+- Pin plugin versions.
+
+## Stage 2: Automate Code Analysis (OpenRewrite)
+- Declare the composite recipes.
+
+## Stage 3: Java 8 → Java 17 LTS
+- Raise Spring to 5.3.x.
+
+## Stage 4: Java 17 → Java 25 LTS
+- Set the compiler release to 25.
+"""
+
+
 def _state(springboot_upgrade: bool, plan: str = "") -> dict:
     state = main._initial_state(
         "java-8-to-25", "", "", "{}", "incremental", False, springboot_upgrade,
@@ -147,17 +163,45 @@ def _run_incremental(monkeypatch, springboot_upgrade: bool,
 
 
 def test_orchestrator_skips_spring_boot_stages_but_numbers_steps_consecutively(monkeypatch):
-    events, calls = _run_incremental(monkeypatch, springboot_upgrade=False)
+    events, calls = _run_incremental(
+        monkeypatch, springboot_upgrade=False, plan=PLAN_ALL_FOUR_STAGES,
+    )
     starts = [e for t, e in events if t == "stage-start"]
     assert [e["stage"] for e in starts] == [1, 2, 3, 4]
     assert {e["total"] for e in starts} == {4}
     assert starts[3]["title"] == JAVA_25
+    # The plan renumbers its own headings 1-4; the runner keys stay the stable
+    # INCREMENTAL_STAGES ids, so Java 25 is still stage 6's runner.
     assert [c for c in calls if c.startswith("code_stage_")] == [
         "code_stage_1_modify", "code_stage_1_build",
         "code_stage_2_modify", "code_stage_2_build",
         "code_stage_3_modify", "code_stage_3_build",
         "code_stage_6_modify", "code_stage_6_build",
     ]
+
+
+def test_a_stage_the_plan_never_covers_is_skipped_not_run_against_the_whole_plan(monkeypatch):
+    """A missing stage section used to fall back to the entire plan, handing one
+    stage's modifier every other stage's instructions to apply under this stage's
+    guardrail. There is no safe way to guess a missing stage's contents."""
+    partial = PLAN_ALL_FOUR_STAGES.replace(
+        "## Stage 2: Automate Code Analysis (OpenRewrite)\n- Declare the composite recipes.\n", ""
+    )
+    events, calls = _run_incremental(monkeypatch, springboot_upgrade=False, plan=partial)
+
+    assert "code_stage_2_modify" not in calls
+    assert "code_stage_2_build" not in calls
+    # Every other stage still runs, and the skip is reported rather than silent.
+    assert "code_stage_3_modify" in calls and "code_stage_6_modify" in calls
+    skipped = [e for t, e in events if t == "stage-complete" and e.get("skipped")]
+    assert [e["title"] for e in skipped] == ["Automate Code Analysis (OpenRewrite)"]
+
+
+def test_an_empty_plan_changes_nothing_at_all(monkeypatch):
+    events, calls = _run_incremental(monkeypatch, springboot_upgrade=False, plan="")
+
+    assert [c for c in calls if c.startswith("code_stage_")] == []
+    assert len([e for t, e in events if t == "stage-complete" and e.get("skipped")]) == 4
 
 
 def test_each_plan_task_gets_its_own_modifier_run(monkeypatch):

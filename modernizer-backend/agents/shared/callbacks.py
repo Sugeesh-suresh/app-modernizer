@@ -1,7 +1,10 @@
 """
 Shared ADK agent callbacks for the Stella Modernizer pipeline.
 """
+import contextlib
+import fcntl
 import json
+import os
 import pathlib
 import re
 from datetime import datetime
@@ -61,6 +64,54 @@ def make_validation_exit_callback(result_key: str = "validation_result"):
     return _exit_on_pass
 
 
+#: Learned-pattern entries kept per skill. Without a cap the section grows on
+#: every failed build, and it is prompt text every later run pays for.
+MAX_LEARNED_ENTRIES = 20
+
+#: Set to "0"/"false" to stop the pipeline writing to its own skill files —
+#: appropriate wherever the checkout is read-only or shared between deployments.
+_LEARNING_ENABLED = os.getenv("MODERNIZER_SKILL_LEARNING", "1").lower() not in {"0", "false", "no"}
+
+_LEARNED_HEADING = "## Learned Patterns"
+
+
+@contextlib.contextmanager
+def _locked(path: pathlib.Path):
+    """Exclusive advisory lock around a skill file's read-modify-write.
+
+    Concurrent sessions share one skills directory, so without this two runs
+    read the same content and the second write silently discards the first —
+    or interleaves into a file every later run then loads as its prompt.
+    """
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    handle = None
+    try:
+        handle = open(lock_path, "w")
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    except OSError:
+        # A lock we cannot take must not fail the migration; the write is skipped.
+        yield
+    finally:
+        if handle is not None:
+            with contextlib.suppress(OSError):
+                fcntl.flock(handle, fcntl.LOCK_UN)
+                handle.close()
+
+
+def _prune_learned(content: str, max_entries: int = MAX_LEARNED_ENTRIES) -> str:
+    """Keep only the most recent *max_entries* `### ` blocks under the
+    Learned Patterns heading."""
+    head, sep, tail = content.partition(_LEARNED_HEADING)
+    if not sep:
+        return content
+    blocks = re.split(r"(?=^### )", tail, flags=re.MULTILINE)
+    lead, entries = blocks[0], [b for b in blocks[1:] if b.strip()]
+    if len(entries) <= max_entries:
+        return content
+    return head + sep + lead + "".join(entries[-max_entries:])
+
+
 def make_skill_update_callback(
     validation_key: str,
     skill_md_path: pathlib.Path,
@@ -83,6 +134,8 @@ def make_skill_update_callback(
     """
 
     def _update_skill(callback_context: CallbackContext) -> Optional[genai_types.Content]:
+        if not _LEARNING_ENABLED:
+            return None
         raw = (callback_context.state or {}).get(validation_key, "")
         if not raw:
             return None
@@ -98,12 +151,20 @@ def make_skill_update_callback(
         if not skill_md_path.exists():
             return None
 
-        content = skill_md_path.read_text(encoding="utf-8")
+        with _locked(skill_md_path):
+            _append_learned(skill_md_path, errors, summary, section_header)
+        return None
+
+    def _append_learned(skill_md_path, errors, summary, section_header) -> None:
+        try:
+            content = skill_md_path.read_text(encoding="utf-8")
+        except OSError:
+            return
 
         # Skip errors the file already mentions (simple substring check).
         new_errors = [e for e in errors if e.strip() and e.strip() not in content]
         if not new_errors:
-            return None
+            return
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
         entry_lines: list[str] = [f"\n### {section_header} — {timestamp}"]
@@ -115,10 +176,12 @@ def make_skill_update_callback(
         entry = "\n".join(entry_lines) + "\n"
 
         # Create the top-level section heading on first write.
-        if "## Learned Patterns" not in content:
-            entry = "\n---\n\n## Learned Patterns\n" + entry
+        if _LEARNED_HEADING not in content:
+            entry = "\n---\n\n" + _LEARNED_HEADING + "\n" + entry
 
-        skill_md_path.write_text(content + entry, encoding="utf-8")
-        return None
+        try:
+            skill_md_path.write_text(_prune_learned(content + entry), encoding="utf-8")
+        except OSError:
+            return
 
     return _update_skill

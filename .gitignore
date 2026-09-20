@@ -15,3 +15,8 @@ modernizer-app/dist/
 
 # macOS
 .DS_Store
+
+# Advisory lock files created at runtime by the skill-learning callback
+*.SKILL.md.lock
+SKILL.md.lock
+agents/skills/*/SKILL.md.lock

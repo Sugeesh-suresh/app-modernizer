@@ -93,9 +93,16 @@ _KEEP_FRAMEWORK = (
 )
 
 # Same rule for the JDK stages, minus the Spring Framework version: see _SPRING_FLOOR_* below.
-_KEEP_BOOT = (
+# Stage 3 can forbid the Jakarta rename outright, because Spring 5.3 is still `javax` and nothing
+# at that stage needs it. Stage 6 cannot: when no Spring Boot upgrade was requested, Spring 6 is
+# the only way onto Java 25 and Spring 6 IS `jakarta`, so the rename has to happen there. Stating
+# both the blanket prohibition and the requirement in one prompt made the stage unactionable.
+_KEEP_BOOT_17 = (
     "Do not change the Spring Boot version or the packaging, and do not rename Jakarta EE `javax.*` "
     "packages — those belong to the Spring Boot stages (when requested)."
+)
+_KEEP_BOOT_25 = (
+    "Do not change the Spring Boot version or the packaging."
 )
 
 # A JDK stage cannot leave the framework behind: old Spring/Hibernate lines bundle an ASM that
@@ -109,11 +116,18 @@ _SPRING_FLOOR_17 = (
     "Hibernate 5.6.x bump. Never go past Spring 5.3 here."
 )
 _SPRING_FLOOR_25 = (
-    "The one framework change this stage owns: if the app is still on plain Spring Framework 5.3 "
-    "because no Spring Boot upgrade was requested, raise it to Spring 6.x — 5.3 does not support "
-    "Java 25 — which forces the Jakarta EE `javax.*` → `jakarta.*` rename in this stage (never the "
-    "Java SE `javax.sql`, `javax.naming`, `javax.crypto` or JAXP packages). If the app is already "
-    "Spring Boot-managed, leave the framework version alone."
+    "The Jakarta EE namespace is decided by which of these two cases the app is in, and exactly one "
+    "of them applies:\n"
+    "  (a) The app is Spring Boot-managed (a Spring Boot upgrade was requested, so the Spring Boot "
+    "3.x stage already ran). Leave the framework version alone and do NOT rename anything — that "
+    "stage already moved `javax.*` to `jakarta.*`.\n"
+    "  (b) The app is on plain Spring Framework 5.3 because no Spring Boot upgrade was requested. "
+    "Raise it to Spring 6.x — 5.3 does not support Java 25 — and because Spring 6 is built on "
+    "Jakarta EE, the `javax.*` → `jakarta.*` rename MUST happen in this stage. It is this stage's "
+    "work, not a later one's; there is no later one. Rename every Jakarta EE package and never the "
+    "Java SE `javax.sql`, `javax.naming`, `javax.crypto` or JAXP packages.\n"
+    "Never leave a Spring 5.3 application compiled at release 25, and never revert Spring to 5.3 to "
+    "make the build pass."
 )
 
 # The "incremental" strategy, in strict order. JDK and Spring Boot stages interleave so
@@ -136,7 +150,7 @@ INCREMENTAL_STAGES: list[IncrementalStage] = [
     ),
     IncrementalStage(
         3, 2, "Java 17 Baseline", "Java 8 → Java 17 LTS", "17", False, (),
-        "Set the compiler release to exactly 17, not further. " + _KEEP_BOOT + " " + _SPRING_FLOOR_17,
+        "Set the compiler release to exactly 17, not further. " + _KEEP_BOOT_17 + " " + _SPRING_FLOOR_17,
     ),
     IncrementalStage(
         4, 2, "Java 17 Baseline", "Upgrade to Spring Boot 2.7 (WAR intact)", "17", True,
@@ -154,7 +168,7 @@ INCREMENTAL_STAGES: list[IncrementalStage] = [
     ),
     IncrementalStage(
         6, 3, "Java 25 Baseline", "Java 17 → Java 25 LTS", "25", False, (),
-        "Set the compiler release to exactly 25. " + _KEEP_BOOT + " " + _SPRING_FLOOR_25,
+        "Set the compiler release to exactly 25. " + _KEEP_BOOT_25 + " " + _SPRING_FLOOR_25,
     ),
     IncrementalStage(
         7, 4, "Spring Boot 4 & Cloud Native", "Upgrade to Spring Boot 4.x", "25", True,

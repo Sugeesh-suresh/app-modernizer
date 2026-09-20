@@ -84,10 +84,30 @@ def test_stage_units_falls_back_to_the_whole_stage_without_task_blocks():
     assert "Pin plugin versions" in units[0].body
 
 
-def test_stage_units_falls_back_to_the_whole_plan_when_the_stage_heading_is_missing():
-    plan = "A plan a reviewer rewrote without stage headings."
+def test_stage_units_returns_nothing_when_the_stage_heading_is_missing():
+    """It used to fall back to the WHOLE PLAN, so a stage the planner omitted
+    handed its modifier every other stage's instructions to apply under this
+    stage's guardrail — a silent, repo-wide scope explosion. A stage with no
+    section is skipped by the caller instead."""
+    plan = "## Stage 1: Modernize Build Systems (Maven/Gradle)\nJust build files.\n"
 
     units, from_plan = plan_tasks.stage_units(plan, "Java 17 → Java 25 LTS")
 
+    assert units == []
     assert from_plan is False
-    assert units[0].body == plan
+
+
+def test_stage_units_still_falls_back_within_a_section_that_has_no_tasks():
+    """A hand-edited plan whose stage section is real but has no `### Task`
+    blocks must still run — as one whole-section pass, scoped to that section."""
+    plan = (
+        "## Stage 1: Modernize Build Systems (Maven/Gradle)\nOnly build files.\n\n"
+        "## Stage 3: Java 8 → Java 17 LTS\nRaise Spring to 5.3.\n"
+    )
+
+    units, from_plan = plan_tasks.stage_units(plan, "Modernize Build Systems (Maven/Gradle)")
+
+    assert len(units) == 1 and from_plan is False
+    assert "Only build files." in units[0].body
+    # Scoped to its own section — never the next stage's content.
+    assert "Raise Spring to 5.3" not in units[0].body

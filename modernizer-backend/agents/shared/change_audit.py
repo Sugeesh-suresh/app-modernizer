@@ -44,6 +44,10 @@ _SCAN_SUFFIXES = {
     ".java", ".xml", ".properties", ".yml", ".yaml", ".gradle", ".kts",
     ".jsp", ".jspf", ".tag", ".tld", ".sql", ".pks", ".pkb", ".plsql",
     ".js", ".jsx", ".ts", ".tsx", ".json", ".conf", ".cfg",
+    # Templates and views. A JSP scriptlet or taglib surviving into a Thymeleaf
+    # or React template is precisely the defect worth catching, and these were
+    # invisible to the scan.
+    ".html", ".htm", ".vue", ".svelte",
 }
 
 # Evidence caps — a review prompt has a budget, and 200 residual-legacy files
@@ -222,6 +226,18 @@ FORBIDDEN_MARKERS: dict[str, list[Marker]] = {
 }
 
 
+#: Patterns that GENERATE new trees beside the original application instead of
+#: transforming it in place. For these, the legacy source is meant to survive --
+#: the plan's own rollback section promises the old app stays deployable until
+#: the replacement is verified -- so scanning it for legacy markers reports the
+#: entire source repository as a coverage gap, one finding per file. The residual
+#: scan is limited to the generated trees, where a legacy marker IS a real defect
+#: (a scriptlet copied into a template, a JSP taglib in the BFF).
+GENERATED_SUBTREES: dict[str, tuple[str, ...]] = {
+    "jsp-to-react-bff": ("backend/", "frontend/"),
+}
+
+
 class MarkerHit(TypedDict):
     marker: str
     line: str
@@ -249,6 +265,8 @@ class ChangeAudit:
     changed_total: int = 0
     unchanged_total: int = 0
     unchanged_scanned: int = 0
+    unchanged_out_of_scope: int = 0
+    generated_subtrees: tuple[str, ...] = ()
     explained: list[ChangedFileAudit] = field(default_factory=list)
     unexplained: list[ChangedFileAudit] = field(default_factory=list)
     regressions: list[ChangedFileAudit] = field(default_factory=list)
@@ -329,7 +347,9 @@ def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str) -> Change
     legacy = LEGACY_MARKERS.get(pattern, [])
     modern = MODERN_MARKERS.get(pattern, [])
     forbidden = FORBIDDEN_MARKERS.get(pattern, [])
-    audit = ChangeAudit(pattern=pattern, markers_configured=bool(legacy or modern))
+    subtrees = GENERATED_SUBTREES.get(pattern, ())
+    audit = ChangeAudit(pattern=pattern, markers_configured=bool(legacy or modern),
+                        generated_subtrees=subtrees)
 
     baseline_root = Path(baseline_dir).resolve() if baseline_dir else None
     workspace_root = Path(workspace_dir).resolve() if workspace_dir else None
@@ -346,6 +366,10 @@ def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str) -> Change
 
         if rel in before and rel in after and before_text == after_text:
             audit.unchanged_total += 1
+            if subtrees and not rel.startswith(subtrees):
+                # The original application, which this pattern leaves in place by design.
+                audit.unchanged_out_of_scope += 1
+                continue
             if Path(rel).suffix.lower() in _SCAN_SUFFIXES and legacy:
                 audit.unchanged_scanned += 1
                 present = _scan(after_text.splitlines(), legacy)
@@ -422,6 +446,15 @@ def to_markdown(audit: ChangeAudit) -> str:
         f"- Files changed: **{audit.changed_total}**",
         f"- Files unchanged: **{audit.unchanged_total}** ({audit.unchanged_scanned} of them scannable source/config)",
     ]
+    if audit.generated_subtrees:
+        trees = ", ".join(f"`{t}`" for t in audit.generated_subtrees)
+        lines += [
+            f"- This pattern GENERATES {trees} beside the original application, which it leaves in "
+            f"place on purpose. {audit.unchanged_out_of_scope} untouched file(s) outside those trees "
+            "are the original app and are **not** coverage gaps — do not report them as such. The "
+            "residual-legacy check below covers the generated trees only, where a legacy marker "
+            "would be a real defect.",
+        ]
     if not audit.markers_configured:
         lines += [
             "",
@@ -477,9 +510,10 @@ def to_markdown(audit: ChangeAudit) -> str:
     # 3 — untouched files that still look legacy.
     lines += ["", "## 3. Unchanged files that still match a legacy marker", ""]
     if not audit.residual_legacy:
+        scope = " in the generated trees" if audit.generated_subtrees else ""
         lines.append(
-            "None — no untouched source or config file still matches a legacy marker for this "
-            "pattern. The unchanged files are, on this evidence, genuinely out of scope."
+            f"None — no untouched source or config file{scope} still matches a legacy marker for "
+            "this pattern. The unchanged files are, on this evidence, genuinely out of scope."
         )
     else:
         lines.append(

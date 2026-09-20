@@ -351,7 +351,9 @@ async def _run_standalone_agent(session_id: str, runner, message: str, sse_event
         traceback.print_exc()
 
 
-async def _run_java8_incremental_code_step(session_id: str) -> None:
+async def _run_java8_incremental_code_step(
+    session_id: str, push_session_id: str | None = None,
+) -> None:
     """Run the java-8-to-25 phased incremental strategy: up to 8 true staged
     passes in 4 phases (Readiness; Java 17 + Spring Boot 2.7; Spring Boot
     3.x + Java 25; Spring Boot 4 -> executable JAR — the Spring Boot stages
@@ -370,6 +372,9 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
     per task, then runs the separate incremental reviewer/reporter/curator
     runners once, over every stage.
     """
+    # Agents read/write `session_id`; SSE events go to the outward session, which is
+    # a different one in a companion-bundle run (see _create_pattern_session).
+    push_session_id = push_session_id or session_id
     state = await _get_state(session_id)
     stages = incremental_stages(state.get("springboot_upgrade") == "true")
     plan_text = state.get("plan", "")
@@ -381,10 +386,25 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
             "stage": position, "total": total, "phase": stage.phase,
             "phase_title": stage.phase_title, "title": stage.title,
         }
-        await _push(session_id, "stage-start", **stage_meta)
+        await _push(push_session_id, "stage-start", **stage_meta)
 
-        # Falls back to one whole-stage unit when the plan has no task blocks (e.g. hand-edited).
+        # One unit per task block; one whole-section unit when a hand-edited plan has
+        # none; and NO units when the plan has no section for this stage at all.
         units, from_plan = plan_tasks.stage_units(plan_text, stage.title)
+        if not units:
+            # Never guess a missing stage's contents: the old fallback handed this
+            # modifier the entire plan to apply under this stage's guardrail.
+            note = (
+                f"SKIPPED — the confirmed plan has no `## Stage <n>: {stage.title}` section, so there "
+                "is nothing approved for this stage to apply. Nothing was changed. If this stage was "
+                "meant to run, add its section to the plan and re-run."
+            )
+            print(f"[incremental] stage {idx} ({stage.title}): no plan section — skipped", flush=True)
+            await _update_state(session_id, {f"modify_result_stage{idx}": f"## Modify Result\n{note}"})
+            await _push(push_session_id, "code-stream", content=f"\n\n**{stage.title}** — {note}\n",
+                        progress=100, stage=position)
+            await _push(push_session_id, "stage-complete", **stage_meta, skipped=True)
+            continue
         preamble = (
             f"You are applying the '{stage.title}' stage (step {position} of {total}, Phase "
             f"{stage.phase}: {stage.phase_title}) of the confirmed migration plan."
@@ -401,7 +421,7 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
                 "task_index": task_index, "task_total": len(units),
             }
             if from_plan:
-                await _push(session_id, "task-start", **stage_meta, **task_meta)
+                await _push(push_session_id, "task-start", **stage_meta, **task_meta)
 
             # Rendered into the modifier's instruction as {current_task}; a separate runner call
             # per task means each one starts with a fresh model context.
@@ -424,7 +444,7 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
                         text = getattr(part, "text", None)
                         if text:
                             progress = min(progress + 2, 80)
-                            await _push(session_id, "code-stream", content=text, progress=progress, stage=position)
+                            await _push(push_session_id, "code-stream", content=text, progress=progress, stage=position)
                             await asyncio.sleep(0)
             except Exception:
                 # One failed task must not abandon the rest of the stage — the build loop still runs.
@@ -438,7 +458,7 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
                 f"{(task_state.get(f'modify_result_stage{idx}') or '').strip()}"
             )
             if from_plan:
-                await _push(session_id, "task-complete", **stage_meta, **task_meta)
+                await _push(push_session_id, "task-complete", **stage_meta, **task_meta)
 
         # The reviewer, reporter and curator read one modify result per stage, not one per task.
         await _update_state(session_id, {f"modify_result_stage{idx}": "\n\n".join(summaries).strip()})
@@ -464,9 +484,9 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
                 if author and author != prev_author:
                     if author == validator_name:
                         iteration += 1
-                        await _push(session_id, "validation-agent-start", iteration=iteration, stage=position)
+                        await _push(push_session_id, "validation-agent-start", iteration=iteration, stage=position)
                     elif author == fixer_name:
-                        await _push(session_id, "fix-agent-start", iteration=iteration, stage=position)
+                        await _push(push_session_id, "fix-agent-start", iteration=iteration, stage=position)
                     prev_author = author
 
                 if not event.content or not event.content.parts:
@@ -483,7 +503,7 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
                     text = getattr(part, "text", None)
                     if text:
                         progress = min(progress + 2, 92)
-                        await _push(session_id, sse_type, content=text, progress=progress, stage=position)
+                        await _push(push_session_id, sse_type, content=text, progress=progress, stage=position)
                         await asyncio.sleep(0)
         except Exception:
             if iteration == 0:
@@ -512,7 +532,7 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
     state = await _get_state(session_id)
     code_review = state.get("code_review", "")
     if code_review:
-        await _push(session_id, "code-review-ready", content=code_review)
+        await _push(push_session_id, "code-review-ready", content=code_review)
 
     await _run_standalone_agent(
         session_id, PATTERN_RUNNERS["java-8-to-25"]["incremental_reporter"],
@@ -522,7 +542,7 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
     state = await _get_state(session_id)
     final_report = state.get("final_report", "")
     if final_report:
-        await _push(session_id, "report-ready", content=final_report)
+        await _push(push_session_id, "report-ready", content=final_report)
 
     await _run_standalone_agent(
         session_id, PATTERN_RUNNERS["java-8-to-25"]["incremental_skill_curator"],
@@ -532,7 +552,7 @@ async def _run_java8_incremental_code_step(session_id: str) -> None:
     state = await _get_state(session_id)
     skill_curator_summary = state.get("skill_curator_summary", "")
     if skill_curator_summary:
-        await _push(session_id, "skill-curator-ready", content=skill_curator_summary)
+        await _push(push_session_id, "skill-curator-ready", content=skill_curator_summary)
 
 
 # ---------------------------------------------------------------------------
@@ -559,6 +579,35 @@ def _parse_re_sections(combined: str) -> tuple[str, str, str, str]:
 
     test_end       = _E.start() if _E else len(combined)
     test_inventory = combined[_X.end():test_end].strip() if _X else ""
+
+    # A dropped marker used to fail silently, and the damage is asymmetric: the
+    # plan's Evidence Plan and Coverage Gaps are answered from test_inventory,
+    # so losing it produces a plan that quietly claims full coverage. Fall back
+    # to the section's own heading, and say so where a human will read it.
+    if not test_inventory:
+        heading = _re.search(
+            r'^#{1,4}\s*(?:SECTION\s*4\s*[—:-]*\s*)?(?:EXISTING\s+)?TEST\s+INVENTORY\b.*$',
+            tech_spec, _re.IGNORECASE | _re.MULTILINE,
+        )
+        if heading:
+            test_inventory = tech_spec[heading.start():].strip()
+            tech_spec = tech_spec[:heading.start()].strip()
+
+    missing = [name for name, found in (
+        ("ANALYSIS", _A), ("BRD", _B), ("TECHNICAL_SPECIFICATION", _T), ("TEST_INVENTORY", _X),
+    ) if not found]
+    if missing:
+        print(f"[re] WARNING: RE output missing section marker(s): {', '.join(missing)}", flush=True)
+        warning = (
+            "> **Automated warning — incomplete reverse-engineering output.** The analysis did not "
+            f"emit the {', '.join('`' + m + '`' for m in missing)} section marker(s), so this "
+            "document was split on a best-effort basis and a section may be truncated, misplaced or "
+            "empty. Check it before confirming: the plan is built from these sections, and an empty "
+            "Test Inventory makes the plan's Coverage Gaps look clean when they are simply unknown.\n"
+        )
+        brd = warning + "\n" + (brd or combined)
+        if not test_inventory:
+            test_inventory = warning
 
     return analysis, brd or combined, tech_spec, test_inventory
 
@@ -865,8 +914,14 @@ async def _run_bundle_code_generation(session_id: str, bundle: list[str]) -> Non
                 await _update_state(session_id, {"plan": plan_for_pattern})
             run_session_id = session_id
 
-        code_key = "code_bigbang" if pattern == "java-8-to-25" else "code"
-        await _run_workspace_code_step(run_session_id, pattern, code_key, push_session_id=session_id)
+        # The strategy the user chose is honoured here too. Keying only on the
+        # pattern silently ran a phased plan through the single-pass pipeline
+        # whenever a companion migration was selected alongside it.
+        if pattern == "java-8-to-25" and migration_strategy == "incremental":
+            await _run_java8_incremental_code_step(run_session_id, push_session_id=session_id)
+        else:
+            code_key = "code_bigbang" if pattern == "java-8-to-25" else "code"
+            await _run_workspace_code_step(run_session_id, pattern, code_key, push_session_id=session_id)
 
         result_state = await _get_state(run_session_id)
         await _update_state(session_id, {

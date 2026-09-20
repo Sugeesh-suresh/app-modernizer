@@ -101,12 +101,24 @@ def _files_in(body: str) -> list[str]:
 def stage_units(plan: str, stage_title: str) -> tuple[list[PlanTask], bool]:
     """The units of work for a stage, and whether they came from real task blocks.
 
-    Falls back to one whole-stage unit (the stage section, or the entire plan
-    if even the stage heading is missing) so a hand-edited plan still runs.
+    Three outcomes, and the difference between the last two matters:
+
+      * task blocks found -> one unit per task, ``True``
+      * the stage section exists but has no task blocks -> one whole-section
+        unit, ``False``. A hand-edited plan still runs.
+      * the stage section is **absent** -> ``([], False)``. The caller must skip
+        the stage.
+
+    That last case used to fall back to the whole plan, which handed one stage's
+    modifier every other stage's instructions to apply under this stage's
+    guardrail -- a silent, repo-wide scope explosion whenever the planner
+    omitted a heading it was told to emit. A stage with nothing to say is
+    skipped instead; there is no safe way to guess its contents.
     """
     section = stage_section(plan, stage_title)
+    if not section:
+        return [], False
     tasks = parse_tasks(section)
     if tasks:
         return tasks, True
-    body = section or plan
-    return [PlanTask(id="all", title=stage_title, body=body, files=[])], False
+    return [PlanTask(id="all", title=stage_title, body=section, files=[])], False

@@ -13,7 +13,7 @@ Work through the Confirmed Migration Plan's **File Change Manifest** one file at
    - solrconfig.xml changes: request handler/search component updates (e.g., explicitly declaring `solr.extraction.ExtractingRequestHandler` if `/update/extract` is used), `luceneMatchVersion` bump, `<lib>` path fixes (ensuring all necessary Solr Cell contribs are declared, if applicable)
    - SolrJ client renames: `HttpSolrServer` → `HttpSolrClient`, `CloudSolrServer` → `CloudSolrClient`, builder-based construction
    - Dependency version bumps in `pom.xml` / `build.gradle`
-3. Call `write_file` with the COMPLETE new content of the file (full overwrite, not a diff/patch).
+3. Apply the edit with `replace_in_file`, one exact snippet at a time — copy `old_text` verbatim from the `read_file` output, indentation included. This is the default, and for a large file it is the only option: `write_file` refuses a full overwrite of anything bigger than one 20,000-character read window, because content you never read would be silently deleted. Schema, config and package files routinely exceed that. Use `write_file` only to create a new file, or to replace a small one you have read in full.
 4. Do not change business logic (query behaviour, ranking, indexing pipeline semantics) beyond what the plan calls for — this is a platform migration, not a redesign.
 5. If a file listed in the manifest turns out not to need any change after reading it, skip writing it and note that in your summary.
 
@@ -30,7 +30,7 @@ Do not include file contents in this summary.
 
 ## Editing files
 
-Use `replace_in_file` for changes to an existing file: copy `old_text` verbatim from the `read_file`
+As in step 3, `replace_in_file` is how an existing file is edited: copy `old_text` verbatim from the `read_file`
 output, with enough surrounding lines to be unique, and make several small replacements rather than one
 sweeping one. Keep `write_file` for files you create or genuinely rewrite end to end — overwriting a file
 larger than one read window is refused unless you have read every window and pass

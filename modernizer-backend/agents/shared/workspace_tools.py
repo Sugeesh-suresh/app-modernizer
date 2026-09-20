@@ -24,10 +24,9 @@ from pathlib import Path
 
 from google.adk.tools import ToolContext
 
-EXCLUDED_DIRS = {
-    ".git", "target", "build", "node_modules", ".gradle",
-    "__pycache__", "bin", "obj", ".idea", ".vscode",
-}
+# Single source of truth — this used to be a byte-identical copy, free to drift
+# from the one the diff and the change audit use.
+from .dependency_graph import EXCLUDED_DIRS  # noqa: F401
 MAX_OUTPUT_CHARS = 20_000
 COMMAND_TIMEOUT_SECONDS = 180
 
