@@ -14,7 +14,8 @@ Target: newest Spring Boot 3.x (3.5.x), Spring Framework 6, Jakarta EE 10, still
 | `javax.annotation:javax.annotation-api` | `jakarta.annotation:jakarta.annotation-api` 2.1 |
 | `javax.mail` / `com.sun.mail:javax.mail` | `jakarta.mail:jakarta.mail-api` 2.1 + `org.eclipse.angus:angus-mail` (or `spring-boot-starter-mail`) |
 | `javax.transaction:javax.transaction-api` | `jakarta.transaction:jakarta.transaction-api` 2.0 |
-| `net.sf.ehcache:ehcache` 2.x | `org.ehcache:ehcache` 3.x with the `jakarta` classifier |
+| `net.sf.ehcache:ehcache` 2.x | `org.ehcache:ehcache` 3.x with the `jakarta` classifier — **an API rewrite**, not a swap: `getKeys()`, `getQuiet()` and `Element` are all gone (the Java 17 stage should already have done this; if `net.sf.ehcache` imports survive, finish the rewrite here). Spring 6 also removed `org.springframework.cache.ehcache.EhCacheCacheManager` → `JCacheCacheManager` (`javax.cache` stays `javax`), and Hibernate 6 removed `hibernate-ehcache` → `org.hibernate.orm:hibernate-jcache` |
+| `com.fasterxml.jackson.module:jackson-module-jaxb-annotations` | `jackson-module-jakarta-xmlbind-annotations` (`JakartaXmlBindAnnotationModule`) |
 | `org.apache.httpcomponents:httpclient` 4.x (under `RestTemplate`) | `org.apache.httpcomponents.client5:httpclient5` — Spring 6's `HttpComponentsClientHttpRequestFactory` only supports HttpClient 5 |
 
 ## Code changes Spring Framework 6 / Spring Boot 3 force

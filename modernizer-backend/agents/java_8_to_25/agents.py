@@ -90,6 +90,30 @@ _KEEP_FRAMEWORK = (
     "packaging — those belong to the Spring Boot stages (when requested)."
 )
 
+# Same rule for the JDK stages, minus the Spring Framework version: see _SPRING_FLOOR_* below.
+_KEEP_BOOT = (
+    "Do not change the Spring Boot version or the packaging, and do not rename Jakarta EE `javax.*` "
+    "packages — those belong to the Spring Boot stages (when requested)."
+)
+
+# A JDK stage cannot leave the framework behind: old Spring/Hibernate lines bundle an ASM that
+# refuses newer class files, so they fail at context startup on the JDK this stage targets rather
+# than at compile time. Each JDK stage therefore owns the framework floor its release requires.
+_SPRING_FLOOR_17 = (
+    "The one framework change this stage owns: if the app is on plain Spring Framework 3.x/4.x, "
+    "raise every `org.springframework:spring-*` artifact to the newest 5.3.x (still `javax`, "
+    "supports Java 8-21) — older Spring cannot read Java 17 class files — and rewrite "
+    "`org.springframework.orm.hibernate3.*` (removed in Spring 5) onto `hibernate5` alongside a "
+    "Hibernate 5.6.x bump. Never go past Spring 5.3 here."
+)
+_SPRING_FLOOR_25 = (
+    "The one framework change this stage owns: if the app is still on plain Spring Framework 5.3 "
+    "because no Spring Boot upgrade was requested, raise it to Spring 6.x — 5.3 does not support "
+    "Java 25 — which forces the Jakarta EE `javax.*` → `jakarta.*` rename in this stage (never the "
+    "Java SE `javax.sql`, `javax.naming`, `javax.crypto` or JAXP packages). If the app is already "
+    "Spring Boot-managed, leave the framework version alone."
+)
+
 # The "incremental" strategy, in strict order. JDK and Spring Boot stages interleave so
 # every stage lands on a supported combination: Spring Boot 2.7 (Java 8-21) and 3.x
 # (Java 17+) are done on Java 17, before the Java 25 jump; Spring Boot 4 comes after it.
@@ -97,7 +121,10 @@ INCREMENTAL_STAGES: list[IncrementalStage] = [
     IncrementalStage(
         1, 1, "Readiness", "Modernize Build Systems (Maven/Gradle)", "8", False,
         ("java-migration-readiness",),
-        "Keep the compiler release at 8 and do not touch application source code. " + _KEEP_FRAMEWORK,
+        "Keep the compiler release at 8 and do not touch application source code. Test-scoped "
+        "dependencies and the test plugins are the one exception: the test stack (Mockito 1.x → "
+        "`mockito-core` 4.11.0, JUnit 4.13.2, surefire/failsafe 3.2.5+) is modernised here as the "
+        "migration's safety net. " + _KEEP_FRAMEWORK,
     ),
     IncrementalStage(
         2, 1, "Readiness", "Automate Code Analysis (OpenRewrite)", "8", False,
@@ -107,7 +134,7 @@ INCREMENTAL_STAGES: list[IncrementalStage] = [
     ),
     IncrementalStage(
         3, 2, "Java 17 Baseline", "Java 8 → Java 17 LTS", "17", False, (),
-        "Set the compiler release to exactly 17, not further. " + _KEEP_FRAMEWORK,
+        "Set the compiler release to exactly 17, not further. " + _KEEP_BOOT + " " + _SPRING_FLOOR_17,
     ),
     IncrementalStage(
         4, 2, "Java 17 Baseline", "Upgrade to Spring Boot 2.7 (WAR intact)", "17", True,
@@ -125,7 +152,7 @@ INCREMENTAL_STAGES: list[IncrementalStage] = [
     ),
     IncrementalStage(
         6, 3, "Java 25 Baseline", "Java 17 → Java 25 LTS", "25", False, (),
-        "Set the compiler release to exactly 25. " + _KEEP_FRAMEWORK,
+        "Set the compiler release to exactly 25. " + _KEEP_BOOT + " " + _SPRING_FLOOR_25,
     ),
     IncrementalStage(
         7, 4, "Spring Boot 4 & Cloud Native", "Upgrade to Spring Boot 4.x", "25", True,

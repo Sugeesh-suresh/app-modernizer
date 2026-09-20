@@ -24,6 +24,8 @@ If the confirmed plan marks your stage "No changes needed" (for example, the rep
 
 Brings the application under Spring Boot management on Java 17, while it still deploys exactly as before. Load `references/boot27-on-war.md` for the dependency map.
 
+The Java 8 → 17 stage has already raised plain Spring to 5.3.x and Hibernate to 5.6.x and rewritten `org.springframework.orm.hibernate3.*` onto `hibernate5` — those versions are the minimum that runs on Java 17, so Boot 2.7's managed Spring 5.3 is normally a no-op here. **Never regress a version to satisfy a starter.** If any of that work is missing (the stage was skipped, or the fixer reverted it), finish it here before adding the Boot parent.
+
 - **Plain Spring (no Spring Boot yet):** add `spring-boot-starter-parent` 2.7.x as the parent (or import `spring-boot-dependencies` 2.7.x as a BOM in `<dependencyManagement>` if the pom already has a parent). Replace hand-versioned `spring-*` artifacts with the matching starters, and introduce a single `@SpringBootApplication` class that extends `SpringBootServletInitializer`.
 - **Already Spring Boot 1.5 / 2.x:** bump to the newest 2.7.x. Add `spring-boot-properties-migrator` (runtime scope) for this stage only, to surface renamed properties — list its removal as an item for the Spring Boot 3.x stage.
 - Keep `<packaging>war</packaging>`. Add the embedded-container starter (`spring-boot-starter-tomcat`) as `provided` scope.

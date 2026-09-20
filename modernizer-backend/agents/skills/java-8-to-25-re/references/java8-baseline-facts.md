@@ -24,9 +24,21 @@ incremental hops.
 - Java EE modules bundled with 8 but removed in JDK 11: JAXB (`javax.xml.bind`), JAX-WS, JAF, CORBA, Java EE annotations (`javax.annotation.Resource` etc.) — these must become explicit dependencies (or be replaced) before the 11 hop
 - `java.util.Date` / `Calendar` instead of `java.time.*` (java.time has existed since 8, but 8-era code frequently predates its adoption)
 - Lombok used heavily for boilerplate that records could replace
-- JUnit 4 (`org.junit.Test`) instead of JUnit 5 (`org.junit.jupiter.api.Test`) — flag as an upgrade candidate regardless of whether the user requested it; only actually plan the migration if `{junit_upgrade}` is true
+- JUnit 3 (`junit.framework.TestCase`, `extends TestCase`) or JUnit 4 (`org.junit.Test`, `@RunWith`, `@Rule`) instead of JUnit Jupiter (`org.junit.jupiter.api.Test`) — **flag both as deprecated** regardless of whether the user requested the upgrade: JUnit 4 is maintenance-only, JUnit 6 deprecates the Vintage engine that runs JUnit 3/4 tests, and Spring Framework 7 deprecates `SpringRunner` and the rest of its JUnit 4 support. Record the count of each. Only actually plan the migration if `{junit_upgrade}` is true
 - Spring Boot 1.x/2.x (`javax.*`) instead of Spring Boot 3.x (`jakarta.*`) — flag as an upgrade candidate; only actually plan the migration if `{springboot_upgrade}` is true
-- Old Mockito/AssertJ versions incompatible with newer JDKs
+- Old Mockito/AssertJ versions incompatible with newer JDKs — `mockito-all` or `mockito-core` 1.x in particular mocks via cglib and breaks on JDK 9+, and surefire/failsafe 2.x cannot fork a test JVM there either. Record the exact versions: the test suite is the migration's safety net and is modernised first
+- **Stacks that cannot run on Java 17 at all** — record each one found, with the files that import it. They fail at runtime (refusing newer class files) rather than at compile time, so they are easy to miss and expensive to discover late:
+  - Spring Framework 3.x/4.x, and any `org.springframework.orm.hibernate3.*` import (that package is removed in Spring 5)
+  - Hibernate 3.x/4.x; any `org.hibernate.Interceptor`/`EmptyInterceptor` implementation (the SPI changed), a pinned `Oracle10gDialect`, or `C3P0ConnectionProvider`/`hibernate.c3p0.*`
+  - Jackson 1 — `org.codehaus.jackson.*` imports, `SerializationConfig.Feature`, `JsonMethod`, `MappingJacksonHttpMessageConverter`
+  - Ehcache 2 — `net.sf.ehcache.*`; note every `getKeys()` / `getQuiet()` / `Element` call and any JGroups replication config, since none survive into Ehcache 3
+- **Deprecated-but-running integrations** — they compile today and break at a later stage, so record them too:
+  - Old Jackson 2 — `jackson-databind` below 2.12 (a CVE-laden range), Jackson modules at a different version than `jackson-databind`, `jackson-module-afterburner` (breaks under JDK 17 encapsulation), `ObjectMapper.enableDefaultTyping()` (deprecated; polymorphic-deserialization risk), `jackson-module-jaxb-annotations`
+  - Ehcache 2 integrations — `org.springframework.cache.ehcache.EhCacheCacheManager` / `EhCacheManagerFactoryBean` (Java config or XML contexts; removed in Spring 6), `hibernate-ehcache` / `hibernate.cache.region.factory_class` naming an `EhCacheRegionFactory` (removed in Hibernate 6), `ehcache-web` filters in `web.xml`
+  - log4j 1.2 — `org.apache.log4j.Logger` imports plus `log4j.properties`/`log4j.xml`
+  - Explicit `cglib` / `cglib-nodep` / `javassist` dependencies, and AspectJ below 1.9.20
+  - `ojdbc6`/`ojdbc14`, `com.google.collections:google-collections` (abandoned; duplicates Guava's packages) and any Guava older than the newest release — record its version, whether another dependency brings a second Guava transitively, and call sites of APIs removed from newer Guava (`Objects.toStringHelper`, `new Stopwatch()`, `MapMaker.makeComputingMap`, `MoreExecutors.sameThreadExecutor`, executor-less `Futures.transform`/`addCallback`, `Closeables.closeQuietly`), `spring-mock` at compile/runtime scope in production code
+- Dead build tooling: `maven-svn-revision-number-plugin` with a stale SVN `<scm>` URL, `cargo-maven2-plugin` (embedded Jetty 6), `tomcat7-maven-plugin`
 - Nashorn JavaScript engine (`javax.script` with `"nashorn"`) — deprecated in 11, removed in 15; flag any usage explicitly
 
 ## Build tooling tells
