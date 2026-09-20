@@ -41,7 +41,19 @@ Per the checklist's JUnit 3/4 → JUnit Jupiter section. If `{junit_upgrade}` is
 Real build validation happens automatically in the build loop (mvn/gradle compile — `package` when the Spring Boot upgrade is included, so the executable JAR is really built — iterated with the fixer). This section covers what's outside that: test suite run, the new deployment model (`java -jar` plus the environment variables ops must supply), rollback strategy.
 ## Estimated Effort
 ## File Change Manifest
-Every in-scope file path with the change type (language modernisation / namespace migration / dependency bump / Spring Boot 4 configuration / persistence / view conversion / packaging / delete / no change needed).
+A table, one row per file, and the thing the human reviewer actually approves — it is the scope agreement for the run, and the code reviewer compares it against what really changed afterwards:
+
+| File | Change Type | What Changes |
+|---|---|---|
+| `src/main/java/com/acme/OrderServlet.java` | namespace migration | `javax.servlet.*` → `jakarta.servlet.*` imports; no logic change |
+| `src/main/java/com/acme/CacheAdmin.java` | dependency bump | Ehcache 2 → 3: `getKeys()` has no equivalent, so the cache dump endpoint is rewritten to iterate |
+| `src/main/java/com/acme/Address.java` | no change needed | plain POJO, nothing to migrate |
+
+Rules that make the table checkable rather than decorative:
+- **The path is backticked and real** — copied from the repository scan, workspace-relative, never invented or guessed. An entry matching no file is reported against the plan.
+- **Every in-scope file gets a row**, including the ones whose change type is `delete` or `no change needed`. A file you leave out is a file nobody approved being edited.
+- **"What Changes" is specific to that file** — what will actually be different in it, not a restatement of the change type. Two files in the same task with different edits get different text.
+- Change types: language modernisation / namespace migration / dependency bump / Spring Boot configuration / persistence / view conversion / packaging / test migration / delete / no change needed.
 
 ## If Migration Strategy is "incremental"
 
@@ -69,6 +81,9 @@ Sizing rules, which matter more than tidiness:
 - Group by the Dependency Graph & Migration Groups section of the Technical Specification: files that change together (an interface and its implementors, an entity and its DAO) belong in **one** task, or the edits will be made in separate contexts and disagree.
 - Order tasks so dependencies come first, and say so in `Depends on:`.
 - A task must be self-contained: its `Change:` text is all the modifier will see of the plan, besides the stage heading.
+- When the files in one task get materially different edits, `Change:` says which file gets which — the per-file detail belongs there as well as in the stage's File Change Manifest table.
+
+Each stage then closes with its own **File Change Manifest** table in the format defined above, covering every file that stage's tasks touch. The tasks are what the modifier executes; the table is what the human reviewer approves and what the code reviewer checks the result against, so the two must agree.
 
 **Why the JDK and Spring Boot stages interleave:** every stage must land on a supported JDK/framework combination. Spring Boot 2.7 supports Java 8–21, and Spring Boot 3.x needs Java 17+. So on Java 17 the framework moves to 2.7 and then to 3.x, *before* the jump to Java 25; Spring Boot 4 comes after it. Never plan a Spring Boot 2.x codebase on Java 25.
 

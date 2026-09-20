@@ -11,7 +11,11 @@ pipeline ends with:
       the review is grounded in what actually changed -- including the
       two things reading the changed files alone can never show: a change
       that carries no migration signal, and a file left untouched that
-      still looks legacy.
+      still looks legacy. It then runs the plan-conformance check
+      (agents/shared/plan_coverage.py), which compares the same set of
+      real changes against the File Change Manifest in the plan the human
+      approved -- files promised but untouched, files touched but never
+      approved, files the plan said to leave alone.
 
   skill_curator_agent -- runs LAST, after the code reviewer and the
       reporter, and refines that pattern's own skill files based on
@@ -37,6 +41,7 @@ from google.adk.tools import FunctionTool
 from google.adk.tools.skill_toolset import SkillToolset
 
 from .change_audit import audit_migration_changes
+from .plan_coverage import compare_plan_to_actual_changes
 from .skill_curator_tools import make_skill_curator_tools
 
 _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
@@ -63,14 +68,24 @@ def make_code_reviewer_agent(model: str, list_files_tool, read_file_tool, contex
             "build validation cannot see. Use the list_files/read_file tools to inspect the ACTUAL "
             "current code on disk — do not review from memory of what an earlier agent's summary said "
             "it wrote.\n\n"
-            "Call `audit_migration_changes` FIRST, before any other tool. It diffs the pristine "
-            "uploaded repository against the migrated workspace, so it is the only evidence you have "
-            "for two things you must rule on and cannot see by reading changed files alone: whether "
-            "every change is actually migration work, and whether the files left untouched were "
-            "genuinely irrelevant. Adjudicate each of its candidates against the confirmed plan — it "
-            "reports regex evidence, not verdicts.\n\n" + context_instruction
+            "Call `audit_migration_changes` FIRST, then `compare_plan_to_actual_changes`, before "
+            "any other tool. Both diff the pristine uploaded repository against the migrated "
+            "workspace, so together they are your only evidence for what you cannot see by reading "
+            "changed files alone. The audit asks whether a change is migration work at all, and "
+            "whether the untouched files were genuinely irrelevant. The plan check asks the stricter "
+            "question of whether this run did what the human actually approved: a file the manifest "
+            "promised that nobody touched, a file touched that nobody approved, a file the plan said "
+            "to leave alone. Adjudicate every candidate from both against the confirmed plan — they "
+            "report deterministic evidence, not verdicts, and a file flagged by both is one finding, "
+            "not two.\n\n" + context_instruction
         ),
-        tools=[_load_skill("code-review"), FunctionTool(audit_migration_changes), list_files_tool, read_file_tool],
+        tools=[
+            _load_skill("code-review"),
+            FunctionTool(audit_migration_changes),
+            FunctionTool(compare_plan_to_actual_changes),
+            list_files_tool,
+            read_file_tool,
+        ],
         output_key="code_review",
         include_contents="none",
     )

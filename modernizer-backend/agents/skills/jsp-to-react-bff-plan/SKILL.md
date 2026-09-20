@@ -40,4 +40,18 @@ Real build validation happens automatically in build_loop (`mvn compile` in `bac
 
 ## Estimated Effort
 
-Use markdown with task checkboxes `- [ ]` for every actionable item in both manifests — they are what `backend_generator_agent` and `frontend_generator_agent` will work through file-by-file.
+Write both manifests as a table, one row per file — what the human reviewer approves, what the generators work through file-by-file, and what the code reviewer checks the result against:
+
+| File | Change Type | What It Contains |
+|---|---|---|
+| `backend/src/main/java/com/acme/OrderController.java` | new controller | `GET /api/orders`, `POST /api/orders` per the API contract; delegates to `OrderService` |
+| `frontend/src/pages/OrderList.tsx` | new page | Order list page replacing `orderList.jsp`; calls `getOrders()` from the API client |
+| `frontend/src/api/client.ts` | new API client | one function per BFF endpoint, request/response shapes matching the controller DTOs exactly |
+
+Rules that make the tables checkable rather than decorative:
+- **Backticked, workspace-relative paths** under `backend/` or `frontend/`, never invented — an entry matching no generated file is reported against the plan.
+- **Every file to be generated gets a row.** A file you leave out is a file nobody approved.
+- **"What It Contains" is specific to that file** — the endpoints, the page, the components it holds, not a restatement of the change type.
+- Name the JSP each React page replaces, so the coverage of the original app is reviewable.
+
+Use markdown with task checkboxes `- [ ]` for every actionable item elsewhere in the plan.

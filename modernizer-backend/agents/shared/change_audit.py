@@ -277,7 +277,9 @@ def _scan(lines: list[str], markers: list[Marker]) -> list[MarkerHit]:
     return hits
 
 
-def _relevant_files(root: Path) -> dict[str, Path]:
+def relevant_files(root: Path) -> dict[str, Path]:
+    """`{relative path: absolute path}` for every file that is really part of the
+    repository — build output, VCS metadata and IDE folders excluded."""
     out: dict[str, Path] = {}
     for path in root.rglob("*"):
         if not path.is_file():
@@ -296,6 +298,31 @@ def _read(path: Path) -> str:
         return ""
 
 
+def changed_file_statuses(baseline_dir: str, workspace_dir: str) -> dict[str, str]:
+    """`{relative path: "added" | "modified" | "deleted"}` for every file that
+    differs between the pristine baseline and the migrated workspace.
+
+    Shared with plan_coverage.py, so the marker audit and the plan-conformance
+    check can never disagree about which files this run actually touched.
+    """
+    baseline_root = Path(baseline_dir).resolve() if baseline_dir else None
+    workspace_root = Path(workspace_dir).resolve() if workspace_dir else None
+    if not baseline_root or not baseline_root.exists() or not workspace_root or not workspace_root.exists():
+        return {}
+
+    before = relevant_files(baseline_root)
+    after = relevant_files(workspace_root)
+    statuses: dict[str, str] = {}
+    for rel in sorted(set(before) | set(after)):
+        if rel not in after:
+            statuses[rel] = "deleted"
+        elif rel not in before:
+            statuses[rel] = "added"
+        elif _read(before[rel]) != _read(after[rel]):
+            statuses[rel] = "modified"
+    return statuses
+
+
 def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str) -> ChangeAudit:
     """Compare the pristine baseline against the migrated workspace and classify
     every file as explained / unexplained / regressed / residually legacy."""
@@ -310,8 +337,8 @@ def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str) -> Change
         audit.error = "baseline or workspace directory is unavailable — change audit could not run"
         return audit
 
-    before = _relevant_files(baseline_root)
-    after = _relevant_files(workspace_root)
+    before = relevant_files(baseline_root)
+    after = relevant_files(workspace_root)
 
     for rel in sorted(set(before) | set(after)):
         before_text = _read(before[rel]) if rel in before else ""

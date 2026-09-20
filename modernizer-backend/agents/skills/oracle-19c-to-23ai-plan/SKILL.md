@@ -30,6 +30,18 @@ Static validation happens automatically in build_loop (balanced-block + terminat
 ## Estimated Effort
 
 ## File Change Manifest
-Every in-scope file path with the change type. This is what modifier_agent will work through file-by-file — be exhaustive and precise with paths.
+A table, one row per file — the thing the human reviewer actually approves, and the scope agreement the code reviewer compares against what really changed afterwards. This is also what modifier_agent works through file-by-file, so be exhaustive and precise with paths.
 
-Use markdown with task checkboxes `- [ ]` for every actionable item.
+| File | Change Type | What Changes |
+|---|---|---|
+| `db/schema/orders.sql` | compatibility fix | `LONG RAW` payload column → `BLOB`; dependent `INSERT` statements unchanged |
+| `db/packages/pricing.pkb` | optimizer pin removal | `optimizer_features_enable` hint dropped; logic unchanged |
+| `pom.xml` | dependency bump | `ojdbc6` → `ojdbc11` |
+
+Rules that make the table checkable rather than decorative:
+- **The path is backticked and real** — copied from the repository scan, workspace-relative, never invented. An entry matching no file is reported against the plan.
+- **Every in-scope file gets a row**, including the ones whose change type is `delete` or `no change needed`. A file you leave out is a file nobody approved being edited.
+- **"What Changes" is specific to that file** — what will actually be different in it, not a restatement of the change type.
+- Change types: compatibility fix / optimizer pin removal / 23ai feature adoption / JDBC driver bump / delete / no change needed.
+
+Use markdown with task checkboxes `- [ ]` for every actionable item elsewhere in the plan.

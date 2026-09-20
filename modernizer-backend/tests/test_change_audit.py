@@ -293,7 +293,7 @@ class TestSkillContract:
 
     def test_findings_require_adjudication_against_the_plan(self):
         body = self._skill("code-review")
-        assert "Adjudicate every audit candidate against the confirmed plan" in body
+        assert "Adjudicate every candidate from both checks against the confirmed plan" in body
         assert "regex evidence, not verdicts" in body
         # An out-of-scope stage or a declined toggle is not a coverage gap.
         assert "off toggle" in body or "declined" in body

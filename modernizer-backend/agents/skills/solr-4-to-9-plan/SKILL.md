@@ -33,6 +33,18 @@ Static validation happens automatically in build_loop (XML well-formedness + dep
 ## Estimated Effort
 
 ## File Change Manifest
-Every in-scope file path (schema.xml, solrconfig.xml, solr.xml, SolrJ client `.java` files) with the change type. This is what modifier_agent will work through file-by-file — be exhaustive and precise with paths.
+A table, one row per file — the thing the human reviewer actually approves, and the scope agreement the code reviewer compares against what really changed afterwards. This is also what modifier_agent works through file-by-file, so be exhaustive and precise with paths.
 
-Use markdown with task checkboxes `- [ ]` for every actionable item.
+| File | Change Type | What Changes |
+|---|---|---|
+| `solr/conf/schema.xml` | field type migration | `solr.TrieIntField` → `solr.IntPointField` with `docValues="true"`; `_version_` field added |
+| `src/main/java/com/acme/SearchClient.java` | SolrJ client rename | `HttpSolrServer` → `HttpSolrClient` via `new HttpSolrClient.Builder(url).build()` |
+| `solr/conf/solrconfig.xml` | config update | `luceneMatchVersion` 4.10 → 9.x; `ExtractingRequestHandler` declared explicitly |
+
+Rules that make the table checkable rather than decorative:
+- **The path is backticked and real** — copied from the repository scan, workspace-relative, never invented. An entry matching no file is reported against the plan.
+- **Every in-scope file gets a row**, including the ones whose change type is `delete` or `no change needed`. A file you leave out is a file nobody approved being edited.
+- **"What Changes" is specific to that file** — what will actually be different in it, not a restatement of the change type.
+- Change types: schema field type / solrconfig update / SolrJ client rename / dependency bump / delete / no change needed.
+
+Use markdown with task checkboxes `- [ ]` for every actionable item elsewhere in the plan.

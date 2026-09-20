@@ -38,7 +38,9 @@ From the Independent Code Review's **Change Relevance** section, which is ground
 - Any untouched file that still contains legacy code, split into confirmed coverage gaps (carry each into Follow-up Recommendations) and work deliberately left out of scope by a stage boundary or a declined toggle.
 - Any legacy API re-introduced, or forbidden fix applied, that the review flagged as a regression.
 
-If the review reported a clean result on all four, say so in one line rather than padding the section.
+Then, from the review's **Plan Conformance** section, what the run delivered against the plan the reviewer approved: files the File Change Manifest promised that were not changed (with the change the plan described, so the reader sees what is missing), and files changed that the manifest never listed. Carry every confirmed under-delivery into Follow-up Recommendations — it is work the run agreed to do and did not.
+
+If the review reported a clean result throughout, say so in one line rather than padding the section.
 
 ## Deprecated Libraries Remaining
 Every deprecated library still present, even when the build passed — taking the Independent Code Review's untouched-file evidence as authoritative and the Modify Results as supporting detail: JUnit 3/4 test classes and `junit-vintage-engine` (state whether the JUnit upgrade was requested), Jackson 1, Jackson 2 below 2.12 or Jackson 2 left on a Spring Boot 4 target, Ehcache 2 or its Spring / Hibernate / `ehcache-web` integrations, and google-collections or a Guava older than the newest release. If none remain, say so in one line.
