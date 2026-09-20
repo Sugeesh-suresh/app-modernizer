@@ -146,36 +146,49 @@ class TestTheCallback:
 
 
 class TestSkillComposition:
-    def test_every_skill_declares_a_version_and_maturity(self):
+    """The table names the skills and their order — nothing that has to be
+    hand-maintained. A version or maturity field would be a number any person
+    could set to "stable" without evidence, which reads as an assurance to an
+    approver while carrying none."""
+
+    def test_the_table_is_the_roster_and_the_order_only(self):
+        table = skill_manifest.to_markdown([
+            ("java-8-to-25-re", "Reverse-engineered this repository"),
+            ("java-8-to-25-plan", "Produces this plan"),
+        ])
+
+        assert "| # | Skill | What it governs in this run |" in table
+        assert "| 1 | `java-8-to-25-re` |" in table
+        assert "| 2 | `java-8-to-25-plan` |" in table
+
+    def test_no_version_or_maturity_is_claimed_anywhere(self):
+        table = skill_manifest.to_markdown([("java-8-to-25-plan", "Produces this plan")])
+
+        for unearned in ("version", "maturity", "stable", "experimental", "0.1.0"):
+            assert unearned not in table.lower()
+
+    def test_no_skill_declares_a_hand_maintained_version_or_maturity(self):
         for path in sorted(SKILLS_DIR.glob("*/SKILL.md")):
             body = path.read_text(encoding="utf-8")
-            assert re.search(r"^version:\s*\S+", body, re.MULTILINE), path.parent.name
-            assert re.search(r"^maturity:\s*\S+", body, re.MULTILINE), path.parent.name
-
-    def test_versions_are_read_from_disk_not_invented(self):
-        table = skill_manifest.to_markdown([("java-8-to-25-plan", "Produces this plan")])
-        declared = re.search(
-            r"^version:\s*(\S+)", _skill("java-8-to-25-plan"), re.MULTILINE
-        ).group(1)
-
-        assert declared in table
-
-    def test_an_unproven_skill_is_flagged_to_the_approver(self):
-        table = skill_manifest.to_markdown([("java-8-to-25-plan", "Produces this plan")])
-
-        assert "not yet `stable`" in table
-        assert "not yet proven on real repositories" in table
+            assert not re.search(r"^version:", body, re.MULTILINE), path.parent.name
+            assert not re.search(r"^maturity:", body, re.MULTILINE), path.parent.name
 
     def test_a_missing_skill_is_reported_rather_than_silently_dropped(self):
+        """This one IS earned — the file is either on disk or it is not."""
         table = skill_manifest.to_markdown([("no-such-skill", "Does nothing")])
 
-        assert "**not found**" in table
+        assert "not found on disk" in table
         assert "report this before approving" in table
+
+    def test_a_real_skill_is_not_flagged_as_missing(self):
+        table = skill_manifest.to_markdown([("java-8-to-25-plan", "Produces this plan")])
+
+        assert "not found" not in table
 
     def test_the_planner_is_told_to_copy_the_table_not_write_one(self):
         block = skill_manifest.planner_block([("java-8-to-25-plan", "Produces this plan")])
 
-        assert "never edit a version" in block
+        assert "never reorder them" in block
         # It may drop rows for a strategy this run did not ask for.
         assert "DROP a row" in block
 
@@ -185,7 +198,7 @@ class TestWiring:
     def test_every_planner_gets_the_composition_table(self, module_path):
         planner = importlib.import_module(f"agents.{module_path}.agents").planner_agent
 
-        assert "| # | Skill | Version | Maturity |" in planner.instruction
+        assert "| # | Skill | What it governs in this run |" in planner.instruction
 
     @pytest.mark.parametrize("module_path", PATTERNS)
     def test_every_planner_receives_the_test_inventory(self, module_path):

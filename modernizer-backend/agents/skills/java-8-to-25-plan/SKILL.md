@@ -1,8 +1,6 @@
 ---
 name: java-8-to-25-plan
 description: Creates a detailed, strategy-aware migration plan (plan.md) for upgrading a Java 8 application to Java 25, based on the confirmed BRD and Technical Specification.
-version: 0.1.0
-maturity: experimental
 ---
 
 You are a Java migration expert. Create a detailed `plan.md` for migrating this application from Java 8 to Java 25, using the confirmed BRD and Technical Specification provided below — you do not have direct access to the codebase, only what those documents describe.
@@ -21,7 +19,7 @@ Ground every claim in the BRD, the Technical Specification and the Existing Test
 
 `## 1. What Changes`, containing:
 
-- `### Skill Composition` — reproduce the injected Skill Composition table **verbatim**, including the note beneath it. You cannot see these versions any other way, so anything you write instead of copying is invented. A skill at 0.x has not been proven on real repositories, and the approver is entitled to see that before agreeing to the run.
+- `### Skill Composition` — reproduce the injected Skill Composition table **verbatim**. It names the skills that govern this run and the order they run in, which is what tells an approver whose instructions produced this plan and will execute it. You cannot see the roster any other way, so anything you write instead of copying is invented.
 - `### Dependency & Version Delta` — a table: Component | Current | Target | Owning stage | Why it must move. Cover at least the JDK, the build tool, Spring / Spring Boot, Hibernate, Jackson, the JDBC driver, the logging stack, the caching stack, the test stack, and every build plugin whose version changes. Take the current values from the Technical Specification's Repo Facts and Legacy Stack Blockers — never invent a version you were not told.
 - `### Sample Transformations` — two or three real before/after snippets in fenced blocks, each labelled with its file path, drawn from files the Technical Specification actually lists. Choose ones that carry the most information: a `javax.*` → `jakarta.*` rename, an API rewrite that is not a version bump (a Hibernate `Interceptor`, an Ehcache 2 `getKeys()` call site, a log4j logger), and a configuration or packaging change if the run includes one. One real diff tells a reviewer more than a paragraph of description. If the specification does not give you enough of a file to quote honestly, say so instead of fabricating a snippet.
 - The stage and task breakdown (incremental) or the change sections (bigbang), each closing with its **File Change Manifest** table.
@@ -37,7 +35,7 @@ Ground every claim in the BRD, the Technical Specification and the Existing Test
 
 `## 3. Why This Is Safe`.
 
-- `### Risk Tier` — **Low / Medium / High**, and the factor that drove it, with evidence. Never the bare word. Score three factors separately: **blast radius** (how much of the system this reaches), **novelty** (how much of the work is an API rewrite rather than a version bump, and how much is governed by a skill still at 0.x), and **behavioural opacity** (how much behaviour has no test proving it). Say which factor set the tier, and cite the evidence — "High: 14 of 31 files are Ehcache 2 and Hibernate 3 API rewrites, and the Test Inventory shows no test covering the cache layer".
+- `### Risk Tier` — **Low / Medium / High**, and the factor that drove it, with evidence. Never the bare word. Score three factors separately: **blast radius** (how much of the system this reaches), **novelty** (how much of the work is an API rewrite rather than a version bump, and how much of it has no worked precedent in this codebase), and **behavioural opacity** (how much behaviour has no test proving it). Say which factor set the tier, and cite the evidence — "High: 14 of 31 files are Ehcache 2 and Hibernate 3 API rewrites, and the Test Inventory shows no test covering the cache layer".
 - `### Behaviour Inventory` — a table of every behaviour this migration must preserve: Behaviour | Kind (endpoint / SQL path / message producer / message consumer / scheduled job / batch) | Where it lives | Evidence it exists (verified or inferred). Take it from the Technical Specification's API Contracts, Persistence & View Layer and the Analysis's API Surface. This is the full set of things that must still work afterwards, and question 4 is answered against it row by row — so an incomplete inventory silently shrinks the proof obligation.
 - `### Blast Radius` — what outside this repository this change can reach: other repos that consume these endpoints, shared schemas, message topics with other producers or consumers, libraries this repo publishes, and anything that would need to move in the same coordinated release. Where nothing is reachable, say so explicitly — "no published artefacts, no shared schema, no other consumers identified in the specification" — rather than omitting the section.
 

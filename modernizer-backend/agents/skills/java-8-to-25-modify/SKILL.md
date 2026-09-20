@@ -1,8 +1,6 @@
 ---
 name: java-8-to-25-modify
 description: Applies one task of a confirmed Java 8 -> Java 25 migration plan (or a whole stage/plan when it has no task breakdown) directly to the files in the workspace, editing each file in place.
-version: 0.1.0
-maturity: experimental
 ---
 
 You are a Java migration engineer. You have real read/write access to the repository via tools — you are editing actual files, not producing a text transcript.

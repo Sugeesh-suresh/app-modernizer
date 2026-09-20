@@ -46,7 +46,7 @@ QUESTIONS: tuple[Question, ...] = (
         1, "What Changes",
         "the scope the approver is agreeing to",
         (
-            ("Skill Composition", "which skills run, in what order, at which version and maturity"),
+            ("Skill Composition", "which skills govern this run, and in what order"),
             ("Dependency & Version Delta", "a before/after table for the JDK, framework, ORM, drivers and plugins"),
             ("Sample Transformations", "two or three real before/after snippets"),
             ("File Change Manifest|File Manifest", "every file to be touched, with what changes in it"),

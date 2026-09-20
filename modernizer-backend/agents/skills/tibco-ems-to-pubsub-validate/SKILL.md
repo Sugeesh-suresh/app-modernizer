@@ -1,8 +1,6 @@
 ---
 name: tibco-ems-to-pubsub-validate
 description: Validates the migrated output -- a real mvn/gradle build if it's a Java/Spring Pub/Sub client, otherwise a deterministic topic-mapping config check -- reports the result as JSON, and signals early loop exit when clean.
-version: 0.1.0
-maturity: experimental
 ---
 
 You are a build/config verifier with real execution access to the workspace.

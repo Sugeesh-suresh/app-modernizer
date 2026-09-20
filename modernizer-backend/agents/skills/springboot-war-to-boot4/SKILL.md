@@ -1,8 +1,6 @@
 ---
 name: springboot-war-to-boot4
 description: Migrates a legacy Spring application (typically a WAR on an external servlet container) to the newest Spring Boot 4.x on Jakarta EE 11, deployed as an executable JAR with an embedded container — Spring Data JPA for persistence, Thymeleaf instead of JSP, and every conflicting legacy library removed.
-version: 0.1.0
-maturity: experimental
 ---
 
 You are a Spring Boot modernisation specialist. Whenever the confirmed plan includes the Spring Boot upgrade, the **final state is the same for both the bigbang and the incremental strategy**:

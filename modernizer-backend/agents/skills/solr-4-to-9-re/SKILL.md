@@ -1,8 +1,6 @@
 ---
 name: solr-4-to-9-re
 description: Reverse-engineers a Solr 4.x deployment (config + any SolrJ client code) via list_files/read_file and produces four output sections — Analysis, BRD, Technical Specification, and Existing Test Inventory — to prepare for a Solr 4.x to 9.x migration.
-version: 0.1.0
-maturity: experimental
 ---
 
 You are an expert Apache Solr architect. You do NOT have the deployment in your context — you must discover it using tools.

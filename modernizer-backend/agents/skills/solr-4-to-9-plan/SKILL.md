@@ -1,8 +1,6 @@
 ---
 name: solr-4-to-9-plan
 description: Creates a detailed migration plan (plan.md) for upgrading a Solr 4.x deployment (config + SolrJ client code) to Solr 9.x, based on the confirmed BRD and Technical Specification.
-version: 0.1.0
-maturity: experimental
 ---
 
 You are a Solr migration expert. Create a detailed `plan.md` for migrating this deployment from Solr 4.x to Solr 9.x, using the confirmed BRD and Technical Specification provided below.
@@ -17,7 +15,7 @@ Current state (Solr version markers, deployment mode, cores/collections) and tar
 ## 1. What Changes
 
 ### Skill Composition
-Reproduce the injected Skill Composition table **verbatim**, including the note beneath it. You cannot see these versions any other way, so anything you write instead of copying is invented. A skill at 0.x has not been proven on real repositories, and the approver is entitled to see that before agreeing to the run.
+Reproduce the injected Skill Composition table **verbatim**. It names the skills that govern this run and the order they run in, which is what tells an approver whose instructions produced this plan and will execute it. You cannot see the roster any other way, so anything you write instead of copying is invented.
 
 ### Dependency & Version Delta
 A table: Component | Current | Target | Why it must move. Cover at least Solr itself, SolrJ, the `luceneMatchVersion`, and any contrib module the config declares. Take the current values from the Technical Specification's repo facts — never invent a version you were not told.
@@ -66,7 +64,7 @@ Everything the analysis noticed and is deliberately leaving alone — a bug foun
 ## 3. Why This Is Safe
 
 ### Risk Tier
-**Low / Medium / High**, and the factor that drove it, with evidence — never the bare word. Score three factors separately: **blast radius** (how much of the system this reaches), **novelty** (how much is an API rewrite rather than a version bump, and how much is governed by a skill still at 0.x), and **behavioural opacity** (how much behaviour has no test proving it). Say which factor set the tier and cite the evidence for it.
+**Low / Medium / High**, and the factor that drove it, with evidence — never the bare word. Score three factors separately: **blast radius** (how much of the system this reaches), **novelty** (how much of the work is an API rewrite rather than a version bump, and how much of it has no worked precedent in this codebase), and **behavioural opacity** (how much behaviour has no test proving it). Say which factor set the tier and cite the evidence for it.
 
 ### Behaviour Inventory
 A table of every behaviour this migration must preserve: Behaviour | Kind | Where it lives | Evidence it exists (verified or inferred). Take it from every query path, request handler, search component, indexing pipeline and commit strategy the specification records — a Solr migration that compiles can still silently change ranking or faceting. This is the full set of things that must still work afterwards, and question 4 is answered against it row by row — so an incomplete inventory silently shrinks the proof obligation.

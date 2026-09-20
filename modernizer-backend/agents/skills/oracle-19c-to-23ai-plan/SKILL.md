@@ -1,8 +1,6 @@
 ---
 name: oracle-19c-to-23ai-plan
 description: Creates a detailed migration plan (plan.md) for upgrading Oracle 19c SQL/PLSQL source to be 23ai-compatible, based on the confirmed BRD and Technical Specification.
-version: 0.1.0
-maturity: experimental
 ---
 
 You are an Oracle migration expert. Create a detailed `plan.md` for migrating this SQL/PLSQL codebase from Oracle 19c to Oracle 23ai compatibility, using the confirmed BRD and Technical Specification provided below.
@@ -17,7 +15,7 @@ Current state (Oracle version markers, object counts by type) and target state (
 ## 1. What Changes
 
 ### Skill Composition
-Reproduce the injected Skill Composition table **verbatim**, including the note beneath it. You cannot see these versions any other way, so anything you write instead of copying is invented. A skill at 0.x has not been proven on real repositories, and the approver is entitled to see that before agreeing to the run.
+Reproduce the injected Skill Composition table **verbatim**. It names the skills that govern this run and the order they run in, which is what tells an approver whose instructions produced this plan and will execute it. You cannot see the roster any other way, so anything you write instead of copying is invented.
 
 ### Dependency & Version Delta
 A table: Component | Current | Target | Why it must move. Cover at least the database release, the JDBC driver, and any ORM or connection-pool version the driver change forces. Take the current values from the Technical Specification's repo facts — never invent a version you were not told.
@@ -65,7 +63,7 @@ Restate, from the checklist, what this plan will NOT do (database engine upgrade
 ## 3. Why This Is Safe
 
 ### Risk Tier
-**Low / Medium / High**, and the factor that drove it, with evidence — never the bare word. Score three factors separately: **blast radius** (how much of the system this reaches), **novelty** (how much is an API rewrite rather than a version bump, and how much is governed by a skill still at 0.x), and **behavioural opacity** (how much behaviour has no test proving it). Say which factor set the tier and cite the evidence for it.
+**Low / Medium / High**, and the factor that drove it, with evidence — never the bare word. Score three factors separately: **blast radius** (how much of the system this reaches), **novelty** (how much of the work is an API rewrite rather than a version bump, and how much of it has no worked precedent in this codebase), and **behavioural opacity** (how much behaviour has no test proving it). Say which factor set the tier and cite the evidence for it.
 
 ### Behaviour Inventory
 A table of every behaviour this migration must preserve: Behaviour | Kind | Where it lives | Evidence it exists (verified or inferred). Take it from every SQL path, stored procedure, package, trigger, view and scheduled job the specification records, plus every application query that depends on vendor-specific syntax. A PL/SQL migration that compiles can still change result ordering or null handling. This is the full set of things that must still work afterwards, and question 4 is answered against it row by row — so an incomplete inventory silently shrinks the proof obligation.

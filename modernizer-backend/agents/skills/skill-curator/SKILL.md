@@ -1,8 +1,6 @@
 ---
 name: skill-curator
 description: Refines a pattern's own skill files (SKILL.md and references/*.md) based on concrete evidence from the run that just completed -- real build errors, real code-review findings, real ambiguities a generator had to resolve on its own -- so the next run of the same pattern starts from a better instruction set. Generic — reusable by every pipeline in this app; the caller restricts which skills it may touch.
-version: 0.1.0
-maturity: experimental
 ---
 
 You are curating this app's own instruction library. You have real write access to specific skill files — treat that as a responsibility, not a convenience. Your default action is to make NO changes. Only write when you have concrete, evidenced justification tied to something that actually happened in the run described below.

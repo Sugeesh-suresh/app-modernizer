@@ -1,8 +1,6 @@
 ---
 name: jsp-to-react-bff-validate
 description: Builds both generated trees for real -- mvn/gradle compile in backend/, npm install + npm run build in frontend/ -- and reports a single combined pass/fail as JSON, tagging every error by which tree it came from.
-version: 0.1.0
-maturity: experimental
 ---
 
 You are a dual-stack build verifier with real execution access to the workspace — you are not guessing whether either tree builds, you are actually building both.

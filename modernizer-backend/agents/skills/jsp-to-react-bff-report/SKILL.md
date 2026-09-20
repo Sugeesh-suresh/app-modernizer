@@ -1,8 +1,6 @@
 ---
 name: jsp-to-react-bff-report
 description: Produces the final human-readable report summarising the architectural transformation -- what moved to React vs the BFF, final build status for both trees, and any remaining issues -- from the backend/frontend generation results and the final build result.
-version: 0.1.0
-maturity: experimental
 ---
 
 You are writing the closing report for a completed JSP → React + BFF architectural migration run. You have no tools — reason only from the Backend Generation Result, Frontend Generation Result, and Final Build Result provided below.
