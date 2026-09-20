@@ -258,3 +258,56 @@ class TestPlanSkillsDeclareTheSixQuestions:
 
         assert "## Stage 1: Modernize Build Systems (Maven/Gradle)" in body
         assert "stay at `##` level" in body
+
+
+class TestAgainstARealisticPlan:
+    """The sample plan in tests/fixtures is what the skills ask a planner to
+    produce for a Java 8 / Spring 4 / Hibernate 3 WAR, incremental strategy,
+    Spring Boot on and JUnit off. It is checked here because every parser in
+    the pipeline reads a plan, and a shape they disagree about is a shape that
+    silently breaks the run."""
+
+    @staticmethod
+    def _plan() -> str:
+        return (
+            pathlib.Path(__file__).parent / "fixtures" / "sample-plan-java8-incremental.md"
+        ).read_text(encoding="utf-8")
+
+    def test_it_answers_all_six_questions(self):
+        result = check(self._plan())
+
+        assert result.complete, (
+            [q.heading for q in result.missing_questions],
+            [part for _, part, _ in result.missing_parts],
+        )
+
+    def test_every_stage_parses_into_the_tasks_the_modifier_runs(self):
+        from agents.java_8_to_25.agents import INCREMENTAL_STAGES
+        from agents.shared.plan_tasks import stage_units
+
+        plan = self._plan()
+        for stage in INCREMENTAL_STAGES:
+            tasks, from_real_blocks = stage_units(plan, stage.title)
+            assert from_real_blocks, f"Stage {stage.idx} ({stage.title}) has no task blocks"
+            assert tasks
+
+    def test_the_manifest_parses_to_real_files_only(self):
+        from agents.shared.plan_coverage import parse_plan_manifest
+
+        entries = parse_plan_manifest(self._plan())
+
+        assert len(entries) > 30
+        for entry in entries:
+            assert "<" not in entry.path and ">" not in entry.path, entry.path
+            assert not entry.path.startswith("."), entry.path
+            # A bare name must be a real file, not a dotted Java package.
+            if "/" not in entry.path:
+                assert entry.path in {"pom.xml", "rewrite.yml"}, entry.path
+
+    def test_files_the_plan_says_to_leave_alone_are_marked_as_such(self):
+        from agents.shared.plan_coverage import parse_plan_manifest
+
+        excluded = [e.path for e in parse_plan_manifest(self._plan()) if e.no_change_expected]
+
+        assert "src/main/java/com/acme/orders/model/Address.java" in excluded
+        assert "src/main/java/com/acme/orders/config/JndiConfig.java" in excluded

@@ -119,6 +119,35 @@ class TestManifestParsing:
         # The table still adds the file no task touches.
         assert planned["src/main/java/com/acme/Address.java"].no_change_expected
 
+    @pytest.mark.parametrize(
+        "prose",
+        [
+            "- Done when: no `.jsp` remains under `src/main/webapp`",
+            "- Change: packaging becomes `<packaging>jar</packaging>`",
+            "- Change: `org.apache.log4j.Logger` becomes `org.slf4j.Logger`",
+            "- Change: `com.fasterxml.jackson.databind` moves to `tools.jackson.databind`",
+            "- Change: order ids come from `seq_order.NEXTVAL`",
+            "- Change: set `maven.compiler.release` to 17",
+            "- Note: the bug lives in `PricingService.applyVolumeDiscount`",
+        ],
+    )
+    def test_prose_that_merely_looks_path_shaped_is_not_a_planned_file(self, prose):
+        """A bare extension, an XML tag and a dotted Java name all have the
+        shape of a path. Treating one as a manifest entry invents a file nobody
+        planned, which then gets reported as an unmet promise."""
+        plan = "## File Change Manifest\n" + prose + "\n"
+
+        assert parse_plan_manifest(plan) == []
+
+    def test_real_bare_filenames_are_still_recognised(self):
+        plan = (
+            "## File Change Manifest\n"
+            "- [ ] `pom.xml` — plugins pinned\n"
+            "- [ ] `rewrite.yml` — recipes declared\n"
+        )
+
+        assert [e.path for e in parse_plan_manifest(plan)] == ["pom.xml", "rewrite.yml"]
+
     def test_a_plan_with_no_manifest_parses_to_nothing(self):
         assert parse_plan_manifest("## Overview\nWe will modernise the build.\n") == []
 
@@ -209,6 +238,21 @@ class TestPathResolution:
         coverage = _compare(plan, trees)
 
         assert len(coverage.as_planned) == 2
+        assert coverage.unplanned == []
+
+    def test_a_directory_entry_resolves_to_the_files_under_it(self, trees):
+        """"_23 files under_ `src/main/java/com/acme/`" is how a plan
+        abbreviates a package it would be noise to list in full."""
+        baseline, workspace = trees
+        plan = "| File | Change Type | What Changes |\n|---|---|---|\n| `src/main/java/com/acme/` | logging | log4j → slf4j |\n"
+        for name in ("A.java", "B.java"):
+            _write(baseline, f"src/main/java/com/acme/{name}", "import org.apache.log4j.Logger;\n")
+            _write(workspace, f"src/main/java/com/acme/{name}", "import org.slf4j.Logger;\n")
+
+        coverage = _compare(plan, trees)
+
+        assert len(coverage.as_planned) == 2
+        assert coverage.unresolved == []
         assert coverage.unplanned == []
 
     def test_a_manifest_path_matching_nothing_is_reported_against_the_plan(self, trees):

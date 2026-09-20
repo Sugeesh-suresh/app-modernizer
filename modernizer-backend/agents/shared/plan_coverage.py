@@ -88,10 +88,33 @@ def _clip(text: str) -> str:
     return text if len(text) <= _MAX_TEXT else text[:_MAX_TEXT] + " …"
 
 
+#: Extensions a bare, directory-less filename may end in. Without this, every
+#: dotted Java name in the plan's prose reads as a file: `org.apache.log4j`,
+#: `com.fasterxml.jackson.databind` and `seq_order.NEXTVAL` all have the shape
+#: of "stem dot extension" and none of them is a path.
+_KNOWN_EXT = (
+    ".java", ".xml", ".yml", ".yaml", ".properties", ".gradle", ".kts", ".jsp",
+    ".jspf", ".tag", ".tld", ".sql", ".pks", ".pkb", ".plsql", ".js", ".jsx",
+    ".ts", ".tsx", ".json", ".conf", ".cfg", ".md", ".html", ".css", ".txt",
+)
+
+
 def _looks_like_path(candidate: str) -> bool:
     candidate = candidate.strip().strip("`").strip()
     if not candidate or candidate.lower() in _NOT_A_PATH or " " in candidate:
         return False
+    # Markup, not a path: a plan quotes `<packaging>jar</packaging>` to say what
+    # a build file becomes, and the closing tag's slash otherwise reads as one.
+    if "<" in candidate or ">" in candidate:
+        return False
+    if "/" not in candidate and "\\" not in candidate:
+        # A bare filename needs a real stem and a known extension, so `pom.xml`
+        # is kept while `.jsp` (prose about a file type) and `org.apache.log4j`
+        # (a package name) are not.
+        return (
+            not candidate.startswith(".")
+            and candidate.lower().endswith(_KNOWN_EXT)
+        )
     return bool(_PATH_LIKE.search(candidate))
 
 
@@ -163,9 +186,15 @@ def _resolve(entry_path: str, actual_paths: list[str]) -> list[str]:
     An ambiguous suffix resolves to nothing — better unresolved and reported
     than silently matched to the wrong file.
     """
-    normalised = entry_path.strip().strip("/").replace("\\", "/")
+    raw = entry_path.strip().replace("\\", "/")
+    normalised = raw.strip("/")
     if normalised in actual_paths:
         return [normalised]
+    # A trailing slash means a directory: "_23 files under_ `src/main/com/acme/`"
+    # is how a plan abbreviates a whole package, so resolve it to its contents.
+    if raw.endswith("/"):
+        prefix = normalised + "/"
+        return [p for p in actual_paths if p.startswith(prefix) or f"/{prefix}" in p]
     if "*" in normalised or "?" in normalised:
         return [p for p in actual_paths if fnmatch.fnmatch(p, normalised) or fnmatch.fnmatch(p, f"*/{normalised}")]
     suffix_hits = [p for p in actual_paths if p == normalised or p.endswith("/" + normalised)]
