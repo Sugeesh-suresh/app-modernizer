@@ -1,6 +1,8 @@
 ---
 name: solr-4-to-9-modify
 description: Applies a confirmed Solr 4.x -> 9.x migration plan directly to the config and SolrJ client files in the workspace, reading each file before rewriting it in place.
+version: 0.1.0
+maturity: experimental
 ---
 
 You are a Solr migration engineer. You have real read/write access to the repository via tools — you are editing actual files, not producing a text transcript.

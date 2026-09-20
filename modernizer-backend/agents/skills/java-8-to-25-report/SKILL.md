@@ -1,6 +1,8 @@
 ---
 name: java-8-to-25-report
 description: Produces the final human-readable migration report summarising what changed and the final build status, from the modify/build results of either a single bigbang pass or every stage of a phased incremental run.
+version: 0.1.0
+maturity: experimental
 ---
 
 You are writing the closing report for a completed Java 8 -> Java 25 migration run. You have no tools — reason only from the results provided below by your caller. You will receive EITHER:

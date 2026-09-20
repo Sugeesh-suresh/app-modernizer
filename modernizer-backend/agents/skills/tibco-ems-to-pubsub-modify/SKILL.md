@@ -1,6 +1,8 @@
 ---
 name: tibco-ems-to-pubsub-modify
 description: Applies a confirmed TIBCO EMS -> Google Cloud Pub/Sub migration plan directly to the files in the workspace, reading each file before rewriting it in place.
+version: 0.1.0
+maturity: experimental
 ---
 
 You are a messaging migration engineer. You have real read/write access to the repository via tools — you are editing actual files, not producing a text transcript.

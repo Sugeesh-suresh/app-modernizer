@@ -46,6 +46,8 @@ from google.adk.tools.skill_toolset import SkillToolset
 
 from .. import config
 from ..shared.callbacks import make_skill_update_callback
+from ..shared import skill_manifest
+from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
 from ..shared.ux_designs import make_ux_design_callback
 from . import tools as fs_tools
@@ -94,6 +96,21 @@ re_pipeline = SequentialAgent(
 
 # ── planner_agent: BFF architecture + dual-tree file manifests ─────────────────
 
+# The plan's Skill Composition section, computed from each SKILL.md's frontmatter rather
+# than left to the model: the planner cannot see the roster, the order or the versions,
+# so a table it wrote itself would be invented.
+_PLAN_SKILL_ROSTER: list[tuple[str, str]] = [
+    ("jsp-re", "Reverse-engineered the JSP application into the confirmed BRD, Technical Specification and Test Inventory"),
+    ("jsp-logic-classifier", "Classified each JSP's logic as client-side or server-side"),
+    ("jsp-to-react-bff-plan", "Produces this plan"),
+    ("spring-boot-bff-generate", "Generates the Spring Boot 4 BFF tree"),
+    ("react-frontend-generate", "Generates the React frontend tree"),
+    ("jsp-to-react-bff-validate", "Builds both generated trees after each pass"),
+    ("jsp-to-react-bff-fix", "Repairs build errors inside the loop"),
+    ("code-review", "Independent review of the result against this plan's manifests"),
+    ("jsp-to-react-bff-report", "Produces the final migration report"),
+]
+
 planner_agent = LlmAgent(
     name="jsp_plan",
     model=_MODEL,
@@ -101,11 +118,16 @@ planner_agent = LlmAgent(
     instruction=(
         "Load and execute the `jsp-to-react-bff-plan` skill to create the migration plan. If UX "
         "design files are attached to this request, include the skill's UX Design Mapping section.\n\n"
+        + skill_manifest.planner_block(_PLAN_SKILL_ROSTER)
+        + "\n\n"
         "## Confirmed Business Requirements Document\n{brd}\n\n"
-        "## Confirmed Technical Specification (includes the frontend/backend classification)\n{technical_spec}"
+        "## Confirmed Technical Specification (includes the frontend/backend classification)\n{technical_spec}\n\n## Existing Test Inventory\n{test_inventory}\n\n"
+        "The Test Inventory is what question 4 is answered from — its Coverage Gaps section "
+        "is the starting point for the plan's own, never a substitute for it."
     ),
     tools=[_skill("jsp-to-react-bff-plan")],
     output_key="plan",
+    after_agent_callback=make_plan_contract_callback(),
     include_contents="none",
     # Attaches the user's UX designs (if any) so the page/component map follows them.
     before_model_callback=make_ux_design_callback(),

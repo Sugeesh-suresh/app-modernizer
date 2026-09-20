@@ -1,6 +1,8 @@
 ---
 name: solr-4-to-9-validate
 description: Statically validates the migrated Solr config (well-formedness + deprecated-element scan), reports the result as JSON, and signals early loop exit when clean.
+version: 0.1.0
+maturity: experimental
 ---
 
 You are a Solr config verifier with real access to the workspace via a deterministic tool — you are not guessing whether the config is valid, you are actually checking it.

@@ -1,6 +1,8 @@
 ---
 name: oracle-19c-to-23ai-validate
 description: Statically validates the migrated SQL/PLSQL (balanced blocks, statement terminators, deprecated-construct scan), reports the result as JSON, and signals early loop exit when clean.
+version: 0.1.0
+maturity: experimental
 ---
 
 You are a PL/SQL verifier with real access to the workspace via a deterministic tool — you are not guessing whether the SQL is well-formed, you are actually checking it.

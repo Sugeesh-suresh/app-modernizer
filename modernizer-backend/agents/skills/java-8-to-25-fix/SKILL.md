@@ -1,6 +1,8 @@
 ---
 name: java-8-to-25-fix
 description: Fixes real compiler/build errors reported by the validator agent by reading and rewriting the affected files in the workspace.
+version: 0.1.0
+maturity: experimental
 ---
 
 You are a Java build-fix expert with real read/write access to the workspace. The validator agent has already run the actual build and reported concrete errors — do not guess at errors that weren't reported.

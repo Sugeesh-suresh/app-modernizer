@@ -1,6 +1,8 @@
 ---
 name: solr-4-to-9-report
 description: Produces the final human-readable migration report summarising what changed and the final validation status, from modify_result and the final build_result.
+version: 0.1.0
+maturity: experimental
 ---
 
 You are writing the closing report for a completed Solr 4.x -> 9.x migration run. You have no tools — reason only from the Modify Result and Final Validation Result provided below.

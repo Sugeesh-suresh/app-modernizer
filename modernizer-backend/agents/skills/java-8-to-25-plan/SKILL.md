@@ -1,6 +1,8 @@
 ---
 name: java-8-to-25-plan
 description: Creates a detailed, strategy-aware migration plan (plan.md) for upgrading a Java 8 application to Java 25, based on the confirmed BRD and Technical Specification.
+version: 0.1.0
+maturity: experimental
 ---
 
 You are a Java migration expert. Create a detailed `plan.md` for migrating this application from Java 8 to Java 25, using the confirmed BRD and Technical Specification provided below — you do not have direct access to the codebase, only what those documents describe.
@@ -8,6 +10,59 @@ You are a Java migration expert. Create a detailed `plan.md` for migrating this 
 Load `references/java8-to-java25-checklist.md` to identify every language-level, library, and tooling change needed for the full Java 8 → 25 jump.
 
 **Spring Boot target (both strategies):** when `{springboot_upgrade}` is true, the final state is always the newest **Spring Boot 4.x deployed as an executable JAR** with an embedded Tomcat — never a WAR — with Spring Data JPA for persistence, Thymeleaf instead of JSP, and every conflicting legacy library removed. The `springboot-war-to-boot4` skill defines it. Use the scanner's Packaging & Deployment Model and Persistence & View Layer repo facts to size that work, never to keep a WAR.
+
+## Every plan answers six questions
+
+A plan is the only artefact a human signs off on, so it has to carry enough for someone to approve or refuse it — not just a list of edits. Both strategies emit these six `##` sections, in this order. The strategy-specific breakdown (stages and tasks, or the bigbang change sections) lives inside question 1; the other five wrap it and are identical in shape either way.
+
+Ground every claim in the BRD, the Technical Specification and the Existing Test Inventory you were given. Where you cannot ground one, that is question 6's job — record it there rather than guessing here. A plan that quietly presents an inference as a fact is worse than one that admits the gap.
+
+### 1. What Changes
+
+`## 1. What Changes`, containing:
+
+- `### Skill Composition` — reproduce the injected Skill Composition table **verbatim**, including the note beneath it. You cannot see these versions any other way, so anything you write instead of copying is invented. A skill at 0.x has not been proven on real repositories, and the approver is entitled to see that before agreeing to the run.
+- `### Dependency & Version Delta` — a table: Component | Current | Target | Owning stage | Why it must move. Cover at least the JDK, the build tool, Spring / Spring Boot, Hibernate, Jackson, the JDBC driver, the logging stack, the caching stack, the test stack, and every build plugin whose version changes. Take the current values from the Technical Specification's Repo Facts and Legacy Stack Blockers — never invent a version you were not told.
+- `### Sample Transformations` — two or three real before/after snippets in fenced blocks, each labelled with its file path, drawn from files the Technical Specification actually lists. Choose ones that carry the most information: a `javax.*` → `jakarta.*` rename, an API rewrite that is not a version bump (a Hibernate `Interceptor`, an Ehcache 2 `getKeys()` call site, a log4j logger), and a configuration or packaging change if the run includes one. One real diff tells a reviewer more than a paragraph of description. If the specification does not give you enough of a file to quote honestly, say so instead of fabricating a snippet.
+- The stage and task breakdown (incremental) or the change sections (bigbang), each closing with its **File Change Manifest** table.
+
+### 2. What Stays the Same
+
+`## 2. What Stays the Same`. The most commonly missed section, and the one that makes review manageable — it is how a reviewer knows what they do *not* have to check.
+
+- `### Explicit Non-Changes` — the contracts this migration does not touch, stated as flat assertions a reviewer can hold the result to: no REST endpoint paths, methods or request/response shapes change; no database schema or table/column names change; no message topic, queue or payload shape changes; no business logic, calculation or validation rule changes; no configuration key names change (or, where any of these *do* change, name the exception here rather than leaving the assertion false). Derive them from the Technical Specification's API Contracts, Data Model and Configuration Inventory.
+- `### Out of Scope` — everything the analysis noticed and is deliberately leaving alone: a bug found in passing, dead code, SQL that looks old but works, a deprecated library a toggle excludes, a stage this run does not include. Give each a one-line reason. Listing them is what stops "while we're here" scope creep during the run, and it is also what tells the reviewer these were seen rather than missed.
+
+### 3. Why This Is Safe
+
+`## 3. Why This Is Safe`.
+
+- `### Risk Tier` — **Low / Medium / High**, and the factor that drove it, with evidence. Never the bare word. Score three factors separately: **blast radius** (how much of the system this reaches), **novelty** (how much of the work is an API rewrite rather than a version bump, and how much is governed by a skill still at 0.x), and **behavioural opacity** (how much behaviour has no test proving it). Say which factor set the tier, and cite the evidence — "High: 14 of 31 files are Ehcache 2 and Hibernate 3 API rewrites, and the Test Inventory shows no test covering the cache layer".
+- `### Behaviour Inventory` — a table of every behaviour this migration must preserve: Behaviour | Kind (endpoint / SQL path / message producer / message consumer / scheduled job / batch) | Where it lives | Evidence it exists (verified or inferred). Take it from the Technical Specification's API Contracts, Persistence & View Layer and the Analysis's API Surface. This is the full set of things that must still work afterwards, and question 4 is answered against it row by row — so an incomplete inventory silently shrinks the proof obligation.
+- `### Blast Radius` — what outside this repository this change can reach: other repos that consume these endpoints, shared schemas, message topics with other producers or consumers, libraries this repo publishes, and anything that would need to move in the same coordinated release. Where nothing is reachable, say so explicitly — "no published artefacts, no shared schema, no other consumers identified in the specification" — rather than omitting the section.
+
+### 4. How We'll Prove It Worked
+
+`## 4. How We'll Prove It Worked`.
+
+- `### Evidence Plan` — one row per behaviour in the Behaviour Inventory: Behaviour | What proves it survives | Exists today? Name the actual test class from the Existing Test Inventory where one exists, and say what would have to be written where none does.
+- `### Coverage Gaps` — the behaviours with nothing proving them, stated plainly and counted: "12 of 31 endpoints have no characterisation test". Take the Test Inventory's own Coverage Gaps section as the starting point and extend it to the Behaviour Inventory. State this up front — a gap discovered at review is a gap that was hidden at approval. Say explicitly whether the run will generate characterisation tests first or proceed without them, since that is a decision the approver is making.
+- `### Validation Contract` — the exit criteria this run is held to, taken from the skills that govern it: the build loop compiles (and `package`s, when the Spring Boot upgrade is included) but **does not run the test suite** — say so plainly; every stage must leave the project compiling; the independent code review must find no unapproved change and no unmet manifest row. Name what a human still has to do that no automated step covers.
+
+### 5. What Happens If It Fails
+
+`## 5. What Happens If It Fails`.
+
+- `### Rollback Plan` — whether rollback is **clean**, and if not, what it costs. For a pure Java/Spring source migration it usually is: the artefact is rebuilt from the previous commit and nothing outside the repo has changed. Say so, and name the rollback point per phase. Where anything is not reversible — a schema change, a consumed message, a published artefact — say that explicitly and describe the forward fix, because an approver needs this before approving, not after.
+- `### Escalation Triggers` — the conditions under which the run stops and hands over to a person rather than continuing: the build loop reaches its iteration limit with errors outstanding, the same error reappears after the fixer claimed it fixed, a stage cannot be made to compile without changing behaviour, the change audit finds a forbidden fix such as `--add-opens`, or the plan's own manifest turns out to be wrong about the repository. Each one is a stop-and-ask, not a work-around.
+
+### 6. What the Planner Doesn't Know
+
+`## 6. What the Planner Doesn't Know`. The section that builds the most trust, and the one to write most honestly — you worked from the BRD and Technical Specification, not from the code itself.
+
+- `### Confidence Register` — a table of the plan's material claims: Claim | Confidence | Basis. Mark each **verified** (the specification states it from a file that was actually read) or **inferred** (deduced from a name, a convention or a dependency, without direct evidence). Mark every inferred row with a trailing `*` so it is visible at a glance. An approver uses this to know exactly where to look — "Solr usage in the facet service: inferred*" points them at the one thing worth checking by hand.
+- `### Assumptions` — what the plan relies on that is not proven: that the test suite passes today, that no consumer depends on undocumented response fields, that the JNDI resources listed are the complete set, that the build runs on a JDK the CI actually has. Each is a thing that, if false, changes the plan.
+- `### Open Questions for the SME` — behaviour that could not be determined from the code and needs a person: a bean's intended scope, whether a validation rule is deliberate or vestigial, whether message ordering is required, whether a cache's replication semantics matter, whether vendor-specific SQL is load-bearing. Ask each as a direct question with the file it concerns, so it can be answered without re-reading the plan.
 
 The **Migration Strategy** input tells you which of the two plan shapes to produce:
 
@@ -19,13 +74,16 @@ Produce a single-pass plan with this shape:
 
 ## Overview
 Current state (Java 8, build tool, framework versions, packaging) and target state (Java 25; plus Spring Boot 4.x as an executable JAR if `{springboot_upgrade}` is true).
-## Pre-requisites
+
+## 1. What Changes
+Open with `### Skill Composition`, `### Dependency & Version Delta` and `### Sample Transformations` as specified above, then the change detail below as `###` subsections, ending with the File Change Manifest.
+### Pre-requisites
 JDK 25 installation, Maven/Gradle plugin updates, IDE configuration.
-## Dependency Upgrades
+### Dependency Upgrades
 Third-party library version matrix (from the checklist), including the test stack (`mockito-all`/Mockito 1.x → `mockito-core` 5.x, JUnit 4.13.2, surefire/failsafe 3.2.5+) and the Java 8-era stacks that cannot run on a modern JDK at all — Spring 3.x/4.x, Hibernate 3/4 (`org.springframework.orm.hibernate3`, `org.hibernate.Interceptor`, `Oracle10gDialect`, C3P0), Jackson 1 (`org.codehaus.jackson`) and old Jackson 2 (below 2.12, Afterburner, `enableDefaultTyping()`), Ehcache 2 with its Spring (`EhCacheCacheManager`), Hibernate (`hibernate-ehcache`) and `ehcache-web` integrations, log4j 1.2, cglib/javassist, `ojdbc6`, `google-collections` and old Guava (→ the newest Guava release), runtime-scoped `spring-mock`, and dead build plugins (`maven-svn-revision-number-plugin`, `cargo-maven2-plugin`). Each of these is an API rewrite, not a version bump — size them as such.
-## Deprecated Libraries
+### Deprecated Libraries
 Per the checklist's "Deprecated Libraries — always called out" section: a table of Library | Version found | Status (deprecated / EOL / insecure) | Replacement | In scope for this run? — covering at least JUnit 3/4 and `junit-vintage-engine` (with the number of JUnit 3 and JUnit 4 test classes), Jackson 1 / old Jackson 2 / Jackson 2 on a Spring Boot 4 target, Ehcache 2 with its integrations, and google-collections / old Guava. List them even when this run does not migrate them (e.g. JUnit when `{junit_upgrade}` is false), so the remaining debt is visible.
-## Spring Boot 4 Target (only if `{springboot_upgrade}` is true)
+### Spring Boot 4 Target (only if `{springboot_upgrade}` is true)
 Governed by the `springboot-war-to-boot4` skill. One checklist per item:
 - **Dependency cleanup:** the Spring Boot 4 parent/BOM and starters, and every conflicting legacy library to remove, listed by name with its replacement (explicit Spring versions, servlet API, JSTL, extra connection pools, Jackson 2 databind and its now-merged `jsr310`/`jdk8` modules, old Hibernate / `javax` jars, extra logging bindings, WAR and external-container plugins)
 - **Jackson 3:** `com.fasterxml.jackson.databind`/`.core` imports → `tools.jackson.*` (annotations unchanged), immutable `JsonMapper.builder()` instead of mutating an `ObjectMapper`, unchecked `JacksonException`, custom `ObjectMapper` / `MappingJackson2HttpMessageConverter` beans rewritten or replaced by `spring.jackson.*`
@@ -33,14 +91,11 @@ Governed by the `springboot-war-to-boot4` skill. One checklist per item:
 - **Persistence:** DAO / Hibernate / JPA code → Spring Data JPA (entities, repositories, vendor-specific SQL kept verbatim as native queries), with the existing DAO interfaces kept
 - **Views:** JSP → Thymeleaf (unless the JSP views belong to a `jsp-to-react-bff` companion migration)
 - **Packaging:** WAR → executable JAR; container-provided resources (JNDI DataSource, context path, encoding and session settings) → Spring Boot properties
-## Language Modernisation
+### Language Modernisation
 Every applicable item from the checklist's "Language Features Introduced Along the Way" table, in one combined phase.
-## JUnit Migration (only if `{junit_upgrade}` is true)
+### JUnit Migration (only if `{junit_upgrade}` is true)
 Per the checklist's JUnit 3/4 → JUnit Jupiter section. If `{junit_upgrade}` is false, omit this section but keep every JUnit 3/4 test class under Deprecated Libraries as unmigrated tech debt.
-## Validation & Rollout
-Real build validation happens automatically in the build loop (mvn/gradle compile — `package` when the Spring Boot upgrade is included, so the executable JAR is really built — iterated with the fixer). This section covers what's outside that: test suite run, the new deployment model (`java -jar` plus the environment variables ops must supply), rollback strategy.
-## Estimated Effort
-## File Change Manifest
+### File Change Manifest
 A table, one row per file, and the thing the human reviewer actually approves — it is the scope agreement for the run, and the code reviewer compares it against what really changed afterwards:
 
 | File | Change Type | What Changes |
@@ -54,6 +109,15 @@ Rules that make the table checkable rather than decorative:
 - **Every in-scope file gets a row**, including the ones whose change type is `delete` or `no change needed`. A file you leave out is a file nobody approved being edited.
 - **"What Changes" is specific to that file** — what will actually be different in it, not a restatement of the change type. Two files in the same task with different edits get different text.
 - Change types: language modernisation / namespace migration / dependency bump / Spring Boot configuration / persistence / view conversion / packaging / test migration / delete / no change needed.
+
+## 2. What Stays the Same
+## 3. Why This Is Safe
+## 4. How We'll Prove It Worked
+## 5. What Happens If It Fails
+## 6. What the Planner Doesn't Know
+Each exactly as specified in "Every plan answers six questions" above, with the subsections named there. Note for question 4 that real build validation happens automatically in the build loop (mvn/gradle compile — `package` when the Spring Boot upgrade is included, so the executable JAR is really built — iterated with the fixer), and that the loop does not run the test suite; and for question 5 that the deployment model changes to `java -jar` plus the environment variables ops must supply.
+
+## Estimated Effort
 
 ## If Migration Strategy is "incremental"
 
@@ -94,7 +158,10 @@ Each stage then closes with its own **File Change Manifest** table in the format
 ## Overview
 Current state (JDK, build tool, Spring / Spring Boot version, packaging and deployment model, persistence and view technology from the scanner's repo facts) and the phase roadmap below.
 
-## Deprecated Libraries
+## 1. What Changes
+`### Skill Composition`, `### Dependency & Version Delta` and `### Sample Transformations` exactly as specified above, then `### Deprecated Libraries`, then the phase and stage breakdown that follows. The `## Phase` and `## Stage` headings below stay at `##` level — they are parsed by stage title, so never renumber them or nest them under this section.
+
+### Deprecated Libraries
 Per the checklist's "Deprecated Libraries — always called out" section: Library | Version found | Status (deprecated / EOL / insecure) | Replacement | Owning stage (or "not in scope for this run"). Always include JUnit 3/4 and `junit-vintage-engine` (with test-class counts), Jackson 1 / old Jackson 2 / Jackson 2 on a Spring Boot 4 target, Ehcache 2 with its Spring, Hibernate and `ehcache-web` integrations, and google-collections / old Guava — including the ones a toggle keeps out of scope.
 
 ## Phase 1: Readiness
@@ -160,8 +227,14 @@ Goal: Spring Boot 4 on Jakarta EE 11 with Spring Data JPA, then an executable JA
 - JSP views → Thymeleaf templates; packaging → `jar` with an embedded Tomcat; `SpringBootServletInitializer` removed; remaining `web.xml` translated and deleted; container-provided resources (JNDI DataSource, context path, encoding, session, TLS, realms) → Spring Boot configuration; static assets → `src/main/resources/static`; remaining WAR/JSP-only libraries and plugins removed. The result is always an executable JAR — never a WAR
 - File Change Manifest for this stage only
 
-## Validation & Rollout
-Each stage above is independently built and fixed by its own build loop before the next begins. This section covers what's outside that: the full test suite run after the last stage, the deployment-target change each Spring Boot stage implies (Tomcat 9 → 10.1 → 11 → standalone `java -jar` with environment variables), and a rollback point per phase.
+## 2. What Stays the Same
+## 3. Why This Is Safe
+## 4. How We'll Prove It Worked
+## 5. What Happens If It Fails
+## 6. What the Planner Doesn't Know
+Each exactly as specified in "Every plan answers six questions" above, with the subsections named there, placed after the last stage. Two things are specific to a phased run:
+- Question 4's Validation Contract: each stage is independently built and fixed by its own build loop before the next begins, and no stage may be left uncompilable — but the loop only compiles, it never runs the test suite. The full suite run after the last stage is a human step.
+- Question 5's Rollback Plan: there is a rollback point per phase, which is the main reason to choose this strategy over bigbang — say which phase boundaries are safe to stop at, and note the deployment-target change each Spring Boot stage implies (Tomcat 9 → 10.1 → 11 → standalone `java -jar` with environment variables), since stopping between them leaves a container the ops team must still support.
 
 ## Estimated Effort
 Per stage, per phase, and total.

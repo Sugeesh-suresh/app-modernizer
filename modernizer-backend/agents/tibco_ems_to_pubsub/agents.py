@@ -23,6 +23,8 @@ from google.adk.tools.skill_toolset import SkillToolset
 
 from .. import config
 from ..shared.callbacks import make_skill_update_callback
+from ..shared import skill_manifest
+from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
 from . import tools as fs_tools
 
@@ -44,17 +46,35 @@ re_agent = LlmAgent(
     include_contents="none",
 )
 
+# The plan's Skill Composition section, computed from each SKILL.md's frontmatter rather
+# than left to the model: the planner cannot see the roster, the order or the versions,
+# so a table it wrote itself would be invented.
+_PLAN_SKILL_ROSTER: list[tuple[str, str]] = [
+    ("tibco-ems-to-pubsub-re", "Reverse-engineered this repository into the confirmed BRD, Technical Specification and Test Inventory"),
+    ("tibco-ems-to-pubsub-plan", "Produces this plan"),
+    ("tibco-ems-to-pubsub-modify", "Applies the plan's file changes to the workspace"),
+    ("tibco-ems-to-pubsub-validate", "Validates the migrated client code and config after each pass"),
+    ("tibco-ems-to-pubsub-fix", "Repairs validation errors inside the loop"),
+    ("code-review", "Independent review of the result against this plan's manifest"),
+    ("tibco-ems-to-pubsub-report", "Produces the final migration report"),
+]
+
 planner_agent = LlmAgent(
     name="tibco_ems_plan",
     model=_MODEL,
     description="Creates a detailed TIBCO EMS -> Google Cloud Pub/Sub migration plan from the confirmed BRD and Technical Specification.",
     instruction=(
         "Load and execute the `tibco-ems-to-pubsub-plan` skill to create the migration plan.\n\n"
+        + skill_manifest.planner_block(_PLAN_SKILL_ROSTER)
+        + "\n\n"
         "## Confirmed Business Requirements Document\n{brd}\n\n"
-        "## Confirmed Technical Specification\n{technical_spec}"
+        "## Confirmed Technical Specification\n{technical_spec}\n\n## Existing Test Inventory\n{test_inventory}\n\n"
+        "The Test Inventory is what question 4 is answered from — its Coverage Gaps section "
+        "is the starting point for the plan's own, never a substitute for it."
     ),
     tools=[_skill("tibco-ems-to-pubsub-plan")],
     output_key="plan",
+    after_agent_callback=make_plan_contract_callback(),
     include_contents="none",
 )
 

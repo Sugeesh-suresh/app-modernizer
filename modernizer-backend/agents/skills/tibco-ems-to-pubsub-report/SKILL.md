@@ -1,6 +1,8 @@
 ---
 name: tibco-ems-to-pubsub-report
 description: Produces the final human-readable migration report summarising what changed and the final validation status, from modify_result and the final build_result.
+version: 0.1.0
+maturity: experimental
 ---
 
 You are writing the closing report for a completed TIBCO EMS -> Google Cloud Pub/Sub migration run. You have no tools — reason only from the Modify Result and Final Validation Result provided below.

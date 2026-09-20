@@ -55,6 +55,8 @@ from google.adk.tools.skill_toolset import SkillToolset
 
 from .. import config
 from ..shared.callbacks import make_skill_update_callback
+from ..shared import skill_manifest
+from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
 from . import tools as fs_tools
 
@@ -205,20 +207,43 @@ re_agent = LlmAgent(
 )
 
 # ── planner_agent: pure reasoning over the confirmed BRD/TechSpec ──────────────
+
+# The plan's Skill Composition section, computed from each SKILL.md's frontmatter
+# rather than left to the model: the planner cannot see the roster, the order or
+# the versions, so a table it wrote itself would be invented. Roles say when a row
+# applies, and the planner drops the ones this run does not use.
+_PLAN_SKILL_ROSTER: list[tuple[str, str]] = [
+    ("java-8-to-25-re", "Reverse-engineered this repository into the confirmed BRD, Technical Specification and Test Inventory"),
+    ("java-8-to-25-plan", "Produces this plan"),
+    ("java-migration-readiness", "Incremental only — Stages 1-2: build modernisation, the test-stack safety net and OpenRewrite setup"),
+    ("springboot-incremental-upgrade", "Incremental only, and only when a Spring Boot upgrade was requested — Stages 4-5: Spring Boot 2.7, then 3.x with the Jakarta rename"),
+    ("springboot-war-to-boot4", "Only when a Spring Boot upgrade was requested — the Spring Boot 4.x target and the WAR to executable-JAR conversion"),
+    ("java-8-to-25-modify", "Applies each task's file changes to the workspace"),
+    ("java-8-to-25-validate", "Compiles (and packages) the workspace after each stage"),
+    ("java-8-to-25-fix", "Repairs build errors inside the build loop"),
+    ("code-review", "Independent review of the result against this plan's manifest"),
+    ("java-8-to-25-report", "Produces the final migration report"),
+]
+
 planner_agent = LlmAgent(
     name="java8_plan",
     model=_MODEL,
     description="Creates a detailed, strategy-aware Java 8 -> Java 25 migration plan from the confirmed BRD and Technical Specification.",
     instruction=(
         "Load and execute the `java-8-to-25-plan` skill to create the migration plan.\n\n"
-        "## Migration Strategy\n{migration_strategy}\n\n"
+        + skill_manifest.planner_block(_PLAN_SKILL_ROSTER)
+        + "\n\n## Migration Strategy\n{migration_strategy}\n\n"
         "## JUnit Upgrade Requested\n{junit_upgrade}\n\n"
         "## Spring Boot Upgrade Requested\n{springboot_upgrade}\n\n"
         "## Confirmed Business Requirements Document\n{brd}\n\n"
-        "## Confirmed Technical Specification\n{technical_spec}"
+        "## Confirmed Technical Specification\n{technical_spec}\n\n"
+        "## Existing Test Inventory\n{test_inventory}\n\n"
+        "The Test Inventory is what question 4 is answered from — its Coverage Gaps section is the "
+        "starting point for the plan's own, never a substitute for it."
     ),
     tools=[_skill("java-8-to-25-plan")],
     output_key="plan",
+    after_agent_callback=make_plan_contract_callback(),
     include_contents="none",
 )
 

@@ -1,6 +1,8 @@
 ---
 name: java-migration-readiness
 description: Phase 1 (Readiness) of an incremental Java 8 -> 25 migration — modernises the Maven/Gradle build itself and sets up OpenRewrite for automated code analysis, without changing the Java level, framework versions, or application code.
+version: 0.1.0
+maturity: experimental
 ---
 
 You are a build-engineering specialist handling **Phase 1 — Readiness** of an incremental migration. Your caller tells you which of the two readiness stages you are applying — do only that stage.

@@ -15,6 +15,7 @@ compile time. Two consequences are easy to regress and are pinned here:
     on a JDK it cannot run on.
 """
 import pathlib
+import re
 
 from google.adk.skills import load_skill_from_dir
 
@@ -127,7 +128,8 @@ def test_junit_3_and_4_are_called_out_as_deprecated_even_without_the_junit_toggl
     assert "Deprecated" in _read("java-8-to-25-re/SKILL.md")
     assert "deprecated" in _read("java-migration-readiness/SKILL.md")
     plan = _read("java-8-to-25-plan/SKILL.md")
-    assert plan.count("## Deprecated Libraries") == 2  # bigbang and incremental shapes
+    # Count real headings, not inline mentions of the section name.
+    assert len(re.findall(r"^#+ Deprecated Libraries\s*$", plan, re.MULTILINE)) == 2  # bigbang and incremental shapes
     assert "## Deprecated Libraries Remaining" in _read("java-8-to-25-report/SKILL.md")
 
 
