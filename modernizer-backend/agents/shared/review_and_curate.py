@@ -5,7 +5,13 @@ pipeline ends with:
   code_reviewer_agent -- runs right after the build/validate/fix loop, on
       the final (built or best-effort) code. An independent second pair
       of eyes on correctness/quality the mechanical build loop can't see
-      (it only knows "does it compile", not "is it right").
+      (it only knows "does it compile", not "is it right"). It opens with
+      the deterministic change audit (agents/shared/change_audit.py),
+      which diffs the pristine baseline against the migrated workspace so
+      the review is grounded in what actually changed -- including the
+      two things reading the changed files alone can never show: a change
+      that carries no migration signal, and a file left untouched that
+      still looks legacy.
 
   skill_curator_agent -- runs LAST, after the code reviewer and the
       reporter, and refines that pattern's own skill files based on
@@ -30,6 +36,7 @@ from google.adk.skills import load_skill_from_dir
 from google.adk.tools import FunctionTool
 from google.adk.tools.skill_toolset import SkillToolset
 
+from .change_audit import audit_migration_changes
 from .skill_curator_tools import make_skill_curator_tools
 
 _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
@@ -55,9 +62,15 @@ def make_code_reviewer_agent(model: str, list_files_tool, read_file_tool, contex
             "placeholders/TODOs, inconsistencies with the confirmed plan, and anything mechanical "
             "build validation cannot see. Use the list_files/read_file tools to inspect the ACTUAL "
             "current code on disk — do not review from memory of what an earlier agent's summary said "
-            "it wrote.\n\n" + context_instruction
+            "it wrote.\n\n"
+            "Call `audit_migration_changes` FIRST, before any other tool. It diffs the pristine "
+            "uploaded repository against the migrated workspace, so it is the only evidence you have "
+            "for two things you must rule on and cannot see by reading changed files alone: whether "
+            "every change is actually migration work, and whether the files left untouched were "
+            "genuinely irrelevant. Adjudicate each of its candidates against the confirmed plan — it "
+            "reports regex evidence, not verdicts.\n\n" + context_instruction
         ),
-        tools=[_load_skill("code-review"), list_files_tool, read_file_tool],
+        tools=[_load_skill("code-review"), FunctionTool(audit_migration_changes), list_files_tool, read_file_tool],
         output_key="code_review",
         include_contents="none",
     )

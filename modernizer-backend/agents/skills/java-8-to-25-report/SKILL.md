@@ -31,8 +31,17 @@ Summarise the files written and skipped from the Modify Result(s), grouped by ca
 ## Deployment Impact (runs with the Spring Boot upgrade only)
 The final runtime (standalone `java -jar` on an embedded Tomcat) and, for incremental runs, what each intermediate stage required (Tomcat 9 → 10.1 → 11). List every environment variable and container-provided resource the modifier flagged for ops (JNDI DataSources replaced by `spring.datasource.*`, context path, TLS, security realms), plus the conflicting libraries that were removed.
 
+## Migration Coverage
+From the Independent Code Review's **Change Relevance** section, which is grounded in a real diff of the uploaded repository against the migrated one — prefer it over the Modify Results wherever the two disagree, since the Modify Results are an agent's account of its own work and the audit is what is actually on disk:
+- How many files changed. If nothing changed, that is the report's headline and the Summary must say the migration did not land, whatever the Build Status says.
+- Any changed file the review could not tie to the migration plan.
+- Any untouched file that still contains legacy code, split into confirmed coverage gaps (carry each into Follow-up Recommendations) and work deliberately left out of scope by a stage boundary or a declined toggle.
+- Any legacy API re-introduced, or forbidden fix applied, that the review flagged as a regression.
+
+If the review reported a clean result on all four, say so in one line rather than padding the section.
+
 ## Deprecated Libraries Remaining
-Every deprecated library the Modify Results say is still present, even when the build passed: JUnit 3/4 test classes and `junit-vintage-engine` (state whether the JUnit upgrade was requested), Jackson 1, Jackson 2 below 2.12 or Jackson 2 left on a Spring Boot 4 target, Ehcache 2 or its Spring / Hibernate / `ehcache-web` integrations, and google-collections or a Guava older than the newest release. If none remain, say so in one line.
+Every deprecated library still present, even when the build passed — taking the Independent Code Review's untouched-file evidence as authoritative and the Modify Results as supporting detail: JUnit 3/4 test classes and `junit-vintage-engine` (state whether the JUnit upgrade was requested), Jackson 1, Jackson 2 below 2.12 or Jackson 2 left on a Spring Boot 4 target, Ehcache 2 or its Spring / Hibernate / `ehcache-web` integrations, and google-collections or a Guava older than the newest release. If none remain, say so in one line.
 
 ## Follow-up Recommendations
 Anything the automated pipeline could not verify and that should be checked manually before this is considered production-ready: test suite results (the build loop only compiles or packages, it does not run tests), runtime behaviour, performance, running the OpenRewrite dry runs that Stage 2 set up, and every manual follow-up the Modify Results listed.
