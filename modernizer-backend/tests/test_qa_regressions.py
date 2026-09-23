@@ -246,3 +246,115 @@ class TestD10SkillWritesAreSafe:
         import inspect
 
         assert "MODERNIZER_SKILL_LEARNING" in inspect.getsource(callbacks)
+
+
+class TestReverseEngineeringOutputContract:
+    """The RE skill was rewritten and its output contract listed the five section
+    markers as a consecutive block, saying only "in this exact order" — never that
+    each section's content goes BETWEEN its marker and the next. A model reading it
+    the other way emits all five markers together and every section parses empty,
+    which the missing-marker check cannot see because the markers are all present."""
+
+    @staticmethod
+    def _re_skill() -> str:
+        return _skill("java-8-to-25-re")
+
+    def test_the_markers_are_described_as_separators(self):
+        body = self._re_skill()
+
+        assert "AS SEPARATORS" in body
+        assert "goes BETWEEN its opening marker" in body
+        assert "Never emit two markers in a row" in body
+
+    def test_the_skill_shows_a_worked_shape_not_just_a_marker_list(self):
+        body = self._re_skill()
+
+        for n in range(1, 5):
+            assert f"...all of SECTION {n} here..." in body
+
+    def test_the_shape_the_skill_demonstrates_actually_parses(self):
+        """The strongest form of this test: take the example out of the skill,
+        fill it in, and run it through the real parser."""
+        import re as _re
+
+        demo = _re.search(
+            r"Emit exactly this shape:\n\n(.*?)\n\nNever emit", self._re_skill(), _re.DOTALL
+        ).group(1)
+        filled = demo
+        for n, text in enumerate(
+            ["Scope: 412 files.", "Executive summary.", "Repo facts: Maven, 1.8.",
+             "41 JUnit 4 classes."], start=1,
+        ):
+            filled = filled.replace(f"...all of SECTION {n} here...", text)
+
+        analysis, brd, spec, inventory = main._parse_re_sections(filled)
+
+        assert analysis.strip() and brd.strip() and spec.strip() and inventory.strip()
+        assert "Automated warning" not in brd
+
+    def test_markers_emitted_as_a_block_are_caught_rather_than_silently_empty(self):
+        combined = (
+            "<!-- SECTION: ANALYSIS -->\n<!-- SECTION: BRD -->\n"
+            "<!-- SECTION: TECHNICAL_SPECIFICATION -->\n<!-- SECTION: TEST_INVENTORY -->\n"
+            "<!-- SECTION: END -->\nSECTION 1 — analysis text\nSECTION 4 — test text\n"
+        )
+
+        _, brd, spec, inventory = main._parse_re_sections(combined)
+
+        assert not spec.strip()
+        assert "Automated warning" in brd
+        assert "emitted together instead of as separators" in brd
+        assert "Automated warning" in inventory
+
+    def test_a_well_formed_document_raises_no_warning(self):
+        combined = (
+            "<!-- SECTION: ANALYSIS -->\nA\n<!-- SECTION: BRD -->\nB\n"
+            "<!-- SECTION: TECHNICAL_SPECIFICATION -->\nT\n"
+            "<!-- SECTION: TEST_INVENTORY -->\nI\n<!-- SECTION: END -->"
+        )
+
+        assert main._parse_re_sections(combined) == ("A", "B", "T", "I")
+
+
+class TestDeprecationStatusSurvivesTheRewrite:
+    """The plan and report build their "Deprecated Libraries" tables from the RE
+    output's Status columns. The rewrite relabelled JUnit 3/4 as a "modernization
+    candidate", which reads as evidence-based caution but silently removed the
+    vocabulary those tables are assembled from."""
+
+    @staticmethod
+    def _re_skill() -> str:
+        return _skill("java-8-to-25-re")
+
+    def test_the_status_vocabulary_matches_what_the_plan_consumes(self):
+        body = self._re_skill()
+
+        for status in ("Deprecated", "EOL", "Insecure"):
+            assert status in body, status
+        # The plan skill asks for exactly this vocabulary.
+        assert "Status (deprecated / EOL / insecure)" in _skill("java-8-to-25-plan")
+
+    def test_junit_3_and_4_are_deprecated_regardless_of_the_toggle(self):
+        body = self._re_skill()
+
+        assert "Status **Deprecated**" in body
+        assert "regardless of whether a JUnit upgrade was requested" in body
+        assert "the toggle\n   gates the migration work, never the call-out" in body
+
+    def test_the_vintage_engine_is_called_out_too(self):
+        assert "`junit-vintage-engine` Deprecated" in self._re_skill()
+
+    def test_status_and_impact_stay_separate_judgements(self):
+        """The rewrite's evidence-based stance is preserved: a library's
+        deprecation is an upstream fact, while whether it blocks THIS migration
+        is the judgement that needs evidence from the repository."""
+        body = self._re_skill()
+
+        assert "Status is a fact about the library" in body
+        assert "Impact is the evidence-based judgement" in body
+
+    def test_the_test_class_counts_the_plan_needs_are_still_requested(self):
+        body = self._re_skill()
+
+        assert "JUnit 3 `TestCase` class count" in body
+        assert "JUnit 4 test\n   class count" in body

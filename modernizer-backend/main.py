@@ -596,17 +596,42 @@ def _parse_re_sections(combined: str) -> tuple[str, str, str, str]:
     missing = [name for name, found in (
         ("ANALYSIS", _A), ("BRD", _B), ("TECHNICAL_SPECIFICATION", _T), ("TEST_INVENTORY", _X),
     ) if not found]
-    if missing:
-        print(f"[re] WARNING: RE output missing section marker(s): {', '.join(missing)}", flush=True)
+    # A marker in the wrong place is as damaging as a missing one and far quieter:
+    # emit all five consecutively and every section parses EMPTY while the
+    # missing-marker check above stays silent, because the markers are all there.
+    empty = [name for name, found, body in (
+        ("ANALYSIS", _A, analysis), ("BRD", _B, brd),
+        ("TECHNICAL_SPECIFICATION", _T, tech_spec), ("TEST_INVENTORY", _X, test_inventory),
+    ) if found and not body.strip()]
+
+    if missing or empty:
+        detail = []
+        if missing:
+            detail.append(f"missing marker(s): {', '.join(missing)}")
+        if empty:
+            detail.append(f"empty section(s): {', '.join(empty)}")
+        print(f"[re] WARNING: RE output {'; '.join(detail)}", flush=True)
+
+        reasons = []
+        if missing:
+            reasons.append(
+                f"did not emit the {', '.join('`' + m + '`' for m in missing)} section marker(s)"
+            )
+        if empty:
+            reasons.append(
+                f"left {', '.join('`' + e + '`' for e in empty)} empty — usually because the "
+                "markers were emitted together instead of as separators, with the content after "
+                "them"
+            )
         warning = (
-            "> **Automated warning — incomplete reverse-engineering output.** The analysis did not "
-            f"emit the {', '.join('`' + m + '`' for m in missing)} section marker(s), so this "
-            "document was split on a best-effort basis and a section may be truncated, misplaced or "
-            "empty. Check it before confirming: the plan is built from these sections, and an empty "
-            "Test Inventory makes the plan's Coverage Gaps look clean when they are simply unknown.\n"
+            "> **Automated warning — incomplete reverse-engineering output.** The analysis "
+            + " and ".join(reasons)
+            + ". Check this document before confirming: the plan is built from these sections, and "
+            "an empty Technical Specification or Test Inventory makes the plan's Coverage Gaps look "
+            "clean when they are simply unknown.\n"
         )
         brd = warning + "\n" + (brd or combined)
-        if not test_inventory:
+        if not test_inventory.strip():
             test_inventory = warning
 
     return analysis, brd or combined, tech_spec, test_inventory
