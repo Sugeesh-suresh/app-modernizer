@@ -29,7 +29,7 @@ Skills (Pattern 2 -- file-based). Several of these are intentionally
 generic/reusable beyond this exact pipeline (see each skill's own
 description for the reuse boundary):
 
-  jsp-re                  -- generic: JSP repo reverse-engineering/extraction
+  jsp-re                  -- generic: JSP repo fact extraction (no target-architecture decisions)
   jsp-logic-classifier     -- generic: frontend-vs-backend logic placement decision
   jsp-to-react-bff-plan    -- this-pipeline-specific: BFF architecture + manifests
   react-frontend-generate  -- generic: React code generation from a page/component map
@@ -65,7 +65,7 @@ def _skill(name: str) -> SkillToolset:
 jsp_re_agent = LlmAgent(
     name="jsp_re",
     model=_MODEL,
-    description="Reverse-engineers a JSP repository via list_files/read_file: page inventory, embedded logic, session/state usage, navigation flow.",
+    description="Extracts verifiable facts from a JSP repository via list_files/read_file: runtime context, page/fragment inventory, embedded view logic, request handlers and cross-cutting components, state usage, navigation flow, referenced client behaviour, tests.",
     instruction="Load and execute the `jsp-re` skill, using the list_files and read_file tools to explore the workspace.",
     tools=[_skill("jsp-re"), FunctionTool(fs_tools.list_files), FunctionTool(fs_tools.read_file)],
     output_key="jsp_facts",
@@ -100,7 +100,7 @@ re_pipeline = SequentialAgent(
 # than left to the model: the planner cannot see the roster, the order or the versions,
 # so a table it wrote itself would be invented.
 _PLAN_SKILL_ROSTER: list[tuple[str, str]] = [
-    ("jsp-re", "Reverse-engineered the JSP application into the confirmed BRD, Technical Specification and Test Inventory"),
+    ("jsp-re", "Extracted the verifiable facts of the JSP application that the Analysis, BRD, Technical Specification and Test Inventory were built from"),
     ("jsp-logic-classifier", "Classified each JSP's logic as client-side or server-side"),
     ("jsp-to-react-bff-plan", "Produces this plan"),
     ("spring-boot-bff-generate", "Generates the Spring Boot 4 BFF tree"),
