@@ -35,44 +35,55 @@ COMPANION_LABELS: dict[str, str] = {
 
 _SCAN_SUFFIXES = {".xml", ".properties", ".yml", ".yaml", ".java", ".gradle", ".kts"}
 
-_ORACLE_PATTERNS = [
+# Public because stack_detector.py reuses them: the same library signature means
+# the same thing whether it is being reported as a companion of a chosen primary
+# or as one stack among many in a discovery run, and two copies of these regexes
+# would drift.
+ORACLE_PATTERNS = [
     re.compile(r"com\.oracle\.database\.jdbc", re.IGNORECASE),
     re.compile(r"\bojdbc\d*\b", re.IGNORECASE),
     re.compile(r"oracle\.jdbc\.(?:driver\.)?OracleDriver"),
     re.compile(r"jdbc:oracle:thin:"),
 ]
 
-_SOLR_PATTERNS = [
+SOLR_PATTERNS = [
     re.compile(r"org\.apache\.solr"),
     re.compile(r"\bsolr-solrj\b"),
     re.compile(r"\b(?:Http|Cloud)Solr(?:Client|Server)\b"),
     re.compile(r"org\.apache\.solr\.client\.solrj"),
 ]
 
-_TIBCO_EMS_PATTERNS = [
+TIBCO_EMS_PATTERNS = [
     re.compile(r"\btibjms\b", re.IGNORECASE),
     re.compile(r"com\.tibco\.tibjms\.Tibjms(?:ConnectionFactory|Queue|Topic)"),
     re.compile(r"tibjmsnaming", re.IGNORECASE),
 ]
 
 _EVIDENCE_PATTERNS: dict[str, list[re.Pattern]] = {
-    "oracle-19c-to-23ai": _ORACLE_PATTERNS,
-    "solr-4-to-9": _SOLR_PATTERNS,
-    "tibco-ems-to-pubsub": _TIBCO_EMS_PATTERNS,
+    "oracle-19c-to-23ai": ORACLE_PATTERNS,
+    "solr-4-to-9": SOLR_PATTERNS,
+    "tibco-ems-to-pubsub": TIBCO_EMS_PATTERNS,
 }
 
 _MAX_EVIDENCE_PER_PATTERN = 5
 
 
-def _scannable_files(root: Path) -> Iterator[Path]:
+def scannable_files(root: Path, suffixes: set[str] | None = None) -> Iterator[Path]:
     """Repository files worth grepping for library signatures — build files
-    (pom.xml/*.gradle/*.kts), sources and config, minus VCS/build output."""
+    (pom.xml/*.gradle/*.kts), sources and config, minus VCS/build output.
+
+    `suffixes` defaults to this module's set; stack_detector passes a wider one
+    because it also has to see view files (.jsp/.tag) that no companion pattern
+    needs. Shared rather than duplicated so both callers skip the same
+    build-output directories.
+    """
+    allowed = _SCAN_SUFFIXES if suffixes is None else suffixes
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
         if EXCLUDED_DIRS & set(path.relative_to(root).parts):
             continue
-        if path.suffix.lower() in _SCAN_SUFFIXES:
+        if path.suffix.lower() in allowed:
             yield path
 
 
@@ -94,7 +105,7 @@ def detect_companions(workspace_dir: str, primary_pattern: str) -> list[dict]:
         return []
 
     evidence: dict[str, list[str]] = {c: [] for c in candidates}
-    for path in _scannable_files(root):
+    for path in scannable_files(root):
         if all(len(hits) >= _MAX_EVIDENCE_PER_PATTERN for hits in evidence.values()):
             break
         try:

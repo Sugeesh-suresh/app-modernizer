@@ -100,13 +100,17 @@ interface Props {
   refiningContent: string;
   onConfirm: (brdContent: string, techSpecContent: string, feedback?: string) => Promise<void>;
   onRefine: (feedback: string) => Promise<void>;
+  /** Reverse-engineering-only run (stack-discovery): confirming finishes the run
+   * rather than advancing to plan generation, so the button must not promise a
+   * plan that will never be generated. */
+  reOnly?: boolean;
 }
 
 type ActiveTab = 'brd' | 'techspec' | 'tests';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refining, refiningContent, onConfirm, onRefine }: Props) {
+export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refining, refiningContent, onConfirm, onRefine, reOnly = false }: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('brd');
   // Reset the editable drafts whenever freshly (re)generated content arrives —
   // adjusting state during render per https://react.dev/learn/you-might-not-need-an-effect
@@ -423,7 +427,11 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
           className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-900/5 disabled:text-slate-500 text-white font-semibold px-6 py-3 rounded-xl transition-colors text-sm shadow-lg shadow-emerald-500/20 cursor-pointer disabled:cursor-not-allowed"
         >
           {confirming ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-          {confirming ? 'Confirming…' : 'Confirm Analysis & Generate Plan'}
+          {confirming
+            ? 'Confirming…'
+            : reOnly
+              ? 'Confirm & Finish'
+              : 'Confirm Analysis & Generate Plan'}
         </button>
         <button
           onClick={handleRefine}
@@ -432,10 +440,14 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
           className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-900/5 disabled:text-slate-500 text-white font-semibold px-5 py-3 rounded-xl transition-colors text-sm cursor-pointer disabled:cursor-not-allowed"
         >
           {refining ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-          {refining ? 'Refining…' : 'Refine with Planner'}
+          {refining ? 'Refining…' : reOnly ? 'Refine Analysis' : 'Refine with Planner'}
         </button>
         <p className="text-xs text-slate-500">
-          {anyUploading ? 'Waiting for file uploads to finish…' : 'Refine re-runs the planner with your feedback; Confirm advances to plan generation.'}
+          {anyUploading
+            ? 'Waiting for file uploads to finish…'
+            : reOnly
+              ? 'Refine re-runs the analysis with your feedback; Confirm finishes the run — this pattern produces no plan or code.'
+              : 'Refine re-runs the planner with your feedback; Confirm advances to plan generation.'}
         </p>
       </div>
     </div>

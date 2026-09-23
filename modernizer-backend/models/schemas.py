@@ -9,6 +9,10 @@ class PatternType(str, Enum):
     ORACLE_19C_TO_23AI = "oracle-19c-to-23ai"
     TIBCO_EMS_TO_PUBSUB = "tibco-ems-to-pubsub"
     JSP_TO_REACT_BFF = "jsp-to-react-bff"
+    # Reverse engineering only: maps the stacks in the repo and documents each
+    # one. Produces no plan and no code, so a session on this pattern ends at
+    # brd-review rather than passing through plan-review to code-generation.
+    STACK_DISCOVERY = "stack-discovery"
 
 
 class MigrationStrategy(str, Enum):
@@ -18,6 +22,7 @@ class MigrationStrategy(str, Enum):
 
 class SessionStatus(str, Enum):
     UPLOADING = "uploading"
+    STACK_MAPPING = "stack-mapping"  # stack-discovery only
     REVERSE_ENGINEERING = "reverse-engineering"
     BRD_REVIEW = "brd-review"
     PLAN_GENERATION = "plan-generation"

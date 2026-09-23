@@ -16,11 +16,36 @@ The platform is built on **Google ADK** with **Gemini**, and its domain knowledg
 | **TIBCO EMS → Cloud Pub/Sub** | EMS destinations, JMS clients | Pub/Sub topics, `Publisher`/`Subscriber` | Real `mvn`/`gradle` compile | Single pass |
 | **JSP → React + BFF** | JSP/JSTL WAR | React frontend + Spring Boot 4 BFF (JAR) | Real `mvn compile` + `npm run build` | Single pass, dual tree |
 
-Every pattern runs the full pipeline: reverse-engineer → **Analysis review (HITL)** → plan → **Plan review (HITL)** → code generation → build/fix loop → independent code review → report.
+Every migration pattern runs the full pipeline: reverse-engineer → **Analysis review (HITL)** → plan → **Plan review (HITL)** → code generation → build/fix loop → independent code review → report.
 
-### Companion detection
+### Analysis-only pattern
 
-On upload, a deterministic regex scan (`agents/shared/companion_detector.py`) looks for cross-cutting signals in a Java repo — an Oracle JDBC driver, a SolrJ client, TIBCO EMS imports — and offers those migrations alongside the primary one. Evidence strings are shown with each recommendation, so the suggestion is auditable rather than an opaque guess. Selected companions run as a **bundle**, each in its own isolated ADK session against the same workspace.
+| Pattern | From | To | Validation | Strategies |
+|---|---|---|---|---|
+| **Discover & Reverse Engineer My Stack** | An unknown or mixed-stack repo | One combined reverse-engineering document | None — nothing is generated or modified | Single pass, RE only |
+
+`stack-discovery` is the one pattern that is not a migration, for the case where you do not know what is in a repository or it is several things at once. You upload it without choosing a migration; a dependency mapper works out which stacks are actually present, you confirm them, and each one's existing RE skill runs. The run **ends at the analysis review** — no plan, no code generation, nothing written to the workspace.
+
+```
+upload → dependency mapper → HUMAN: confirm stacks → RE per stack → combined document → HUMAN: review → done
+```
+
+Reusing each stack's own RE skill is deliberate: those are the maintained extraction logic for their stack, and a second set written for this pipeline would drift from them. The consequence is that each section keeps its migration framing (the Oracle section is written towards 23ai), which is honest about where the analysis came from.
+
+**WildFly/JBoss** is detected here and reverse engineered by `skills/wildfly-re`, which has no target platform — it documents the deployment contract (subsystems, datasources, JNDI bindings, module dependencies and class loading, container-supplied behaviour), the part of a legacy system that lives nowhere in the application source. It is marked *extraction only* wherever it is shown, so nobody is led to expect a migration that does not exist.
+
+### Stack and companion detection
+
+Two deterministic scans answer two different questions, sharing their library signatures so they cannot drift apart:
+
+| Module | Question | Needs a primary? |
+|---|---|---|
+| `shared/companion_detector.py` | "You picked Java 8 → 25 — what else must move for the app to keep working?" | Yes |
+| `shared/stack_detector.py` | "What is in this repository at all?" — including the stacks that are a primary elsewhere (Java, JSP) and WildFly | No |
+
+Both attach the file path and matched text to every finding, so a recommendation is auditable rather than an opaque guess, and the evidence travels into the document the reviewer signs off on. Selected companions run as a **bundle**, each in its own isolated ADK session against the same workspace.
+
+`stack-discovery` then adds a second pass: an LLM `dependency-mapper` agent reads the build files, descriptors and configuration, and may confirm a finding with better evidence, reject one with a stated reason, or add one the regexes missed. Three rules are enforced in code rather than trusted to the prompt — a stack with no citation is dropped, an added stack must be one the pipeline can actually reverse-engineer (anything else is reported as a note), and rejecting a deterministic finding requires a reason or the finding stands. If the mapper's reply cannot be parsed at all, the deterministic findings are used unchanged, because silently returning nothing would produce an empty document that reads like a clean repository.
 
 ---
 
@@ -256,13 +281,23 @@ The suite covers the deterministic guardrails, the stage/task and manifest parse
 ## Usage
 
 1. Open **http://localhost:5173**
-2. Select a migration pattern and upload your project as a `.zip`
+2. Select a pattern and upload your project as a `.zip`
 3. For **Java 8 → 25**, choose a strategy (bigbang or phased incremental) and the JUnit / Spring Boot toggles
 4. Review any **companion migrations** detected in your repo, with their evidence
 5. Watch the reverse-engineering run, then review and edit the **BRD** and **Technical Specification** — optionally attach Swagger / OpenAPI / design files (and UX designs, for JSP → React)
 6. Review the **Migration Plan**. Read its Change Manifest, its coverage gaps, and its open questions before approving — this is the scope agreement the code review will hold the run to
 7. Watch code generation, the per-stage build/fix loops, and the independent code review
 8. Inspect the **Changed Files** diff, browse the result, and download
+
+### Analysis-only run
+
+Pick **Discover & Reverse Engineer My Stack** when you do not know what is in the repository, or it is several stacks at once:
+
+1. Upload the `.zip` — no migration to choose, and no strategy or toggles (the API rejects them for this pattern)
+2. Watch the **dependency mapper** read the build files and descriptors
+3. Confirm the **detected stacks**, each with its file evidence; uncheck anything you do not want documented
+4. Watch one reverse-engineering run per confirmed stack
+5. Review and edit the combined document, then confirm to finish — or download it from `GET /api/sessions/{id}/download/reverse-engineering`, which returns the BRD, Technical Specification and Test Inventory as one file
 
 ---
 
@@ -282,7 +317,7 @@ app-modernizer/
 │   │       ├── PatternSelection.tsx
 │   │       ├── FileUpload.tsx
 │   │       ├── JavaMigrationOptions.tsx   # Strategy + JUnit/Spring Boot toggles
-│   │       ├── CompanionSelection.tsx     # Detected companion migrations
+│   │       ├── CompanionSelection.tsx     # Detected companions, or discovered stacks
 │   │       ├── StepIndicator.tsx
 │   │       ├── ProcessingView.tsx         # Live stage/task progress
 │   │       ├── BRDReview.tsx
@@ -300,11 +335,13 @@ app-modernizer/
     │   ├── oracle_19c_to_23ai/
     │   ├── tibco_ems_to_pubsub/
     │   ├── jsp_to_react_bff/              # Dual-tree: backend/ + frontend/
+    │   ├── stack_discovery/               # RE-only: dependency mapper + wildfly RE
     │   ├── skills/                        # SKILL.md + references/*.md per agent
     │   └── shared/
     │       ├── workspace_tools.py         # list/read/write/replace/run_command
     │       ├── dependency_graph.py        # Static graph + migration groups
     │       ├── companion_detector.py      # Cross-cutting pattern detection
+    │       ├── stack_detector.py          # Primary-less whole-stack detection
     │       ├── plan_tasks.py              # Stage + task parsing
     │       ├── plan_contract.py           # The six questions
     │       ├── plan_coverage.py           # Plan manifest vs. what changed

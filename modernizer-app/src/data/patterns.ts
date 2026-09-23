@@ -96,4 +96,23 @@ export const PATTERNS: PatternConfig[] = [
       'Session/state semantics explicitly reconciled, not assumed',
     ],
   },
+  {
+    id: 'stack-discovery',
+    title: 'Discover & Reverse Engineer My Stack',
+    description:
+      "Don't know what is in the repository, or it is several things at once? Upload it and a dependency mapper works out which technology stacks are actually there — then runs each stack's reverse-engineering agent and hands you one combined document. Analysis only: nothing is planned, nothing is modified.",
+    from: 'Unknown repo',
+    to: 'RE document',
+    fromBadge: 'bg-slate-500/20 text-slate-700 border-slate-500/30',
+    toBadge: 'bg-violet-500/20 text-violet-700 border-violet-500/30',
+    gradient: 'from-slate-500/10 via-transparent to-violet-500/10',
+    iconBg: 'bg-gradient-to-br from-slate-600 to-violet-600',
+    benefits: [
+      'No need to pick a migration first — the repo is scanned, then read',
+      'Deterministic library scan, then an agent that reads the build files',
+      'Java, JSP, WildFly/JBoss, Oracle, Solr and TIBCO EMS detected',
+      'Every stack reported carries the file evidence that found it',
+      'Read-only: no plan, no code generation, nothing written to the repo',
+    ],
+  },
 ];

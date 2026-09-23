@@ -6,9 +6,18 @@ interface Props {
   primaryLabel: string;
   recommendations: CompanionRecommendation[];
   onConfirm: (selected: PatternId[]) => Promise<void>;
+  /** stack-discovery: there is no primary migration these sit alongside, and
+   * nothing is being migrated at all — only reverse engineered. The copy has to
+   * say that, or the screen promises migrations this run will never perform. */
+  discovery?: boolean;
 }
 
-export function CompanionSelection({ primaryLabel, recommendations, onConfirm }: Props) {
+export function CompanionSelection({
+  primaryLabel,
+  recommendations,
+  onConfirm,
+  discovery = false,
+}: Props) {
   const [selected, setSelected] = useState<Set<PatternId>>(
     () => new Set(recommendations.map((r) => r.pattern)),
   );
@@ -40,16 +49,31 @@ export function CompanionSelection({ primaryLabel, recommendations, onConfirm }:
             <Sparkles size={20} />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-slate-900">Additional Migrations Detected</h2>
+            <h2 className="text-xl font-bold text-slate-900">
+              {discovery ? 'Technology Stacks Detected' : 'Additional Migrations Detected'}
+            </h2>
             <p className="text-sm text-slate-600">
-              Alongside {primaryLabel}, this repository also depends on the following
+              {discovery
+                ? 'Each stack you keep checked will be reverse engineered into its own section of the document'
+                : `Alongside ${primaryLabel}, this repository also depends on the following`}
             </p>
           </div>
         </div>
         <p className="text-xs text-slate-500">
-          Detected deterministically by scanning the uploaded repository's build files and source
-          for library/driver signatures — not an AI guess. Leave any of these unchecked to migrate
-          {' '}{primaryLabel} on its own; you can always run them separately later.
+          {discovery ? (
+            <>
+              Found by a deterministic scan of the repository's build files, descriptors and source,
+              then confirmed by an agent that read them — every stack below lists the evidence that
+              put it there. Uncheck anything you don't want documented. Nothing here is migrated or
+              modified; this run only produces the reverse-engineering document.
+            </>
+          ) : (
+            <>
+              Detected deterministically by scanning the uploaded repository's build files and source
+              for library/driver signatures — not an AI guess. Leave any of these unchecked to
+              migrate {primaryLabel} on its own; you can always run them separately later.
+            </>
+          )}
         </p>
       </div>
 
@@ -68,9 +92,14 @@ export function CompanionSelection({ primaryLabel, recommendations, onConfirm }:
                 className="mt-0.5 w-4 h-4 accent-violet-600 cursor-pointer"
               />
               <div className="flex-1">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <FileSearch size={14} className="text-slate-500" />
                   <span className="text-sm font-semibold text-slate-900">{rec.label}</span>
+                  {rec.extraction_only && (
+                    <span className="text-[10px] uppercase tracking-wide font-semibold text-slate-600 bg-slate-900/5 border border-slate-900/10 rounded px-1.5 py-0.5">
+                      Documented only — no migration exists
+                    </span>
+                  )}
                 </div>
                 <ul className="mt-1.5 space-y-0.5">
                   {rec.evidence.map((e, i) => (
@@ -91,7 +120,11 @@ export function CompanionSelection({ primaryLabel, recommendations, onConfirm }:
         className="w-full flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-900/5 disabled:text-slate-500 text-white font-semibold px-6 py-3.5 rounded-xl transition-colors text-sm shadow-lg shadow-violet-500/25 cursor-pointer disabled:cursor-not-allowed"
       >
         {confirming ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-        {confirming ? 'Starting…' : 'Continue'}
+        {confirming
+          ? 'Starting…'
+          : discovery
+            ? `Reverse engineer ${selected.size} ${selected.size === 1 ? 'stack' : 'stacks'}`
+            : 'Continue'}
         {!confirming && <ArrowRight size={16} />}
       </button>
     </div>

@@ -1,10 +1,18 @@
 """
 ADK agent registry for the Stella Modernizer.
 
-All 4 patterns share one shape: `re` (reverse-engineering -> Analysis/BRD/
-TechSpec/Test Inventory) -> HITL brd-review -> `plan` (from confirmed BRD/
-TechSpec) -> HITL plan-review -> code generation on a real per-session
-workspace directory (modifier -> LoopAgent(validate, fix) -> reporter).
+The 5 migration patterns share one shape: `re` (reverse-engineering ->
+Analysis/BRD/TechSpec/Test Inventory) -> HITL brd-review -> `plan` (from
+confirmed BRD/TechSpec) -> HITL plan-review -> code generation on a real
+per-session workspace directory (modifier -> LoopAgent(validate, fix) ->
+reporter).
+
+`stack-discovery` is the exception to that shape and is not a migration: it
+maps whichever technology stacks are actually in the uploaded repo, fans out to
+each one's `re` runner, and stops at the combined document. It therefore has a
+`mapper` runner and no `plan`/`code` at all. `wildfly` exists only as one leg of
+that fan-out -- an RE skill with no target platform (see
+agents/stack_discovery/agents.py).
 
 java-8-to-25 is the one exception on the code-generation side: the user
 chooses a "bigbang" or "incremental" strategy before upload, so its code
@@ -44,6 +52,9 @@ from .tibco_ems_to_pubsub.agents import (
 )
 from .jsp_to_react_bff.agents import (
     re_pipeline as jsp_re_pipeline, planner_agent as jsp_plan, code_pipeline as jsp_code,
+)
+from .stack_discovery.agents import (
+    dependency_mapper_agent as stack_mapper, wildfly_re_agent as wildfly_re,
 )
 
 APP_NAME = "modernizer"
@@ -103,6 +114,17 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
         "plan": _runner(jsp_plan),
         "code": _runner(jsp_code),  # SequentialAgent: backend_generator -> frontend_generator -> LoopAgent(validate, fix) -> reporter
     },
+    # Reverse-engineering only -- no plan, no code. `mapper` is pass 2 of the
+    # dependency mapper (pass 1 is agents/shared/stack_detector.py, no model);
+    # the RE fan-out then reuses each detected stack's own `re` runner above.
+    "stack-discovery": {
+        "mapper": _runner(stack_mapper),
+    },
+    # A stack, not a migration: reachable only as one leg of a stack-discovery
+    # fan-out, which is why it has an `re` runner and nothing else.
+    "wildfly": {
+        "re": _runner(wildfly_re),
+    },
 }
 
 TARGET_LANGS: dict[str, str] = {
@@ -111,4 +133,7 @@ TARGET_LANGS: dict[str, str] = {
     "oracle-19c-to-23ai": "sql",
     "tibco-ems-to-pubsub": "java",
     "jsp-to-react-bff": "tsx",
+    # stack-discovery generates no code, so it needs no target language. Absent
+    # rather than set to a placeholder: a language here would imply an output
+    # tree that never gets built.
 }

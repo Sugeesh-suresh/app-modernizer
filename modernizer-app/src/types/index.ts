@@ -3,11 +3,24 @@ export type PatternId =
   | 'solr-4-to-9'
   | 'oracle-19c-to-23ai'
   | 'tibco-ems-to-pubsub'
-  | 'jsp-to-react-bff';
+  | 'jsp-to-react-bff'
+  /** Reverse engineering only — maps the stacks in the repo and documents each
+   * one. No plan, no generated code: the run ends at brd-review. */
+  | 'stack-discovery'
+  /** Not selectable. One leg of a stack-discovery fan-out (an RE skill with no
+   * migration target), so it only ever arrives as a CompanionRecommendation. */
+  | 'wildfly';
+
+/** Patterns that produce a plan and generated code. `stack-discovery` stops at
+ * the reverse-engineering document, so every plan/code affordance is hidden for
+ * it — see MIGRATION_PATTERNS in App.tsx. */
+export const RE_ONLY_PATTERNS: PatternId[] = ['stack-discovery'];
 
 export type WorkflowStep =
   | 'upload'
   | 'dependency-graph'
+  /** stack-discovery only: the dependency mapper working out what is in the repo. */
+  | 'stack-mapping'
   | 'companion-selection'
   | 'reverse-engineering'
   | 'brd-review'
@@ -30,11 +43,18 @@ export interface JavaMigrationOptions {
 
 /** A companion migration pattern auto-detected from repo dependencies (e.g.
  * an Oracle JDBC driver or SolrJ client found inside a java-8-to-25 repo),
- * with the deterministic evidence that triggered the recommendation. */
+ * with the deterministic evidence that triggered the recommendation.
+ *
+ * Reused verbatim for stack-discovery's detected stacks: same shape, same
+ * confirmation screen, same endpoint — from the reviewer's side it is the same
+ * decision about which detected things to work on. */
 export interface CompanionRecommendation {
   pattern: PatternId;
   label: string;
   evidence: string[];
+  /** stack-discovery only: detected and reverse engineered, but no migration
+   * exists for it (WildFly). Shown so the reviewer is not led to expect one. */
+  extraction_only?: boolean;
 }
 
 export interface PatternConfig {
@@ -160,6 +180,10 @@ export interface SSEEvent {
   task_title?: string;
   task_index?: number;
   task_total?: number;
-  /** Sent with companion-recommendations */
+  /** Sent with companion-recommendations, and with stack-discovery's
+   * companion-recommendations carrying the detected stacks */
   companions?: CompanionRecommendation[];
+  /** Sent with stack-inventory-ready (stack-discovery): the reconciled stacks
+   * the RE fan-out will actually run */
+  stacks?: CompanionRecommendation[];
 }

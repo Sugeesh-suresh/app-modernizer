@@ -9,11 +9,15 @@ import { BRDReview } from './components/BRDReview';
 import { PlanReview } from './components/PlanReview';
 import { CodeOutput } from './components/CodeOutput';
 import { CompanionSelection } from './components/CompanionSelection';
-import { confirmBrd, confirmPlan, refineBrd, refinePlan, selectCompanions, createSSEConnection } from './api';
+import {
+  confirmBrd, confirmPlan, refineBrd, refinePlan, selectCompanions, createSSEConnection,
+  reverseEngineeringDownloadUrl,
+} from './api';
 import { PATTERNS } from './data/patterns';
 import type {
   PatternId, JavaMigrationOptions as JavaOptions, WorkflowState, WorkflowStep, SSEEvent, StageResult,
 } from './types';
+import { RE_ONLY_PATTERNS } from './types';
 
 const INITIAL_STATE: WorkflowState = {
   sessionId: null,
@@ -274,6 +278,21 @@ export default function App() {
         setState((s) => ({ ...s, companionRecommendations: event.companions ?? [] }));
         break;
 
+      // stack-discovery: the dependency mapper's streamed reasoning, then its
+      // reconciled result. The inventory itself lands in the document, so this
+      // only needs to clear the stream before the confirmation screen renders.
+      case 'mapper-stream':
+        setState((s) => ({
+          ...s,
+          streamingContent: s.streamingContent + (event.content ?? ''),
+          progress: event.progress ?? s.progress,
+        }));
+        break;
+
+      case 'stack-inventory-ready':
+        setState((s) => ({ ...s, streamingContent: '' }));
+        break;
+
       case 'brd-ready':
         setState((s) => ({
           ...s,
@@ -427,6 +446,15 @@ export default function App() {
   const patternConfig = PATTERNS.find((p) => p.id === state.pattern);
   const showStepIndicator = state.pattern !== null && state.step !== 'upload';
   const needsJavaOptions = state.pattern === 'java-8-to-25' && !state.javaOptions;
+  const reOnly = state.pattern !== null && RE_ONLY_PATTERNS.includes(state.pattern);
+
+  // The rail shows only the steps this run will actually reach: an RE-only run
+  // never plans or generates, and every other run never maps stacks. A step left
+  // in that never fires reads as one that failed.
+  const skipSteps: WorkflowStep[] = reOnly
+    ? ['plan-generation', 'plan-review', 'code-generation']
+    : ['stack-mapping'];
+  if (state.companionRecommendations.length === 0) skipSteps.push('companion-selection');
 
   return (
     <div className="min-h-screen">
@@ -438,7 +466,7 @@ export default function App() {
           pattern={state.pattern}
           progress={state.progress}
           progressMessage={state.progressMessage}
-          skipSteps={state.companionRecommendations.length === 0 ? ['companion-selection'] : []}
+          skipSteps={skipSteps}
         />
       )}
 
@@ -465,10 +493,12 @@ export default function App() {
             primaryLabel={patternConfig?.title ?? state.pattern ?? ''}
             recommendations={state.companionRecommendations}
             onConfirm={handleSelectCompanions}
+            discovery={reOnly}
           />
         )}
 
         {(state.step === 'dependency-graph' ||
+          state.step === 'stack-mapping' ||
           state.step === 'reverse-engineering' ||
           state.step === 'plan-generation' ||
           state.step === 'code-generation') && (
@@ -500,6 +530,7 @@ export default function App() {
             refiningContent={state.streamingContent}
             onConfirm={handleConfirmBrd}
             onRefine={handleRefineBrd}
+            reOnly={reOnly}
           />
         )}
 
@@ -533,12 +564,40 @@ export default function App() {
               <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-4">
                 <span className="text-2xl text-emerald-600">✓</span>
               </div>
-              <h2 className="text-xl font-bold text-slate-900 mb-6">Migration is complete</h2>
+              <h2 className="text-xl font-bold text-slate-900 mb-2">
+                {reOnly ? 'Reverse engineering is complete' : 'Migration is complete'}
+              </h2>
+              {reOnly && (
+                <>
+                  <p className="text-sm text-slate-600 mb-6">
+                    {state.companionRecommendations.length > 0 ? (
+                      <>
+                        Documented{' '}
+                        {state.companionRecommendations.map((r) => r.label).join(', ')}. Nothing in
+                        the repository was modified.
+                      </>
+                    ) : (
+                      <>Nothing in the repository was modified.</>
+                    )}
+                  </p>
+                  {state.sessionId && (
+                    <a
+                      href={reverseEngineeringDownloadUrl(state.sessionId)}
+                      download
+                      className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-500 text-white px-6 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer mb-3"
+                    >
+                      Download the reverse-engineering document
+                    </a>
+                  )}
+                  <div />
+                </>
+              )}
+              {!reOnly && <div className="mb-6" />}
               <button
                 onClick={handleStartNew}
                 className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer"
               >
-                Start New Migration
+                {reOnly ? 'Start New Run' : 'Start New Migration'}
               </button>
             </div>
           </div>

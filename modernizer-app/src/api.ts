@@ -102,6 +102,12 @@ export async function uploadContextFiles(
 export const brdDownloadUrl = (sessionId: string) =>
   `${BASE}/api/sessions/${sessionId}/download/brd`;
 
+/** The whole reverse-engineering document (BRD + Technical Specification + Test
+ * Inventory) as one file, rather than brdDownloadUrl's BRD slice. For a
+ * stack-discovery run this is the deliverable. */
+export const reverseEngineeringDownloadUrl = (sessionId: string) =>
+  `${BASE}/api/sessions/${sessionId}/download/reverse-engineering`;
+
 export const planDownloadUrl = (sessionId: string) =>
   `${BASE}/api/sessions/${sessionId}/download/plan`;
 

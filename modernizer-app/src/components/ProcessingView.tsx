@@ -16,6 +16,13 @@ const STEP_CONFIG: Record<string, { icon: React.ReactNode; title: string; subtit
     subtitle: 'Deterministically scanning the repository to sequence the migration into groups…',
     color: 'text-cyan-600',
   },
+  'stack-mapping': {
+    icon: <Network size={28} />,
+    title: 'Mapping Technology Stacks',
+    subtitle:
+      'Reading build files, dependency declarations and deployment descriptors to work out what this repository is actually built on…',
+    color: 'text-slate-600',
+  },
   'reverse-engineering': {
     icon: <Brain size={28} />,
     title: 'Reverse Engineering',

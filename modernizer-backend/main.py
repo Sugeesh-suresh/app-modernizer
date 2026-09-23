@@ -26,7 +26,9 @@ if not os.getenv("GOOGLE_API_KEY") and os.getenv("GEMINI_API_KEY"):
 
 from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, session_service
 from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
-from agents.shared import companion_detector, dependency_graph, diffing, plan_tasks, ux_designs
+from agents.shared import (
+    companion_detector, dependency_graph, diffing, plan_tasks, stack_detector, ux_designs,
+)
 from agents.shared.file_parser import extract_text
 from models.schemas import (
     PatternType, UploadResponse, ConfirmRequest, RefineRequest,
@@ -51,6 +53,17 @@ _companion_gates: dict[str, asyncio.Event] = {}
 # state keys regardless of which pattern ends up primary.
 _CORE_PATTERNS = ["java-8-to-25", "oracle-19c-to-23ai", "solr-4-to-9", "tibco-ems-to-pubsub"]
 _COMPANION_PRIORITY = ["oracle-19c-to-23ai", "solr-4-to-9", "tibco-ems-to-pubsub"]
+
+# The reverse-engineering-only pattern: maps whichever stacks are in the uploaded
+# repo, runs each one's RE stage, and stops at the combined document. It has no
+# planner and no code pipeline, so every plan/code branch below must exclude it.
+_STACK_DISCOVERY = "stack-discovery"
+
+# Every pattern whose `re` runner a stack-discovery fan-out can invoke — used to
+# pre-initialize the namespaced per-stack state keys. Wider than _CORE_PATTERNS
+# because discovery can reverse-engineer the JSP tier and WildFly too, neither of
+# which can be a companion of a chosen primary.
+_STACK_PATTERNS = stack_detector.STACK_ORDER
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -668,6 +681,14 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         "junit_upgrade": "true" if junit_upgrade else "false",
         "springboot_upgrade": "true" if springboot_upgrade else "false",
         "companion_recommendations_json": companion_recommendations_json,
+        # stack-discovery only: the dependency mapper's two passes. `stack_prescan`
+        # and `stack_known` are rendered into the mapper agent's instruction, so
+        # they must exist before it runs; `stack_inventory` is its raw output and
+        # `stack_inventory_markdown` the reconciled section that opens the document.
+        "stack_prescan": "",
+        "stack_known": "",
+        "stack_inventory": "",
+        "stack_inventory_markdown": "",
         # JSP -> React only: manifest of the user's UX design files (see agents/shared/ux_designs.py).
         ux_designs.STATE_KEY: ux_designs_json,
         "companion_patterns_json": "[]",
@@ -698,8 +719,10 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         state[f"build_result_stage{stage.idx}"] = ""
         state[f"fix_result_stage{stage.idx}"] = ""
     # Namespaced per-pattern placeholders for a companion bundle run — see
-    # _run_bundle_re / _run_bundle_plan / _run_bundle_code_generation.
-    for p in _CORE_PATTERNS:
+    # _run_bundle_re / _run_bundle_plan / _run_bundle_code_generation. The
+    # stack-discovery fan-out reaches patterns a companion bundle cannot (the JSP
+    # tier, wildfly), so its keys are seeded here too.
+    for p in dict.fromkeys(_CORE_PATTERNS + _STACK_PATTERNS):
         for key in (
             "brd", "technical_spec", "test_inventory", "plan", "modify_result",
             "build_result", "code_review", "final_report", "skill_curator_summary",
@@ -718,15 +741,55 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
 # ---------------------------------------------------------------------------
 
 def _label(pattern: str) -> str:
-    return companion_detector.COMPANION_LABELS.get(pattern, pattern)
+    """The `## <label>` heading a pattern's slice gets in a combined document.
+
+    Falls through to the stack labels so the two stack-discovery-only legs
+    (`wildfly`, and the JSP tier under its stack name rather than its migration
+    name) get a readable heading instead of their raw pattern id. Must stay the
+    single source of these headings: _split_combined_sections finds a reviewer's
+    edits by searching for exactly this string.
+    """
+    return (
+        companion_detector.COMPANION_LABELS.get(pattern)
+        or stack_detector.STACK_LABELS.get(pattern)
+        or pattern
+    )
+
+
+def _reject_if_discovery(state: dict, action: str) -> None:
+    """400 on a plan/code action against a stack-discovery session.
+
+    The gates and state keys all exist for this pattern (it is seeded from the
+    same _initial_state), so these endpoints would otherwise half-work: setting
+    a gate nothing waits on, or running a planner for a pattern that has none.
+    Failing loudly beats a request that returns ok and does nothing.
+    """
+    if state.get("pattern") == _STACK_DISCOVERY:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This session is a stack-discovery run — reverse engineering only. There is no "
+                f"plan or generated code to {action}. Download the reverse-engineering document "
+                f"instead."
+            ),
+        )
 
 
 def _bundle_for(state: dict) -> list[str]:
     """The patterns this session runs, in execution order: any confirmed
     companion patterns first (dependency/library migrations), then the
     primary pattern last. Degenerates to [primary] when no companions were
-    detected or the reviewer unchecked them all."""
+    detected or the reviewer unchecked them all.
+
+    stack-discovery is the exception. There is no primary to run last — the
+    pattern itself has no `re` runner, only the stacks found in the repo do — so
+    the bundle is exactly the confirmed stacks, in stack_detector.STACK_ORDER.
+    Appending the pattern here would send the fan-out looking for
+    PATTERN_RUNNERS["stack-discovery"]["re"], which does not exist.
+    """
     selected = json.loads(state.get("companion_patterns_json", "[]"))
+    if state.get("pattern") == _STACK_DISCOVERY:
+        return [p for p in _STACK_PATTERNS if p in selected]
     return [p for p in _COMPANION_PRIORITY if p in selected] + [state["pattern"]]
 
 
@@ -768,16 +831,191 @@ def _split_combined_sections(combined: str, bundle: list[str]) -> dict[str, str]
     return sections
 
 
+def _parse_mapper_json(raw: str) -> dict:
+    """Extract the dependency mapper's trailing ```json block.
+
+    Deliberately not _parse_validation_json: that one falls back to scanning from
+    the first `{` to the last `}`, which here would start inside the prose
+    inventory (a JNDI name, a `${...}` property, a code excerpt) and capture
+    nothing valid. The mapper's contract puts the block last, so the last fenced
+    block wins, and a bare object anywhere is only the final fallback.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return {}
+
+    blocks = _re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, _re.DOTALL)
+    for block in reversed(blocks):
+        try:
+            return json.loads(block)
+        except Exception:
+            continue
+
+    # Unfenced: take the widest object that parses, searching from the end since
+    # that is where the contract puts it.
+    for start in sorted((m.start() for m in _re.finditer(r"\{", text)), reverse=True):
+        candidate = text[start : text.rfind("}") + 1]
+        if '"stacks"' not in candidate:
+            continue
+        try:
+            return json.loads(candidate)
+        except Exception:
+            continue
+    return {}
+
+
+def _merge_mapper_result(prescan: list[dict], raw: str) -> tuple[list[dict], list[str]]:
+    """Reconcile the LLM mapper's JSON block against the deterministic pre-scan.
+
+    Returns `(stacks, notes)` — the stacks to reverse-engineer, and any notes to
+    surface to the reviewer about what was dropped and why.
+
+    The pre-scan is the floor. The mapper may enrich a stack's evidence, reject
+    one with a stated reason, or add one it found, but three things are enforced
+    here rather than trusted to the prompt:
+
+    - **A stack with no evidence is dropped.** Uncited is indistinguishable from
+      invented, and this document is downloaded and relied on.
+    - **An added stack must be a pattern we can actually run.** An unknown
+      identifier is recorded as a note for the reviewer, not silently turned into
+      a fan-out leg that would KeyError on PATTERN_RUNNERS.
+    - **A rejection needs a reason.** Rejecting a deterministic finding is the one
+      move here that removes evidence from the document, so it has to be argued;
+      a bare rejection leaves the pre-scan's finding standing.
+    """
+    by_pattern: dict[str, dict] = {s["pattern"]: dict(s) for s in prescan}
+    notes: list[str] = []
+
+    parsed = _parse_mapper_json(raw)
+    # An unparseable reply must not read as "no stacks found" — that would
+    # silently discard the deterministic findings and produce an empty document.
+    if not isinstance(parsed, dict) or "stacks" not in parsed:
+        notes.append(
+            "The dependency mapper's machine-readable block could not be parsed, so the "
+            "deterministic scan's findings are used as-is. Its written inventory is still in the "
+            "document."
+        )
+        return list(by_pattern.values()), notes
+
+    known = set(stack_detector.STACK_ORDER)
+
+    for entry in parsed.get("stacks") or []:
+        if not isinstance(entry, dict):
+            continue
+        pattern = str(entry.get("pattern") or "").strip()
+        evidence = [str(e).strip() for e in (entry.get("evidence") or []) if str(e).strip()]
+        if not pattern or not evidence:
+            notes.append(
+                f"Dropped a stack the mapper reported without evidence: `{pattern or 'unnamed'}`."
+            )
+            continue
+        if pattern not in known:
+            notes.append(
+                f"The mapper reported `{pattern}` ({entry.get('label') or pattern}), which has no "
+                f"RE skill in this pipeline — recorded here but not reverse engineered. "
+                f"Evidence: {'; '.join(evidence[:3])}"
+            )
+            continue
+        if pattern in by_pattern:
+            # Confirmed. The mapper read the files, so prefer its citations and
+            # keep the pre-scan's underneath as corroboration.
+            existing = by_pattern[pattern]["evidence"]
+            merged = evidence + [e for e in existing if e not in evidence]
+            by_pattern[pattern]["evidence"] = merged[:6]
+        else:
+            by_pattern[pattern] = {
+                "pattern": pattern,
+                "label": str(entry.get("label") or stack_detector.STACK_LABELS.get(pattern, pattern)),
+                "evidence": evidence[:6],
+                "extraction_only": pattern in stack_detector.EXTRACTION_ONLY_PATTERNS,
+            }
+
+    for entry in parsed.get("rejected") or []:
+        if not isinstance(entry, dict):
+            continue
+        pattern = str(entry.get("pattern") or "").strip()
+        reason = str(entry.get("reason") or "").strip()
+        if pattern not in by_pattern:
+            continue
+        if not reason:
+            notes.append(
+                f"The mapper rejected `{pattern}` without a reason, so the deterministic scan's "
+                "finding stands."
+            )
+            continue
+        del by_pattern[pattern]
+        notes.append(f"`{pattern}` was detected by the scan but rejected by the mapper: {reason}")
+
+    ordered = [by_pattern[p] for p in stack_detector.STACK_ORDER if p in by_pattern]
+    return ordered, notes
+
+
+async def _run_stack_mapping(session_id: str) -> list[dict]:
+    """Pass 2 of the dependency mapper: the LLM reads the build files and
+    descriptors, with the deterministic pre-scan's findings in its prompt.
+
+    Returns the reconciled stack list. The prose inventory it produced is stored
+    for the combined document; the JSON block is merged by _merge_mapper_result.
+    """
+    state = await _get_state(session_id)
+    prescan = json.loads(state.get("companion_recommendations_json", "[]"))
+
+    await _update_state(session_id, {
+        "stack_prescan": stack_detector.to_markdown(prescan) or "No stacks detected by the pre-scan.",
+        "stack_known": "\n".join(
+            f"- `{p}` — {stack_detector.STACK_LABELS.get(p, p)}"
+            + ("  (extraction only, no migration target)" if p in stack_detector.EXTRACTION_ONLY_PATTERNS else "")
+            for p in stack_detector.STACK_ORDER
+        ),
+    })
+
+    await _run_step(
+        session_id, "mapper", _STACK_DISCOVERY,
+        message=(
+            "Map every technology stack in this repository workspace, starting at the root. "
+            "Confirm, reject or extend the pre-scan findings in your instructions, and end with "
+            "the machine-readable JSON block."
+        ),
+        sse_event_type="mapper-stream",
+    )
+
+    state = await _get_state(session_id)
+    raw = state.get("stack_inventory", "")
+    stacks, notes = _merge_mapper_result(prescan, raw)
+
+    # The prose inventory is the mapper's own; the table is regenerated from the
+    # reconciled list so the document's inventory matches what actually ran.
+    inventory = stack_detector.to_markdown(stacks, source="deterministic scan + dependency mapper")
+    prose = raw.strip()
+    if prose:
+        inventory += "\n\n" + prose
+    if notes:
+        inventory += "\n\n### Mapper Reconciliation Notes\n\n" + "\n".join(f"- {n}" for n in notes)
+
+    await _update_state(session_id, {
+        "stack_inventory_markdown": inventory,
+        "companion_recommendations_json": json.dumps(stacks),
+    })
+    return stacks
+
+
 async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | None = None) -> None:
     """Runs each pattern's re_agent once. With `feedback` set (the "Refine
     with AI" flow), each pattern is asked to revise its own previous
     namespaced section rather than explore from scratch — this is what
     keeps a refine on a bundled multi-pattern BRD from silently dropping
-    the other patterns' sections."""
+    the other patterns' sections.
+
+    Serves stack-discovery too, where `bundle` is the confirmed stacks rather
+    than a primary plus companions. The differences are that the per-stack
+    instruction says stack rather than migration domain, and that the combined
+    document opens with the stack inventory — see `discovery` below.
+    """
     orig_state = await _get_state(session_id)
     workspace_dir = orig_state.get("workspace_dir", "")
     primary = orig_state.get("pattern")
     primary_graph_json = orig_state.get("dependency_graph_json", "")
+    discovery = primary == _STACK_DISCOVERY
 
     sections: dict[str, tuple[str, str, str]] = {}  # pattern -> (brd, tech_spec, test_inventory)
     for pattern in bundle:
@@ -799,7 +1037,16 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
                 "Technical Specification, and Existing Test Inventory sections. Do not assume "
                 "any file contents you have not actually read."
             )
-        if len(bundle) > 1:
+        if discovery:
+            # "migration domain" would be a lie here: nothing is being migrated,
+            # and one of these legs (wildfly) has no target platform at all.
+            message += (
+                f" Confine yourself to the {_label(pattern)} stack — other stacks in this "
+                "repository are being reverse-engineered separately, so do not describe them. "
+                "This is a discovery run with no migration attached: report what exists and do "
+                "not recommend, sequence or estimate any migration work."
+            )
+        elif len(bundle) > 1:
             message += f" Focus specifically on the {_label(pattern)} migration domain."
 
         await _run_step(session_id, "re", pattern, message=message, sse_event_type="re-stream")
@@ -822,9 +1069,12 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
         })
         sections[pattern] = (brd, tech_spec, test_inventory)
 
-    if len(bundle) == 1:
+    if len(bundle) == 1 and not discovery:
         brd, tech_spec, test_inventory = sections[bundle[0]]
     else:
+        # `primary` is not in the bundle on a discovery run, so every pattern
+        # sorts equal and Python's stable sort leaves stack_detector.STACK_ORDER
+        # intact — which is the order we want there.
         ordered = sorted(bundle, key=lambda p: 0 if p == primary else 1)
 
         def _combine(idx: int) -> str:
@@ -832,6 +1082,23 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
             return "\n\n---\n\n".join(parts)
 
         brd, tech_spec, test_inventory = _combine(0), _combine(1), _combine(2)
+
+    if discovery:
+        # The inventory leads the document: it is the answer to "what is in this
+        # repo", and it carries the evidence for every section that follows. Kept
+        # above the per-stack headings so _split_combined_sections still finds
+        # them (it searches for `## <label>` lines, and the inventory's own
+        # heading is not one of those).
+        inventory = orig_state.get("stack_inventory_markdown", "")
+        if inventory:
+            brd = f"{inventory}\n\n---\n\n{brd}" if brd else inventory
+        if not bundle:
+            brd = (brd + "\n\n") if brd else ""
+            brd += (
+                "> **No stacks were reverse engineered.** Either nothing was detected, or every "
+                "detected stack was unchecked at the confirmation step. The inventory above, if "
+                "present, is the deterministic scan's finding only — no RE skill ran."
+            )
 
     await _update_state(session_id, {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory})
     await _push(session_id, "brd-ready", brd=brd, technical_spec=tech_spec, test_inventory=test_inventory)
@@ -995,6 +1262,51 @@ async def _run_bundle_code_generation(session_id: str, bundle: list[str]) -> Non
         await _push(session_id, "skill-curator-ready", content=combined_curator)
 
 
+async def _run_stack_discovery_workflow(session_id: str) -> None:
+    """The stack-discovery pipeline: map -> confirm -> reverse-engineer -> stop.
+
+    Ends at brd-review. There is no plan step and no code generation, so the
+    workspace is cleaned up as soon as the reviewer has confirmed the document —
+    by then every agent that will ever read it has run.
+
+    Raises on failure like the rest of _run_workflow's body; the caller owns the
+    error push and the SSE sentinel.
+    """
+    await _push(session_id, "step-change", step="stack-mapping")
+    stacks = await _run_stack_mapping(session_id)
+    await _push(session_id, "stack-inventory-ready", stacks=stacks)
+
+    if stacks:
+        # Same event, gate and endpoint as the companion flow — from the
+        # reviewer's side it is the same decision (which of these detected
+        # things do you want worked on), so it gets the same UI.
+        await _push(session_id, "companion-recommendations", companions=stacks)
+        await _push(session_id, "step-change", step="companion-selection")
+        await _companion_gates[session_id].wait()
+    else:
+        # Nothing to choose between. Gating here would park the run on a
+        # confirmation screen with no options on it.
+        _companion_gates[session_id].set()
+
+    state = await _get_state(session_id)
+    bundle = _bundle_for(state)
+
+    await _push(session_id, "step-change", step="reverse-engineering")
+    await _run_bundle_re(session_id, bundle)
+
+    await _push(session_id, "step-change", step="brd-review")
+    await _brd_gates[session_id].wait()
+
+    state = await _get_state(session_id)
+    for key in ("workspace_dir", "baseline_dir"):
+        directory = state.get(key)
+        if directory:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    await _push(session_id, "step-change", step="complete")
+    await _push(session_id, "workflow-complete")
+
+
 async def _run_workflow(session_id: str) -> None:
     try:
         state = await _get_state(session_id)
@@ -1002,6 +1314,11 @@ async def _run_workflow(session_id: str) -> None:
 
         await _push(session_id, "step-change", step="dependency-graph")
         await _push(session_id, "dependency-graph-ready")
+
+        # ── stack-discovery: map the stacks, reverse-engineer each, then stop ──
+        if pattern == _STACK_DISCOVERY:
+            await _run_stack_discovery_workflow(session_id)
+            return
 
         # ── Step 0: Companion-migration detection/selection (java-8-to-25 only) ──
         recs = json.loads(state.get("companion_recommendations_json", "[]"))
@@ -1128,6 +1445,19 @@ async def upload_repository(
     ux_uploads = [(u.filename or "design", await u.read()) for u in (ux_files or [])]
     if ux_uploads and pattern.value != "jsp-to-react-bff":
         raise HTTPException(status_code=400, detail="UX designs can only be attached to the JSP → React migration.")
+    # stack-discovery generates nothing, so the code-generation options have
+    # nothing to act on. Rejected rather than ignored: silently accepting
+    # `incremental` here would tell the caller a phased build is going to happen.
+    if pattern.value == _STACK_DISCOVERY and (
+        migration_strategy != "bigbang" or junit_upgrade or springboot_upgrade
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Stack discovery is reverse-engineering only — it produces no plan and no code, so "
+                "the migration strategy and the JUnit/Spring Boot upgrade toggles do not apply."
+            ),
+        )
     try:
         ux_designs.validate(ux_uploads)
     except ux_designs.UxDesignError as exc:
@@ -1155,10 +1485,17 @@ async def upload_repository(
     graph = dependency_graph.build_dependency_graph(workspace_dir, pattern.value)
     graph_json = json.dumps(graph)
 
-    companion_recs = (
-        companion_detector.detect_companions(workspace_dir, pattern.value)
-        if pattern.value in companion_detector.COMPANION_CANDIDATES else []
-    )
+    # Both detectors write to the same state key, because both answer "what else
+    # is in here" and feed the same confirmation gate. Which one runs is the only
+    # difference: companion detection needs a chosen primary and looks for that
+    # primary's companions; stack discovery has no primary and looks for
+    # everything, including the stacks that are a primary elsewhere.
+    if pattern.value == _STACK_DISCOVERY:
+        companion_recs = stack_detector.detect_stacks(workspace_dir)
+    elif pattern.value in companion_detector.COMPANION_CANDIDATES:
+        companion_recs = companion_detector.detect_companions(workspace_dir, pattern.value)
+    else:
+        companion_recs = []
     companion_recs_json = json.dumps(companion_recs)
 
     # Create ADK session with initial state
@@ -1290,6 +1627,44 @@ async def download_brd(session_id: str):
     )
 
 
+@app.get("/api/sessions/{session_id}/download/reverse-engineering")
+async def download_reverse_engineering(session_id: str):
+    """The full reverse-engineering document as one Markdown file.
+
+    The existing /download/brd returns only the BRD slice, which is the right
+    deliverable mid-migration but not here: for a stack-discovery run the whole
+    document *is* the deliverable, and the Technical Specification carries the
+    per-stack detail. Available for every pattern, since a migration run's
+    reviewer may want the same thing.
+    """
+    state = await _get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    brd = state.get("brd", "")
+    tech_spec = state.get("technical_spec", "")
+    test_inventory = state.get("test_inventory", "")
+    if not any((brd, tech_spec, test_inventory)):
+        raise HTTPException(status_code=404, detail="Reverse engineering has not produced a document yet.")
+
+    parts = [f"# Reverse Engineering — {_label(state.get('pattern', ''))}", ""]
+    for heading, body in (
+        ("Business Requirements", brd),
+        ("Technical Specification", tech_spec),
+        ("Existing Test Inventory", test_inventory),
+    ):
+        # An empty section is named rather than omitted: silence here reads as
+        # "nothing to report" when it usually means a section failed to parse.
+        parts.append(f"# {heading}\n\n{body.strip() or '_Not produced for this run._'}")
+    document = "\n\n---\n\n".join(parts)
+
+    return Response(
+        content=document,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="reverse-engineering-{session_id[:8]}.md"'},
+    )
+
+
 @app.post("/api/sessions/{session_id}/context-files")
 async def upload_context_files(
     session_id: str,
@@ -1322,6 +1697,7 @@ async def confirm_plan(session_id: str, body: ConfirmRequest = ConfirmRequest())
         raise HTTPException(status_code=404, detail="Session not found.")
 
     state = await _get_state(session_id)
+    _reject_if_discovery(state, "confirm a plan")
     delta: dict = {}
     plan_text = body.content if body.content is not None else state.get("plan", "")
     if body.content is not None:
@@ -1360,6 +1736,7 @@ async def refine_plan(session_id: str, body: RefineRequest):
         raise HTTPException(status_code=400, detail="Plan already confirmed.")
 
     state = await _get_state(session_id)
+    _reject_if_discovery(state, "refine a plan")
     bundle = _bundle_for(state)
 
     await _run_bundle_plan(session_id, bundle, feedback=body.feedback)
