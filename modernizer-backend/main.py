@@ -753,6 +753,12 @@ def _inject_dependency_graph(tech_spec: str, graph_json: str, pattern: str) -> s
         graph = json.loads(graph_json) if graph_json else {}
     except json.JSONDecodeError:
         graph = {}
+    # Valid JSON of the wrong shape was not guarded, and `"[]"` is a real value
+    # here -- _create_pattern_session seeds it for a bundled code-generation
+    # session. Nothing calls this with that session today, so this was latent
+    # rather than live, but an AttributeError mid-run is a poor way to find out.
+    if not isinstance(graph, dict):
+        graph = {}
     if not graph.get("nodes"):
         return tech_spec
     section = dependency_graph.to_markdown_section(graph, pattern)

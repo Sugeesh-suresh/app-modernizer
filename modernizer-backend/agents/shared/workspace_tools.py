@@ -29,10 +29,15 @@ from google.adk.tools import ToolContext
 from .. import config
 from .dependency_graph import EXCLUDED_DIRS  # noqa: F401
 
-#: Every budget below is read from `config` at CALL time, not bound here, so a
-#: deployment can raise it by environment variable and a test can override it --
-#: the same way main.py reads the ingestion caps. These module aliases exist only
-#: for the existing call sites that report a budget in an error message.
+#: Every budget is read from `config` at CALL time inside the tools below, not
+#: bound at import, so a deployment can raise it by environment variable and a
+#: test can override it -- the same way main.py reads the ingestion caps.
+#:
+#: These two names are kept only as a compatibility shim for existing importers
+#: (tests/test_workspace_tools_edit.py reads MAX_OUTPUT_CHARS). Nothing in this
+#: module uses them, and because they are bound at import they will NOT track a
+#: runtime override of config -- read `config.READ_FILE_MAX_CHARS` /
+#: `config.COMMAND_TIMEOUT_SECONDS` directly instead.
 MAX_OUTPUT_CHARS = config.READ_FILE_MAX_CHARS
 COMMAND_TIMEOUT_SECONDS = config.COMMAND_TIMEOUT_SECONDS
 
