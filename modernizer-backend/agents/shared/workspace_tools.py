@@ -26,9 +26,15 @@ from google.adk.tools import ToolContext
 
 # Single source of truth — this used to be a byte-identical copy, free to drift
 # from the one the diff and the change audit use.
+from .. import config
 from .dependency_graph import EXCLUDED_DIRS  # noqa: F401
-MAX_OUTPUT_CHARS = 20_000
-COMMAND_TIMEOUT_SECONDS = 180
+
+#: Every budget below is read from `config` at CALL time, not bound here, so a
+#: deployment can raise it by environment variable and a test can override it --
+#: the same way main.py reads the ingestion caps. These module aliases exist only
+#: for the existing call sites that report a budget in an error message.
+MAX_OUTPUT_CHARS = config.READ_FILE_MAX_CHARS
+COMMAND_TIMEOUT_SECONDS = config.COMMAND_TIMEOUT_SECONDS
 
 
 def workspace_root(tool_context: ToolContext) -> Path:
@@ -48,19 +54,48 @@ def resolve_within_workspace(tool_context: ToolContext, relative_path: str) -> P
     return candidate
 
 
-def list_files(tool_context: ToolContext, subdir: str = ".") -> str:
-    """List every file in the repository workspace (or one subdirectory).
+def _directory_summary(paths: list[str], depth: int = 2) -> str:
+    """`dir → file count` rollup, for a tree too big to list path by path.
 
-    Call this first, with subdir="." to see the whole repository tree,
-    before reading any individual file.
+    Lets an agent see the shape of a monorepo -- which modules exist and how big
+    each one is -- and then page into the parts that matter, instead of spending
+    its whole context on a flat listing of paths most of which it will never read.
+    """
+    counts: dict[str, int] = {}
+    for rel in paths:
+        parts = rel.split("/")
+        key = "/".join(parts[:depth]) if len(parts) > depth else ("/".join(parts[:-1]) or ".")
+        counts[key] = counts.get(key, 0) + 1
+    widest = max((len(k) for k in counts), default=0)
+    return "\n".join(
+        f"  {key.ljust(widest)}  {count:>7,} files"
+        for key, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
+
+
+def list_files(tool_context: ToolContext, subdir: str = ".", offset: int = 0,
+               max_paths: int = 0, summary: bool = False) -> str:
+    """List files in the repository workspace, one page at a time.
+
+    Call this first with subdir="." to see the repository. On a large repository
+    the first page comes back with a directory rollup showing where the files
+    are, so you can list or read the parts that matter instead of paging through
+    everything. Never assume the repository ends where a page ends -- the header
+    always says how many files there are in total.
 
     Args:
-        subdir: Directory to list, relative to the workspace root.
-            Defaults to the root of the repository.
+        subdir: Directory to list, relative to the workspace root. Defaults to
+            the root of the repository.
+        offset: 0-based index into the sorted file list to start from. Use the
+            value the previous page's header tells you.
+        max_paths: Maximum number of paths to return in this page. 0 (the
+            default) means the server's page size.
+        summary: True returns ONLY the directory rollup with no individual
+            paths -- the cheapest way to understand a big tree's layout.
 
     Returns:
-        A newline-separated list of file paths relative to the workspace
-        root, or a string starting with "ERROR:" on failure.
+        A header line saying which files you received and how many exist,
+        followed by that page of paths, or a string starting with "ERROR:".
     """
     try:
         start = resolve_within_workspace(tool_context, subdir)
@@ -74,11 +109,40 @@ def list_files(tool_context: ToolContext, subdir: str = ".") -> str:
     for path in sorted(start.rglob("*")):
         if not path.is_file():
             continue
-        rel_parts = path.relative_to(root).parts
-        if EXCLUDED_DIRS & set(rel_parts):
+        rel = path.relative_to(root)
+        if EXCLUDED_DIRS & set(rel.parts):
             continue
-        paths.append(str(path.relative_to(root)))
-    return "\n".join(paths) if paths else "(no files found)"
+        paths.append(str(rel))
+
+    total = len(paths)
+    if total == 0:
+        return f"# {subdir} — (no files found)"
+
+    if summary:
+        return (
+            f"# {subdir} — {total:,} files, directory rollup only\n"
+            f"{_directory_summary(paths)}\n"
+            "# Call list_files again without summary=True (or with a narrower subdir) for paths."
+        )
+
+    limit = max_paths if max_paths > 0 else config.LIST_FILES_MAX_PATHS
+    begin = max(offset, 0)
+    if begin >= total:
+        return f"ERROR: '{subdir}' has {total} files; offset={begin} is past the end."
+    page = paths[begin:begin + limit]
+    end = begin + len(page)
+
+    header = f"# {subdir} — files {begin + 1}-{end} of {total:,}"
+    parts = []
+    if end < total:
+        header += f" (more remain: call list_files again with offset={end})"
+        # The rollup only earns its tokens when there is more than one page; on a
+        # small repo the listing itself already shows the layout.
+        parts.append(
+            f"# Where the {total:,} files are (top-2 levels):\n{_directory_summary(paths)}\n"
+            "# Narrowing with subdir= is usually cheaper than paging through every file."
+        )
+    return "\n".join([header, *parts, "\n".join(page)])
 
 
 def read_file(tool_context: ToolContext, path: str, start_line: int = 1, max_lines: int = 0) -> str:
@@ -128,7 +192,7 @@ def read_file(tool_context: ToolContext, path: str, start_line: int = 1, max_lin
     used = 0
     for line in window:
         used += len(line) + 1
-        if used > MAX_OUTPUT_CHARS and kept:
+        if used > config.READ_FILE_MAX_CHARS and kept:
             break
         kept.append(line)
 
@@ -170,9 +234,10 @@ def write_file(tool_context: ToolContext, path: str, content: str,
             existing = target.stat().st_size
         except OSError:
             existing = 0
-        if existing > MAX_OUTPUT_CHARS:
+        if existing > config.READ_FILE_MAX_CHARS:
             return (
-                f"ERROR: '{path}' is {existing} chars, larger than one {MAX_OUTPUT_CHARS}-char read "
+                f"ERROR: '{path}' is {existing} chars, larger than one "
+                f"{config.READ_FILE_MAX_CHARS}-char read "
                 "window, so a full overwrite would delete content you have not read. Use "
                 "replace_in_file for targeted edits, or read every window of the file first and "
                 "call write_file again with allow_full_overwrite=True."
@@ -243,6 +308,35 @@ def replace_in_file(tool_context: ToolContext, path: str, old_text: str, new_tex
     return f"Replaced {found} occurrence(s) in {path} (file is now {len(updated)} chars)."
 
 
+def _clip_command_output(output: str, budget: int = 0) -> str:
+    """Trim build output to *budget* chars, keeping both ends.
+
+    Head-first truncation was actively harmful here: a Maven reactor build opens
+    with hundreds of lines of module banners and dependency resolution, and puts
+    every `[ERROR]` diagnostic and the reactor summary at the END. Cutting the
+    tail handed the fixer the part with no errors in it and hid the part it
+    needed, so it "fixed" what it could see and the loop burned its iterations.
+    """
+    budget = budget or config.COMMAND_OUTPUT_MAX_CHARS
+    if len(output) <= budget:
+        return output
+
+    # Two thirds to the tail: that is where diagnostics and the failure summary
+    # are, while the head still shows which command and which modules ran.
+    tail_chars = (budget * 2) // 3
+    head_chars = budget - tail_chars
+    head = output[:head_chars]
+    tail = output[-tail_chars:]
+    dropped = len(output) - head_chars - tail_chars
+    return (
+        f"{head}\n\n[... {dropped:,} characters omitted from the MIDDLE of the output. "
+        "The head and tail are shown; compiler diagnostics and the build summary are in the "
+        "tail below. If you need the omitted middle, re-run a narrower build (e.g. one "
+        "module via subdir=) rather than assuming what it said. ...]\n\n"
+        f"{tail}"
+    )
+
+
 def make_run_command(allowed_commands: set[str]):
     """Build a `run_command` tool restricted to *allowed_commands* executables.
 
@@ -279,16 +373,24 @@ def make_run_command(allowed_commands: set[str]):
                 cwd=cwd,
                 capture_output=True,
                 text=True,
-                timeout=COMMAND_TIMEOUT_SECONDS,
+                timeout=config.COMMAND_TIMEOUT_SECONDS,
             )
         except FileNotFoundError:
             return f"ERROR: '{executable}' is not installed in this environment."
         except subprocess.TimeoutExpired:
-            return f"ERROR: command timed out after {COMMAND_TIMEOUT_SECONDS}s."
+            # Named as a timeout rather than a build failure: a reactor build that
+            # ran out of clock says nothing about whether the code compiles, and
+            # reporting it as a failure sends the fixer hunting for errors that
+            # were never emitted.
+            return (
+                f"ERROR: command timed out after {config.COMMAND_TIMEOUT_SECONDS}s without "
+                "finishing. "
+                "This is a TIMEOUT, not a compile failure — no diagnostics were produced, so do "
+                "not infer any. Either build one module at a time with subdir=, or ask for "
+                "COMMAND_TIMEOUT_SECONDS to be raised."
+            )
 
-        output = (result.stdout or "") + (result.stderr or "")
-        if len(output) > MAX_OUTPUT_CHARS:
-            output = output[:MAX_OUTPUT_CHARS] + "\n\n[TRUNCATED]"
+        output = _clip_command_output((result.stdout or "") + (result.stderr or ""))
         return f"exit_code={result.returncode}\n{output}"
 
     run_command.__doc__ = (

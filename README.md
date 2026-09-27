@@ -130,6 +130,33 @@ Stages interleave so every stage lands on a supported JDK/framework combination,
 
 ---
 
+## Monorepos and large repositories
+
+### Multi-module builds
+
+`build_dependency_graph` resolves a multi-module JVM repository at **module** granularity, not file granularity. It parses every `pom.xml` (namespace-agnostic), resolves `<parent>` and in-repo `<dependency>` coordinates to module directories, and topologically sorts them — so the migration groups are the reactor's own build waves, which is the order a migration has to respect. External dependencies are ignored, because they are not in the repo to migrate. Gradle multi-project repos are listed from `settings.gradle`'s `include` lines with no edges, since resolving `project(':a')` properly means evaluating Gradle, and inventing an order would be worse than admitting there isn't one.
+
+A single-module project still gets the per-file import graph. Above `_MODULE_GRAPH_FILE_THRESHOLD` source files it rolls up to package level instead, which keeps the sequencing meaningful at a fraction of the cost.
+
+### Scale guarantees
+
+The hard rule is that **a limit is never hit silently**:
+
+| Limit | Behaviour when exceeded |
+|---|---|
+| Ingestion (`WORKSPACE_MAX_FILES` / `_BYTES`) | The remainder is counted and reported in the upload response, the server log, a persistent UI banner, and a warning prepended to the BRD and Technical Specification. Nothing proceeds pretending the repo was complete. |
+| `list_files` | Paginates with `offset`, and every page header states the true total. The first page of a multi-page listing carries a directory rollup so an agent can narrow by `subdir` instead of paging; `summary=True` returns the rollup alone (~125 tokens for an 8k-file monorepo, versus ~88k for a flat listing). |
+| `read_file` | Already windowed; the header says how to ask for the rest. |
+| `run_command` output | Trimmed from the **middle**, keeping head and tail. Maven puts every `[ERROR]` and the reactor summary at the end, so head-first truncation used to hand the fixer the one part with no errors in it. |
+| `run_command` timeout | Reported explicitly as a timeout, not a build failure — a reactor build that ran out of clock says nothing about whether the code compiles. |
+| Result collection | The ZIP download is built from the workspace on disk and always holds every file. Only the browsable file list is capped, and the UI says "showing N of M". |
+
+### What is still not solved
+
+Code generation chunks per plan task — a fresh modifier context per task, rather than one context accumulating the whole repository — but **only on the `java-8-to-25` incremental path** (see `plan_tasks.py` and `_run_java8_incremental_code_step`). Bigbang and the other four patterns run their modifier once over the whole repo. On a large codebase, incremental Java is the only mode with a real code-generation scale story; extending that chunking to the other patterns needs per-pattern `modify`/`build` sub-runners, which is a structural change rather than a limit.
+
+---
+
 ## Deterministic guardrails
 
 The build loop proves the code compiles. These four modules answer what a compiler cannot, in plain Python:
@@ -368,6 +395,14 @@ app-modernizer/
 | `BUILD_LOOP_MAX_ITERATIONS` | No | `3` | Validate → fix cycles per build loop, per stage |
 | `TEST_RETRY_ATTEMPTS` | No | `3` | Validate → fix cycles for the test-validation loop |
 | `MODERNIZER_SKILL_LEARNING` | No | `1` | Set `0` to stop agents appending learned patterns to their own `SKILL.md` |
+| `COMMAND_TIMEOUT_SECONDS` | No | `1800` | Wall clock for one build/compile command. Raise for a big reactor build |
+| `WORKSPACE_MAX_FILES` | No | `60000` | Files one upload may unpack. Exceeding it is **reported, never silent** |
+| `WORKSPACE_MAX_TOTAL_BYTES` | No | `2000000000` | Bytes one upload may unpack, same guarantee |
+| `LIST_FILES_MAX_PATHS` | No | `2000` | Paths per `list_files` page |
+| `READ_FILE_MAX_CHARS` | No | `20000` | Characters per `read_file` window |
+| `COMMAND_OUTPUT_MAX_CHARS` | No | `40000` | Characters of build output returned (head + tail) |
+| `RESULT_PREVIEW_MAX_FILES` | No | `2000` | Files in the browsable result. The ZIP download is always complete |
+| `RESULT_PREVIEW_MAX_TOTAL_BYTES` | No | `40000000` | Bytes in the browsable result, same guarantee |
 
 ---
 

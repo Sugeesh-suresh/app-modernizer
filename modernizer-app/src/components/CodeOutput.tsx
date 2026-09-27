@@ -14,6 +14,9 @@ import { codeZipDownloadUrl } from '../api';
 interface Props {
   sessionId: string;
   files: GeneratedFile[];
+  /** Total files in the result. When it exceeds files.length, `files` is a capped
+   * browsable preview and only the ZIP download holds everything. */
+  filesTotal?: number;
   changedFiles: ChangedFile[];
   pattern: string;
   /** code_reviewer_agent's independent findings (runs after the build loop) */
@@ -106,8 +109,13 @@ function normaliseLanguage(lang: string): string {
 }
 
 export function CodeOutput({
-  sessionId, files, changedFiles, pattern, codeReview, report, skillCuratorSummary, onStartNew,
+  sessionId, files, filesTotal, changedFiles, pattern, codeReview, report, skillCuratorSummary,
+  onStartNew,
 }: Props) {
+  // On a large repository the browsable list is a capped preview of the result;
+  // only the ZIP holds every file. Saying so beats letting the count imply the
+  // migration produced 2,000 files when it produced 18,000.
+  const previewCapped = filesTotal !== undefined && filesTotal > files.length;
   const [panel, setPanel] = useState<'files' | 'changes'>(changedFiles.length > 0 ? 'changes' : 'files');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [selectedChangeIndex, setSelectedChangeIndex] = useState(0);
@@ -132,10 +140,17 @@ export function CodeOutput({
         <div className="flex-1">
           <h2 className="text-xl font-bold text-slate-900 mb-1">Migration is complete</h2>
           <p className="text-sm text-slate-600">
-            {changedFiles.length} file{changedFiles.length !== 1 ? 's' : ''} changed out of {files.length} total for{' '}
+            {changedFiles.length} file{changedFiles.length !== 1 ? 's' : ''} changed out of{' '}
+            {(filesTotal ?? files.length).toLocaleString()} total for{' '}
             <span className="text-slate-900 font-medium">{pattern}</span> migration.
             Review the changes below and download when ready.
           </p>
+          {previewCapped && (
+            <p className="text-xs text-slate-500 mt-2">
+              The file browser shows {files.length.toLocaleString()} of{' '}
+              {filesTotal!.toLocaleString()} files. The ZIP download contains all of them.
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <a
@@ -203,7 +218,8 @@ export function CodeOutput({
           }`}
         >
           <FolderTree size={14} />
-          All Output Files ({files.length})
+          All Output Files ({files.length.toLocaleString()}
+          {previewCapped ? ` of ${filesTotal!.toLocaleString()}` : ''})
         </button>
       </div>
 

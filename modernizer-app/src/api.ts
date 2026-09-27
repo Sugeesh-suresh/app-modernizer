@@ -7,7 +7,14 @@ export async function uploadRepository(
   file: File,
   options?: JavaMigrationOptions | null,
   uxFiles: File[] = [],
-): Promise<{ session_id: string; files_found: number; ux_designs: number }> {
+): Promise<{
+  session_id: string;
+  files_found: number;
+  /** Files that exceeded the server's ingestion limit and were NOT unpacked.
+   * Non-zero means every result from this session covers only part of the repo. */
+  files_truncated?: number;
+  ux_designs: number;
+}> {
   const form = new FormData();
   form.append('pattern', pattern);
   form.append('file', file);

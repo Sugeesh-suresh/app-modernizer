@@ -116,6 +116,10 @@ export interface WorkflowState {
   testInventory: string;
   plan: string;
   generatedFiles: GeneratedFile[];
+  /** Total files in the result; >generatedFiles.length when the preview is capped. */
+  generatedFilesTotal: number;
+  /** Files the upload could not unpack (server ingestion limit). */
+  filesTruncated: number;
   changedFiles: ChangedFile[];
   streamingContent: string;
   /** Separate stream for validate-agent output */
@@ -171,6 +175,9 @@ export interface SSEEvent {
   iterations?: number;
   /** java-8-to-25 incremental strategy: sent with stage-start / stage-complete */
   stage?: number;
+  /** Stage count with stage-start/stage-complete. Also sent with code-ready, where
+   * it is how many files the result really has — `files` there is a capped
+   * browsable preview, while the ZIP download is always complete. */
   total?: number;
   phase?: number;
   phase_title?: string;

@@ -31,7 +31,8 @@ function uxProblem(files: File[]): string | null {
 interface Props {
   pattern: PatternId;
   options?: JavaMigrationOptions | null;
-  onSessionCreated: (sessionId: string) => void;
+  /** `filesTruncated` > 0 means the server could not unpack the whole archive. */
+  onSessionCreated: (sessionId: string, filesTruncated: number) => void;
   onBack: () => void;
 }
 
@@ -104,8 +105,10 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
     setUploading(true);
     setError(null);
     try {
-      const { session_id } = await uploadRepository(pattern, file, options, supportsUx ? uxFiles : []);
-      onSessionCreated(session_id);
+      const { session_id, files_truncated } = await uploadRepository(
+        pattern, file, options, supportsUx ? uxFiles : [],
+      );
+      onSessionCreated(session_id, files_truncated ?? 0);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
       setUploading(false);

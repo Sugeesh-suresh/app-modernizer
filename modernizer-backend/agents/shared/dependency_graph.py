@@ -84,9 +84,190 @@ def _topological_groups(nodes: list[str], edges: list[tuple[str, str]]) -> list[
 _PACKAGE_RE = re.compile(r"^\s*package\s+([\w.]+)\s*;", re.MULTILINE)
 _IMPORT_RE = re.compile(r"^\s*import\s+(?:static\s+)?([\w.]+)(?:\.\*)?\s*;", re.MULTILINE)
 
+#: Above this many source files, a file-level graph stops being useful: the
+#: rendered section is a wall of truncated groups, and what a reviewer needs from
+#: a monorepo is the module build order, not 20,000 individually sequenced files.
+_MODULE_GRAPH_FILE_THRESHOLD = 400
+
+_GRADLE_INCLUDE_RE = re.compile(r"""^\s*include\s*\(?\s*['"]([^'"]+)['"]""", re.MULTILINE)
+
+
+def _strip_ns(tag: str) -> str:
+    """`{http://maven.apache.org/POM/4.0.0}artifactId` -> `artifactId`."""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _pom_facts(path: Path) -> dict | None:
+    """One POM's identity and the in-repo coordinates it depends on.
+
+    Namespace-agnostic: Maven POMs carry a default xmlns, and matching on the
+    local tag name avoids hardcoding a schema URL that varies by model version.
+    """
+    try:
+        root_el = ET.parse(path).getroot()
+    except Exception:
+        return None
+
+    def child_text(parent, name: str) -> str:
+        for el in parent:
+            if _strip_ns(el.tag) == name and el.text:
+                return el.text.strip()
+        return ""
+
+    group = child_text(root_el, "groupId")
+    artifact = child_text(root_el, "artifactId")
+    parent_el = next((el for el in root_el if _strip_ns(el.tag) == "parent"), None)
+    if parent_el is not None:
+        # A child module usually inherits groupId from its parent.
+        group = group or child_text(parent_el, "groupId")
+        parent_artifact = child_text(parent_el, "artifactId")
+    else:
+        parent_artifact = ""
+
+    modules: list[str] = []
+    for el in root_el:
+        if _strip_ns(el.tag) != "modules":
+            continue
+        for mod in el:
+            if _strip_ns(mod.tag) == "module" and mod.text:
+                modules.append(mod.text.strip())
+
+    depends: list[str] = []
+    for el in root_el.iter():
+        if _strip_ns(el.tag) != "dependency":
+            continue
+        dep_artifact = child_text(el, "artifactId")
+        if dep_artifact:
+            depends.append(dep_artifact)
+
+    return {
+        "artifact": artifact,
+        "group": group,
+        "parent": parent_artifact,
+        "modules": modules,
+        "depends": depends,
+        "packaging": child_text(root_el, "packaging") or "jar",
+    }
+
+
+def _source_tree_graph(root: Path, java_files: list[Path]) -> DependencyGraph:
+    """Package-level graph for a large single-module Java tree.
+
+    The per-file graph reads every source file twice and, on a big tree, produces
+    tens of thousands of nodes that the renderer then truncates to 25 per group —
+    expensive to build and useless to read. Rolling up to the declared package
+    keeps the sequencing meaningful (packages still depend on packages) at a
+    fraction of the cost, and one read per file instead of two.
+    """
+    package_of_file: dict[str, str] = {}
+    class_owner: dict[str, str] = {}  # fully-qualified class -> owning package
+    texts: dict[str, str] = {}
+
+    for f in java_files:
+        rel = str(f.relative_to(root))
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        texts[rel] = text
+        match = _PACKAGE_RE.search(text)
+        pkg = match.group(1) if match else "(default package)"
+        package_of_file[rel] = pkg
+        class_owner[f"{pkg}.{f.stem}" if match else f.stem] = pkg
+
+    nodes = sorted(set(package_of_file.values()))
+    edges: list[tuple[str, str]] = []
+    for rel, text in texts.items():
+        source_pkg = package_of_file.get(rel)
+        if not source_pkg:
+            continue
+        for imp in _IMPORT_RE.findall(text):
+            target_pkg = class_owner.get(imp)
+            if target_pkg and target_pkg != source_pkg:
+                edges.append((source_pkg, target_pkg))
+
+    edges = sorted(set(edges))
+    return {"nodes": nodes, "edges": edges, "groups": _topological_groups(nodes, edges)}
+
+
+def _jvm_module_graph(root: Path) -> DependencyGraph | None:
+    """Module-level graph for a multi-module Maven/Gradle repository.
+
+    Returns None when the repository is not multi-module, so the caller falls
+    back to the file-level graph — on a single-module project, per-file
+    sequencing is the more useful answer.
+
+    Nodes are module directories (with their artifactId, so the plan and the
+    build output line up), and edges are inter-module dependencies. The groups
+    this yields are the reactor's own build waves, which is what a migration has
+    to respect: a module cannot be migrated before the modules it compiles
+    against.
+    """
+    poms = [p for p in _iter_files(root, {".xml"}) if p.name == "pom.xml"]
+    gradle_settings = [
+        p for p in _iter_files(root, {".gradle", ".kts"}) if p.stem.startswith("settings")
+    ]
+
+    # artifactId -> module directory label, plus the reverse for edge building.
+    facts: dict[str, dict] = {}
+    label_of_artifact: dict[str, str] = {}
+    for pom in poms:
+        parsed = _pom_facts(pom)
+        if not parsed or not parsed["artifact"]:
+            continue
+        rel_dir = str(pom.parent.relative_to(root)) or "."
+        label = f"{rel_dir}  [{parsed['artifact']}]"
+        facts[label] = parsed
+        # First POM wins a duplicate artifactId; a monorepo with two modules of
+        # the same name is already ambiguous to Maven itself.
+        label_of_artifact.setdefault(parsed["artifact"], label)
+
+    if len(facts) > 1:
+        nodes = sorted(facts)
+        edges: list[tuple[str, str]] = []
+        for label, parsed in facts.items():
+            for dep in parsed["depends"]:
+                target = label_of_artifact.get(dep)
+                if target and target != label:
+                    edges.append((label, target))
+            # An aggregator/parent POM must exist before its children build.
+            parent_label = label_of_artifact.get(parsed["parent"])
+            if parent_label and parent_label != label:
+                edges.append((label, parent_label))
+        edges = sorted(set(edges))
+        return {"nodes": nodes, "edges": edges, "groups": _topological_groups(nodes, edges)}
+
+    # Gradle: settings.gradle's `include` lines are the subproject list. No
+    # inter-subproject edges are extracted -- `implementation project(':a')`
+    # lives in each build.gradle and resolving it properly means evaluating
+    # Gradle. Listing the subprojects with no edges is honest; inventing an
+    # order would not be.
+    for settings in gradle_settings:
+        try:
+            text = settings.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        includes = [m.replace(":", "/").strip("/") for m in _GRADLE_INCLUDE_RE.findall(text)]
+        if len(includes) > 1:
+            nodes = sorted(set(includes))
+            return {"nodes": nodes, "edges": [], "groups": [nodes]}
+
+    return None
+
 
 def _java_graph(root: Path) -> DependencyGraph:
+    # A monorepo's build order is a module-level fact. Try that first, and fall
+    # back to per-file sequencing for a single-module project.
+    module_graph = _jvm_module_graph(root)
+    if module_graph is not None:
+        return module_graph
+
     java_files = _iter_files(root, {".java"})
+    # Past the threshold, the per-file import graph costs two full reads of every
+    # source file and renders as a wall of truncated groups. Degrade to a
+    # directory-level view, which still sequences nothing falsely and stays cheap.
+    if len(java_files) > _MODULE_GRAPH_FILE_THRESHOLD:
+        return _source_tree_graph(root, java_files)
     # node = file path relative to root; also track which package each file declares,
     # so intra-repo imports (import com.acme.foo.Bar) can be resolved back to a file.
     package_owner: dict[str, list[str]] = {}  # "com.acme.foo.Bar" -> [file paths declaring it]

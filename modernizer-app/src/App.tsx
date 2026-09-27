@@ -29,6 +29,8 @@ const INITIAL_STATE: WorkflowState = {
   testInventory: '',
   plan: '',
   generatedFiles: [],
+  generatedFilesTotal: 0,
+  filesTruncated: 0,
   changedFiles: [],
   streamingContent: '',
   validationContent: '',
@@ -325,6 +327,9 @@ export default function App() {
         setState((s) => ({
           ...s,
           generatedFiles: event.files ?? [],
+          // `files` is a capped preview on a large repo; `total` is the real
+          // count, so the browser can say it is showing a subset.
+          generatedFilesTotal: event.total ?? (event.files ?? []).length,
           streamingContent: '',
           progress: 100,
         }));
@@ -373,10 +378,11 @@ export default function App() {
     setState((s) => ({ ...s, javaOptions: options }));
   };
 
-  const handleSessionCreated = (sessionId: string) => {
+  const handleSessionCreated = (sessionId: string, filesTruncated = 0) => {
     setState((s) => ({
       ...s,
       sessionId,
+      filesTruncated,
       step: 'dependency-graph',
       streamingContent: '',
       progress: 0,
@@ -459,6 +465,24 @@ export default function App() {
   return (
     <div className="min-h-screen">
       <Header />
+
+      {/* Stays visible for the whole run, not just at upload: every document and
+          manifest produced afterwards describes only the part of the repository
+          that was unpacked, and the person approving them has to know that. */}
+      {state.filesTruncated > 0 && (
+        <div className="max-w-5xl mx-auto px-6 pt-4">
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-900">
+            <strong>Incomplete repository.</strong>{' '}
+            {state.filesTruncated.toLocaleString()} file
+            {state.filesTruncated === 1 ? '' : 's'} exceeded this server's ingestion limit and{' '}
+            <strong>were not unpacked</strong>. Everything below was produced from a partial copy —
+            inventories, file manifests and coverage claims cover only what was unpacked. Raise{' '}
+            <code className="font-mono text-xs">WORKSPACE_MAX_FILES</code> /{' '}
+            <code className="font-mono text-xs">WORKSPACE_MAX_TOTAL_BYTES</code> and re-run before
+            relying on these results.
+          </div>
+        </div>
+      )}
 
       {showStepIndicator && (
         <StepIndicator
@@ -549,6 +573,7 @@ export default function App() {
           <CodeOutput
             sessionId={state.sessionId ?? ''}
             files={state.generatedFiles}
+            filesTotal={state.generatedFilesTotal}
             changedFiles={state.changedFiles}
             pattern={patternConfig?.title ?? state.pattern ?? ''}
             codeReview={state.codeReview}

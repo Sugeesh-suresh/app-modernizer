@@ -42,6 +42,10 @@ class UploadResponse(BaseModel):
     session_id: str
     message: str
     files_found: int
+    # Files present in the archive that exceeded the server's ingestion limit and
+    # were NOT unpacked. Non-zero means every result from this session describes
+    # only part of the repository (see main.py's ExtractionResult).
+    files_truncated: int = 0
     # Number of UX design files attached (JSP -> React only)
     ux_designs: int = 0
 

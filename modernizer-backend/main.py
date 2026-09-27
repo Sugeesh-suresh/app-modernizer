@@ -9,7 +9,7 @@ import tempfile
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List
+from typing import List, NamedTuple
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, BackgroundTasks
@@ -24,7 +24,7 @@ load_dotenv()
 if not os.getenv("GOOGLE_API_KEY") and os.getenv("GEMINI_API_KEY"):
     os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
-from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, session_service
+from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, config, session_service
 from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.shared import (
     companion_detector, dependency_graph, diffing, plan_tasks, stack_detector, ux_designs,
@@ -111,62 +111,156 @@ _WORKSPACE_EXCLUDED_DIRS = {
     ".git", "target", "build", "node_modules", ".gradle",
     "__pycache__", "bin", "obj", ".idea", ".vscode",
 }
-_WORKSPACE_MAX_FILES = 5_000
-_WORKSPACE_MAX_TOTAL_BYTES = 100_000_000
 
 
-def _extract_zip_to_dir(zip_bytes: bytes, dest_dir: Path) -> int:
+class ExtractionResult(NamedTuple):
+    """What one upload actually unpacked, and what it could not.
+
+    `truncated` files are the heart of this: the previous version hit its cap and
+    `break`-ed out of the loop returning only a count, so a repository too large
+    for the workspace produced a partial tree that looked like a successful
+    upload. Every later stage -- the RE inventory, the plan's file manifest, the
+    change audit's "is every untouched file genuinely irrelevant" check -- reasons
+    about *the whole repository*, so a quietly partial workspace does not degrade
+    those answers, it invalidates them while they still read as confident.
+    """
+    files: int
+    total_bytes: int
+    #: Files present in the archive that were not written because a cap was hit.
+    truncated: int
+    #: Archive entries rejected as zip-slip. Not a size problem; worth surfacing.
+    unsafe: int
+
+    @property
+    def complete(self) -> bool:
+        return self.truncated == 0
+
+    def warning(self) -> str:
+        """Reviewer-facing warning, or "" when the upload was complete."""
+        notes: list[str] = []
+        if self.truncated:
+            notes.append(
+                f"**{self.truncated:,} of {self.files + self.truncated:,} files were not unpacked** "
+                f"because this server's ingestion limit was reached "
+                f"({config.WORKSPACE_MAX_FILES:,} files / "
+                f"{config.WORKSPACE_MAX_TOTAL_BYTES // 1_000_000:,} MB). Everything below was "
+                "produced from a PARTIAL copy of the repository: any inventory, file manifest or "
+                "coverage claim covers only the files that were unpacked, and cannot be read as a "
+                "statement about the rest. Raise `WORKSPACE_MAX_FILES` / "
+                "`WORKSPACE_MAX_TOTAL_BYTES` and re-run before relying on this."
+            )
+        if self.unsafe:
+            notes.append(
+                f"{self.unsafe:,} archive entries were rejected because they pointed outside the "
+                "workspace directory."
+            )
+        return " ".join(notes)
+
+
+def _extract_zip_to_dir(zip_bytes: bytes, dest_dir: Path) -> ExtractionResult:
     """Extract a repository zip to *dest_dir*, preserving folder structure.
 
-    Skips VCS/build directories and guards against zip-slip (entries that
-    would write outside dest_dir) and unreasonably large archives.
-    Returns the number of files extracted.
+    Skips VCS/build directories and guards against zip-slip (entries that would
+    write outside dest_dir). Keeps counting past its caps rather than breaking
+    out, so the caller can say how much was left behind instead of reporting a
+    truncated tree as a whole repository.
     """
     dest_dir = dest_dir.resolve()
     count = 0
     total_bytes = 0
+    truncated = 0
+    unsafe = 0
+
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            if count >= _WORKSPACE_MAX_FILES or total_bytes >= _WORKSPACE_MAX_TOTAL_BYTES:
-                break
             rel = Path(info.filename)
             if set(rel.parts) & _WORKSPACE_EXCLUDED_DIRS:
                 continue
             target = (dest_dir / rel).resolve()
             if target != dest_dir and dest_dir not in target.parents:
-                continue  # zip-slip guard
+                unsafe += 1
+                continue
+
+            # Counted, not silently skipped. file_size is the archive's own
+            # declared uncompressed size, so the remainder can be tallied
+            # without inflating any of it.
+            if count >= config.WORKSPACE_MAX_FILES or total_bytes >= config.WORKSPACE_MAX_TOTAL_BYTES:
+                truncated += 1
+                continue
+
             data = zf.read(info)
             total_bytes += len(data)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
             count += 1
-    return count
+
+    return ExtractionResult(files=count, total_bytes=total_bytes, truncated=truncated, unsafe=unsafe)
 
 
-def _workspace_to_files(workspace_dir: str, target_lang: str) -> List[GeneratedFile]:
-    """Collect the current state of the workspace directory into GeneratedFile
-    entries, for download — the modifier/fixer agents wrote real files via
-    tools, so the workspace itself (not any session-state text) is the
-    source of truth for the migrated codebase."""
+def _archive_workspace(workspace_dir: str) -> str | None:
+    """ZIP the finished workspace to a temp file and return its path.
+
+    Written to disk before the workspace is deleted, so the download no longer
+    depends on session state holding every file's content. On a large repository
+    that state value was hundreds of MB of JSON — held in memory per session, and
+    a single enormous row with DATABASE_URL set. The ZIP is always complete; only
+    the browsable preview below is capped.
+    """
     root = Path(workspace_dir)
     if not root.exists():
-        return []
+        return None
+    fd, archive_path = tempfile.mkstemp(prefix="modernizer-result-", suffix=".zip")
+    os.close(fd)
+    wrote = 0
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(root)
+            if _WORKSPACE_EXCLUDED_DIRS & set(rel.parts):
+                continue
+            zf.write(path, str(rel))
+            wrote += 1
+    if wrote == 0:
+        Path(archive_path).unlink(missing_ok=True)
+        return None
+    return archive_path
+
+
+def _workspace_to_files(workspace_dir: str, target_lang: str) -> tuple[List[GeneratedFile], int]:
+    """The browsable slice of the finished workspace, plus how many files exist.
+
+    Capped: this payload goes into session state and over SSE to populate the
+    file browser, and a monorepo would otherwise put its entire source there.
+    The complete result is in the ZIP from `_archive_workspace`, so nothing is
+    lost — but the caller must say so, hence the total alongside the list.
+    """
+    root = Path(workspace_dir)
+    if not root.exists():
+        return [], 0
+
     files: List[GeneratedFile] = []
+    total = 0
+    used_bytes = 0
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
         rel = path.relative_to(root)
         if _WORKSPACE_EXCLUDED_DIRS & set(rel.parts):
             continue
+        total += 1
+        if len(files) >= config.RESULT_PREVIEW_MAX_FILES or used_bytes >= config.RESULT_PREVIEW_MAX_TOTAL_BYTES:
+            continue
         try:
             content = path.read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
+        used_bytes += len(content)
         language = path.suffix.lstrip(".").lower() or target_lang
         files.append(GeneratedFile(path=str(rel), content=content, language=language))
-    return files
+    return files, total
 
 
 # ---------------------------------------------------------------------------
@@ -671,9 +765,14 @@ def _inject_dependency_graph(tech_spec: str, graph_json: str, pattern: str) -> s
 
 def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_json: str,
                     migration_strategy: str, junit_upgrade: bool, springboot_upgrade: bool,
-                    companion_recommendations_json: str = "[]", ux_designs_json: str = "[]") -> dict:
+                    companion_recommendations_json: str = "[]", ux_designs_json: str = "[]",
+                    ingestion_warning: str = "") -> dict:
     state = {
         "pattern": pattern,
+        # Non-empty when the upload could not be unpacked in full. Prepended to
+        # the BRD so it cannot be missed by whoever approves the document, since
+        # everything in it then describes only part of the repository.
+        "ingestion_warning": ingestion_warning,
         "workspace_dir": workspace_dir,
         "baseline_dir": baseline_dir,
         "dependency_graph_json": graph_json,
@@ -701,6 +800,11 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         "current_task": "",
         "additional_context": "",
         "generated_files_json": "[]",
+        # Browsable preview vs the complete result: `generated_files_json` is
+        # capped for state size, `result_total_files` says how many files really
+        # exist, and `result_archive_path` points at the full ZIP on disk.
+        "result_total_files": "0",
+        "result_archive_path": "",
         "changed_files_json": "[]",
         "modify_result": "",
         "backend_generate_result": "",
@@ -1100,6 +1204,14 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
                 "present, is the deterministic scan's finding only — no RE skill ran."
             )
 
+    # A partial workspace invalidates every inventory and coverage claim below it,
+    # so the warning leads the document rather than sitting in a log nobody reads.
+    ingestion_warning = orig_state.get("ingestion_warning", "")
+    if ingestion_warning:
+        banner = f"> ⚠️ **Incomplete repository.** {ingestion_warning}\n"
+        brd = f"{banner}\n{brd}" if brd else banner
+        tech_spec = f"{banner}\n{tech_spec}" if tech_spec else banner
+
     await _update_state(session_id, {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory})
     await _push(session_id, "brd-ready", brd=brd, technical_spec=tech_spec, test_inventory=test_inventory)
 
@@ -1375,18 +1487,32 @@ async def _run_workflow(session_id: str) -> None:
             changed_files = []
         await _push(session_id, "diff-ready", changed_files=changed_files)
 
+        # The complete result goes to a ZIP on disk BEFORE the workspace is
+        # deleted; session state only carries the capped browsable preview.
         try:
-            files = _workspace_to_files(workspace_dir, TARGET_LANGS[pattern]) if workspace_dir else []
+            archive_path = _archive_workspace(workspace_dir) if workspace_dir else None
         except Exception:
             traceback.print_exc()
-            files = []
+            archive_path = None
+
+        try:
+            files, total_files = (
+                _workspace_to_files(workspace_dir, TARGET_LANGS[pattern]) if workspace_dir else ([], 0)
+            )
+        except Exception:
+            traceback.print_exc()
+            files, total_files = [], 0
         files_payload = [f.model_dump() for f in files]
 
         await _update_state(session_id, {
             "generated_files_json": json.dumps(files_payload),
             "changed_files_json": json.dumps(changed_files),
+            "result_total_files": str(total_files),
+            "result_archive_path": archive_path or "",
         })
-        await _push(session_id, "code-ready", files=files_payload)
+        # `total` lets the browser say "showing 2,000 of 18,412" instead of
+        # presenting a capped list as if it were the whole result.
+        await _push(session_id, "code-ready", files=files_payload, total=total_files)
 
         if workspace_dir:
             shutil.rmtree(workspace_dir, ignore_errors=True)
@@ -1467,14 +1593,28 @@ async def upload_repository(
 
     ws_path = Path(tempfile.mkdtemp(prefix="modernizer-ws-"))
     if file.filename and file.filename.endswith(".zip"):
-        files_found = _extract_zip_to_dir(raw, ws_path)
+        extraction = _extract_zip_to_dir(raw, ws_path)
     else:
         (ws_path / (file.filename or "uploaded-source")).write_bytes(raw)
-        files_found = 1
+        extraction = ExtractionResult(files=1, total_bytes=len(raw), truncated=0, unsafe=0)
 
+    files_found = extraction.files
     if files_found == 0:
         shutil.rmtree(ws_path, ignore_errors=True)
         raise HTTPException(status_code=400, detail="No readable source files found.")
+
+    # A partial workspace is reported, loudly and in three places: the upload
+    # response, the server log, and the document the reviewer signs off on (see
+    # _initial_state's ingestion_warning, prepended to the BRD by
+    # _run_bundle_re). Carrying on quietly here is what made every downstream
+    # answer confidently wrong.
+    if not extraction.complete:
+        print(
+            f"[upload] WARNING: workspace truncated — unpacked {extraction.files:,} files, "
+            f"left {extraction.truncated:,} behind (limits: {config.WORKSPACE_MAX_FILES:,} files / "
+            f"{config.WORKSPACE_MAX_TOTAL_BYTES:,} bytes)",
+            flush=True,
+        )
 
     workspace_dir = str(ws_path)
     baseline_dir = diffing.snapshot_workspace(workspace_dir)
@@ -1507,6 +1647,7 @@ async def upload_repository(
             migration_strategy, junit_upgrade, springboot_upgrade,
             companion_recs_json,
             ux_designs_json=json.dumps(ux_manifest),
+            ingestion_warning=extraction.warning(),
         ),
     )
     session_id = session.id
@@ -1521,8 +1662,15 @@ async def upload_repository(
 
     return UploadResponse(
         session_id=session_id,
-        message="Upload successful. Workflow started.",
+        message=(
+            "Upload successful. Workflow started."
+            if extraction.complete
+            else f"Upload INCOMPLETE — {extraction.truncated:,} files exceeded this server's "
+                 "ingestion limit and were not unpacked. The workflow started against a partial "
+                 "copy of the repository."
+        ),
         files_found=files_found,
+        files_truncated=extraction.truncated,
         ux_designs=len(ux_manifest),
     )
 
@@ -1758,24 +1906,46 @@ async def download_plan(session_id: str):
 
 @app.get("/api/sessions/{session_id}/download/code")
 async def download_code_zip(session_id: str):
-    """Return all generated source files as a ZIP archive preserving folder structure."""
+    """Return the migrated repository as a ZIP, preserving folder structure.
+
+    Streams the archive built from the workspace at the end of the run, so the
+    download is always the complete result — session state only holds the capped
+    browsable preview. Falls back to rebuilding from that preview for a session
+    that predates the archive (whose ZIP is then the preview, and says so).
+    """
     state = await _get_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found.")
+
+    pattern_slug = state.get("pattern", "migration").replace("/", "-")
+    filename = f"{pattern_slug}-migrated.zip"
+
+    archive_path = state.get("result_archive_path", "")
+    if archive_path and Path(archive_path).is_file():
+        return StreamingResponse(
+            open(archive_path, "rb"),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     files = json.loads(state.get("generated_files_json", "[]"))
     if not files:
         raise HTTPException(status_code=404, detail="No generated files found.")
 
+    total = int(state.get("result_total_files") or len(files))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in files:
             # Use the path as-is so folder structure is preserved inside the ZIP
             zf.writestr(f["path"], f["content"])
+        if total > len(files):
+            zf.writestr(
+                "INCOMPLETE-DOWNLOAD.txt",
+                f"This archive holds {len(files)} of {total} files. The complete result archive "
+                "for this session is no longer on disk, so it was rebuilt from the browsable "
+                "preview, which is capped. Re-run to get a complete archive.\n",
+            )
     buf.seek(0)
-
-    pattern_slug = state.get("pattern", "migration").replace("/", "-")
-    filename = f"{pattern_slug}-migrated.zip"
 
     return StreamingResponse(
         buf,
