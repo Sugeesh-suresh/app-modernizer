@@ -1,13 +1,16 @@
-fastapi==0.115.5
-uvicorn[standard]==0.32.1
+# Pinned to the set this backend is actually tested against (see .venv).
+# google-adk drives the floor for fastapi/pydantic/uvicorn, so bump it and
+# these together — adk 2.10 already requires fastapi>=0.133 and google-genai>=2.19.
+google-adk==2.1.0
+google-genai>=1.72,<2
+fastapi==0.136.1
+uvicorn[standard]==0.47.0
+pydantic==2.13.4
 python-multipart==0.0.18
-google-generativeai==0.8.3
 python-dotenv==1.0.1
 aiofiles==24.1.0
-pydantic==2.10.3
 pypdf>=4.0.0
 python-docx>=1.1.0
-google-adk>=2.1.0
 pyyaml>=6.0
 # Required only when DATABASE_URL is set (SQLite or Postgres backed sessions):
 # pip install "google-adk[db]" aiosqlite   # SQLite
