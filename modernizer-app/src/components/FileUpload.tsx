@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Upload, FolderOpen, FileCode2, X, ArrowLeft, Loader2, Palette, FileText, ImagePlus } from 'lucide-react';
 import type { PatternId, JavaMigrationOptions } from '../types';
+import { RE_ONLY_PATTERNS } from '../types';
 import { PATTERNS } from '../data/patterns';
 import { uploadRepository } from '../api';
 
@@ -48,6 +49,9 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
 
   const config = PATTERNS.find((p) => p.id === pattern)!;
   const supportsUx = UX_PATTERNS.includes(pattern);
+  // Reverse-engineering-only: the run ends at the document, so this screen must
+  // not describe plan and code-generation steps that will never happen.
+  const reOnly = RE_ONLY_PATTERNS.includes(pattern);
 
   // Thumbnail URLs for image designs; released whenever the list changes or the screen unmounts.
   const uxPreviews = useMemo(
@@ -285,12 +289,22 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
       <div className="mt-6 glass rounded-xl p-4">
         <p className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">What happens next</p>
         <ol className="space-y-1.5">
-          {[
-            'A deterministic scan builds a dependency graph & migration groups',
-            'AI reverse-engineers your codebase — BRD, tech spec & test inventory',
-            'You review, edit, or ask the planner to refine the BRD and plan',
-            'Migration agents apply the plan, then build/fix in a loop until it compiles',
-          ].map((s, i) => (
+          {(reOnly
+            ? [
+                // This pattern stops at the document. Listing the migration steps
+                // here would promise a plan and generated code it never produces.
+                'A deterministic scan detects every technology stack in the repo',
+                'An agent reads your build files and descriptors to confirm them',
+                'You confirm which stacks to document, each with its file evidence',
+                'One reverse-engineering run per stack, combined into one document you can download',
+              ]
+            : [
+                'A deterministic scan builds a dependency graph & migration groups',
+                'AI reverse-engineers your codebase — BRD, tech spec & test inventory',
+                'You review, edit, or ask the planner to refine the BRD and plan',
+                'Migration agents apply the plan, then build/fix in a loop until it compiles',
+              ]
+          ).map((s, i) => (
             <li key={i} className="flex items-start gap-2 text-xs text-slate-600">
               <span className="w-4 h-4 rounded-full bg-red-500/20 text-red-600 text-[10px] flex items-center justify-center shrink-0 mt-0.5">
                 {i + 1}
