@@ -146,3 +146,58 @@ def test_workspace_relative_paths_are_never_built_with_str():
             if re.search(r"str\([^()]*\.relative_to\(", line) or re.search(r"\bstr\(rel\)", line):
                 offenders.append(f"{path.relative_to(BACKEND).as_posix()}:{number}: {line.strip()}")
     assert not offenders, "\n".join(offenders)
+
+
+class TestLauncher:
+    """dev.py replaces `source .venv/bin/activate`, which has no Windows
+    equivalent: the environment's interpreter lives in `.venv/Scripts/` there."""
+
+    def test_the_interpreter_path_follows_the_os(self, tmp_path):
+        import dev
+        assert dev.venv_python(tmp_path, windows=True) == tmp_path / "Scripts" / "python.exe"
+        assert dev.venv_python(tmp_path, windows=False) == tmp_path / "bin" / "python"
+        assert r".venv\Scripts\Activate.ps1" in dev.activate_hint(windows=True)
+        assert "source .venv/Scripts/activate" in dev.activate_hint(windows=True)
+        assert dev.activate_hint(windows=False) == "source .venv/bin/activate"
+
+    def _windows_env(self, monkeypatch, tmp_path):
+        import dev
+        venv = tmp_path / ".venv"
+        (venv / "Scripts").mkdir(parents=True)
+        (venv / "Scripts" / "python.exe").write_text("")
+        requirements = tmp_path / "requirements.txt"
+        requirements.write_text("fastapi==1\n")
+        (tmp_path / ".env").write_text("GEMINI_API_KEY=x\n")
+        monkeypatch.setattr(dev, "WINDOWS", True)
+        monkeypatch.setattr(dev, "ROOT", tmp_path)
+        monkeypatch.setattr(dev, "VENV", venv)
+        monkeypatch.setattr(dev, "REQUIREMENTS", requirements)
+        monkeypatch.setattr(dev, "STAMP", venv / ".requirements.sha256")
+        monkeypatch.setattr(dev, "venv_python", lambda venv=venv, windows=True: venv / "Scripts" / "python.exe")
+        calls: list[list] = []
+        monkeypatch.setattr(dev, "_run", lambda argv: calls.append([str(a) for a in argv]) or 0)
+        return dev, venv, requirements, calls
+
+    def test_run_on_windows_installs_once_then_starts_uvicorn_through_scripts(self, monkeypatch, tmp_path):
+        dev, venv, requirements, calls = self._windows_env(monkeypatch, tmp_path)
+        python = str(venv / "Scripts" / "python.exe")
+
+        assert dev.main([]) == 0
+        assert calls == [
+            [python, "-m", "pip", "install", "-r", str(requirements)],
+            [python, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8000", "--reload"],
+        ]
+
+        calls.clear()
+        assert dev.main(["run", "--port", "9000", "--no-reload"]) == 0
+        assert calls == [[python, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "9000"]]
+
+        requirements.write_text("fastapi==2\n")  # a changed requirements.txt reinstalls
+        calls.clear()
+        dev.main(["setup"])
+        assert calls and calls[0][1:4] == ["-m", "pip", "install"]
+
+    def test_run_refuses_without_env_file(self, monkeypatch, tmp_path):
+        dev, _, _, calls = self._windows_env(monkeypatch, tmp_path)
+        (tmp_path / ".env").unlink()
+        assert dev.main([]) == 1 and calls == []

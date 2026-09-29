@@ -265,7 +265,7 @@ cd app-modernizer
 
 ```bash
 cd modernizer-backend
-cp .env.example .env
+cp .env.example .env            # Windows cmd: copy .env.example .env
 ```
 
 Edit `.env`:
@@ -276,11 +276,24 @@ GEMINI_API_KEY=your_api_key_here
 
 ### 3. Install backend dependencies
 
+The simplest way works the same on every OS and needs no activation:
+
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python dev.py setup             # Linux/macOS: python3 dev.py setup · Windows: py dev.py setup
 ```
+
+It creates `.venv`, installs `requirements.txt`, and on later runs reinstalls only when `requirements.txt` has changed.
+
+To do it by hand instead, note that a virtual environment keeps its scripts in **`.venv/bin`** on Linux/macOS but **`.venv\Scripts`** on Windows — which is why `source .venv/bin/activate` fails there:
+
+| OS / shell | Create | Activate |
+|---|---|---|
+| Linux / macOS | `python3 -m venv .venv` | `source .venv/bin/activate` |
+| Windows PowerShell | `py -m venv .venv` | `.venv\Scripts\Activate.ps1` |
+| Windows cmd.exe | `py -m venv .venv` | `.venv\Scripts\activate.bat` |
+| Windows Git Bash | `py -m venv .venv` | `source .venv/Scripts/activate` |
+
+then `pip install -r requirements.txt`. If PowerShell refuses `Activate.ps1`, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
 
 ### 4. Install frontend dependencies
 
@@ -297,7 +310,14 @@ npm install
 
 ```bash
 cd modernizer-backend
-source .venv/bin/activate
+python dev.py                   # Linux/macOS: python3 dev.py · Windows: py dev.py
+```
+
+`dev.py` runs uvicorn through the environment's own interpreter (`.venv/bin/python` or `.venv\Scripts\python.exe`), so nothing needs activating; it sets the environment up first if it is missing. Options: `python dev.py run --port 9000 --host 0.0.0.0 --no-reload`. `./start.sh` (Linux/macOS, Git Bash) does the same listening on all interfaces, as it always has; `.\start.ps1` (PowerShell) does the same on localhost.
+
+With an activated environment you can also run uvicorn directly:
+
+```bash
 uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -308,19 +328,9 @@ cd modernizer-app
 npm run dev
 ```
 
-### On Windows (PowerShell)
+### Windows notes
 
-The backend runs natively on Windows — no WSL needed. Only the activation path differs:
-
-```powershell
-cd modernizer-backend
-py -3 -m venv .venv
-.venv\Scripts\Activate.ps1          # cmd.exe: .venv\Scripts\activate.bat
-pip install -r requirements.txt
-uvicorn main:app --reload --host 127.0.0.1 --port 8000
-```
-
-or run `.\start.ps1`, the PowerShell twin of `start.sh`. The frontend commands are the same. Builds call `mvn.cmd`, `mvnw.cmd` and `gradlew.bat` automatically, so Maven/Gradle only need to be on `PATH` as usual. If `Activate.ps1` is blocked, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
+The backend runs natively on Windows — no WSL needed. Builds call `mvn.cmd`, `mvnw.cmd` and `gradlew.bat` automatically, so Maven/Gradle only need to be on `PATH` as usual.
 
 ### Verify both services are running
 
@@ -329,15 +339,18 @@ curl http://127.0.0.1:8000/health
 # Expected: {"status":"ok","framework":"google-adk"}
 ```
 
+On Windows PowerShell, `curl` is an alias for `Invoke-WebRequest`; use `curl.exe` or just open the URL in a browser.
+
 ---
 
 ## Running the tests
 
 ```bash
 cd modernizer-backend
-source .venv/bin/activate
-python -m pytest tests/ -q
+python dev.py test              # installs pytest into .venv if needed; extra args go to pytest
 ```
+
+or, with an activated environment, `python -m pytest tests/ -q`.
 
 The suite covers the deterministic guardrails, the stage/task and manifest parsers, agent wiring, and the contracts each skill file is expected to honour — so a skill edit that breaks a parser fails the build rather than a migration.
 
@@ -392,6 +405,7 @@ app-modernizer/
 │
 └── modernizer-backend/
     ├── main.py                            # FastAPI app + pipeline orchestration
+    ├── dev.py                             # Cross-platform setup / run / test (no activation)
     ├── agents/
     │   ├── __init__.py                    # PATTERN_RUNNERS / TARGET_LANGS registry
     │   ├── config.py                      # Model + loop-limit config
