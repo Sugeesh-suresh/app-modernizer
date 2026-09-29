@@ -86,7 +86,7 @@ def setup() -> int:
 
 def run(host: str, port: int, reload: bool) -> int:
     if not (ROOT / ".env").exists():
-        print("ERROR: .env not found. Copy .env.example to .env and set GEMINI_API_KEY.", file=sys.stderr)
+        print("ERROR: .env not found. Copy .env.example to .env and set either GEMINI_API_KEY or the Vertex AI settings.", file=sys.stderr)
         return 1
     code = setup()
     if code:

@@ -247,7 +247,7 @@ A FastAPI service orchestrating the ADK agent pipeline, registered per pattern i
 
 - **Python 3.12+** — Linux, macOS or Windows
 - **Node.js 18+**
-- A **Google Gemini API key**
+- A **Google Gemini API key**, or a **Google Cloud project with Vertex AI** enabled
 - **Maven** and/or **Gradle** on `PATH` for the Java, TIBCO and JSP patterns — without them the build loop cannot validate, and the run completes with a failed build rather than a silent pass
 
 ---
@@ -268,11 +268,31 @@ cd modernizer-backend
 cp .env.example .env            # Windows cmd: copy .env.example .env
 ```
 
-Edit `.env`:
+Edit `.env` and choose how the backend reaches Gemini — **one** of:
+
+**Option A — Gemini API key**
 
 ```
 GEMINI_API_KEY=your_api_key_here
 ```
+
+**Option B — Vertex AI** on your Google Cloud project
+
+```
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id     # GCP_PROJECT_ID also accepted
+GOOGLE_CLOUD_LOCATION=us-central1            # GCP_LOCATION also accepted; `global` works too
+```
+
+and give it credentials, one of: run `gcloud auth application-default login` once; set `GOOGLE_APPLICATION_CREDENTIALS` to a service-account key file; or nothing, on GCE/GKE/Cloud Run. The account needs the **Vertex AI User** role.
+
+`llm_auth.py` resolves this at startup, before any agent exists. It accepts the common alternative names (`GCP_PROJECT_ID`, `GCP_LOCATION`, `GCP_REGION`, `GEMINI_API_KEY` …) and maps them onto the ones the Google SDK reads — a standard name that is set always wins. With the flag unset, a project and no API key means Vertex AI. If both an API key and a Vertex project are set, Vertex AI is used and the key ignored. The startup log prints the decision, e.g.
+
+```
+[startup] LLM auth: Vertex AI — project acme-modernize, location us-central1, credentials: Application Default Credentials (gcloud) [from GCP_PROJECT_ID → GOOGLE_CLOUD_PROJECT, GCP_LOCATION → GOOGLE_CLOUD_LOCATION]
+```
+
+and `GET /health` reports it under `llm` (never a key). A half-finished setup — Vertex AI with no project or location, a key file that does not exist, no credentials at all — is reported by name at startup, and uploads are refused with that message until it is fixed.
 
 ### 3. Install backend dependencies
 
@@ -336,7 +356,8 @@ The backend runs natively on Windows — no WSL needed. Builds call `mvn.cmd`, `
 
 ```bash
 curl http://127.0.0.1:8000/health
-# Expected: {"status":"ok","framework":"google-adk"}
+# Expected: {"status":"ok","framework":"google-adk","llm":{"mode":"api-key","ok":true}}
+# (on Vertex AI: "mode":"vertex-ai" with the project and location)
 ```
 
 On Windows PowerShell, `curl` is an alias for `Invoke-WebRequest`; use `curl.exe` or just open the URL in a browser.
@@ -406,6 +427,7 @@ app-modernizer/
 └── modernizer-backend/
     ├── main.py                            # FastAPI app + pipeline orchestration
     ├── dev.py                             # Cross-platform setup / run / test (no activation)
+    ├── llm_auth.py                        # Gemini API key or Vertex AI, resolved at startup
     ├── agents/
     │   ├── __init__.py                    # PATTERN_RUNNERS / TARGET_LANGS registry
     │   ├── config.py                      # Model + loop-limit config
@@ -443,8 +465,12 @@ app-modernizer/
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `GEMINI_API_KEY` | Yes | — | Google Gemini API key |
-| `GEMINI_MODEL` | No | `gemini-2.5-flash` | Gemini model to use |
+| `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | Option A | — | Gemini API key |
+| `GOOGLE_GENAI_USE_VERTEXAI` | Option B | — | `true` to use Vertex AI. Unset + a project + no key also means Vertex AI |
+| `GOOGLE_CLOUD_PROJECT` (or `GCP_PROJECT_ID`) | Option B | — | Google Cloud project for Vertex AI |
+| `GOOGLE_CLOUD_LOCATION` (or `GCP_LOCATION`) | Option B | — | Vertex AI region, e.g. `us-central1`, or `global` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | No | gcloud ADC | Service-account key file for Vertex AI |
+| `GEMINI_MODEL` | No | `gemini-2.5-flash` | Gemini model to use (same name on both options) |
 | `DATABASE_URL` | No | — | SQLite/Postgres URL for persistent sessions (omit for in-memory) |
 | `BUILD_LOOP_MAX_ITERATIONS` | No | `3` | Validate → fix cycles per build loop, per stage |
 | `TEST_RETRY_ATTEMPTS` | No | `3` | Validate → fix cycles for the test-validation loop |

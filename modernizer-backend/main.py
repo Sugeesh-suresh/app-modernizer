@@ -20,9 +20,16 @@ from google.genai import types
 
 load_dotenv()
 
-# ADK expects GOOGLE_API_KEY; map from GEMINI_API_KEY if needed
-if not os.getenv("GOOGLE_API_KEY") and os.getenv("GEMINI_API_KEY"):
-    os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
+# Gemini API key or Vertex AI — decided from .env before any agent or model
+# client exists, since the SDK reads the environment itself (see llm_auth.py).
+import llm_auth  # noqa: E402
+
+LLM_AUTH = llm_auth.apply()
+print(f"[startup] {LLM_AUTH.summary()}", flush=True)
+for _warning in LLM_AUTH.warnings:
+    print(f"[startup] WARNING: {_warning}", flush=True)
+if LLM_AUTH.error:
+    print(f"[startup] ERROR: {LLM_AUTH.error} Uploads are refused until this is fixed.", flush=True)
 
 from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, config, session_service
 from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
@@ -1722,6 +1729,11 @@ async def upload_repository(
     except ux_designs.UxDesignError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    # Checked before anything is unpacked: a repository is only worth ingesting
+    # if the agents that read it can reach a model.
+    if not LLM_AUTH.ok:
+        raise HTTPException(status_code=503, detail=f"LLM access is not configured: {LLM_AUTH.error}")
+
     raw = await file.read()
 
     ws_path = Path(tempfile.mkdtemp(prefix="modernizer-ws-"))
@@ -2108,4 +2120,5 @@ async def get_session(session_id: str):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "framework": "google-adk"}
+    # `llm` never carries a key or credential contents — see AuthConfig.public.
+    return {"status": "ok", "framework": "google-adk", "llm": LLM_AUTH.public()}
