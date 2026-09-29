@@ -8,11 +8,12 @@ Two migration strategies, chosen by the user before upload
 (session state["migration_strategy"]):
 
   bigbang     -- one modifier pass straight to Java 25, then one
-                 build_loop(validate mvn compile, fix), like a single big
-                 jump. Pipeline: `code_pipeline_bigbang`.
+                 validate<->fix cycle (validate = a real `mvn compile`), like
+                 a single big jump. Pipeline: `code_pipeline_bigbang`, one
+                 graph `Workflow` (agents/shared/workflow_graphs.py).
 
   incremental -- up to eight *true* staged passes grouped into four phases
-                 (see INCREMENTAL_STAGES), each with its own build_loop,
+                 (see INCREMENTAL_STAGES), each with its own validate<->fix cycle,
                  executed strictly in order:
                    Phase 1 Readiness:         build-system modernisation, OpenRewrite
                    Phase 2 Java 17 Baseline:  Java 8 -> 17, Spring Boot 2.7 (WAR, javax)
@@ -25,10 +26,10 @@ Two migration strategies, chosen by the user before upload
                  supported JDK/framework combination.
                  Each stage only ever modifies/validates/fixes the slice of
                  the confirmed plan under its own "## Stage <n>: <title>" heading.
-                 ADK agent instances can only belong to one parent, so each
-                 stage gets its own modifier/validator/fixer/build_loop
-                 instances (`_make_stage`) rather than reusing one set of
-                 agents per stage. Exposed as `STAGE_PIPELINES` (registered
+                 Each stage gets its own modifier/validator/fixer instances
+                 (`_make_stage`) rather than reusing one set of agents per
+                 stage, so that a stage's prompts, state keys and learned-pattern
+                 callbacks can all be specific to it. Exposed as `STAGE_PIPELINES` (registered
                  individually in agents/__init__.py as code_stage_1..code_stage_8)
                  plus a shared `reporter_agent` for the bigbang path and
                  `incremental_reporter_agent` for the incremental path (it
@@ -48,16 +49,17 @@ import os
 import pathlib
 from dataclasses import dataclass
 
-from google.adk.agents import LlmAgent, LoopAgent, SequentialAgent
+from google.adk.agents import LlmAgent
+from google.adk.workflow import Workflow
 from google.adk.skills import load_skill_from_dir
 from google.adk.tools import FunctionTool
 from google.adk.tools.skill_toolset import SkillToolset
 
-from .. import config
 from ..shared.callbacks import make_skill_update_callback
 from ..shared import skill_manifest
 from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
+from ..shared.workflow_graphs import make_build_loop_graph, make_code_pipeline_graph
 from . import tools as fs_tools
 
 _MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -67,7 +69,7 @@ _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
 
 @dataclass(frozen=True)
 class IncrementalStage:
-    """One staged modifier+build_loop pass of the "incremental" strategy."""
+    """One staged modifier + validate<->fix pass of the "incremental" strategy."""
     # Stable id (runner key, agent names, state keys). The step number users and the
     # plan see is the stage's position in the run, which differs when Spring Boot
     # stages are skipped -- so the plan section is matched by `title`, not by number.
@@ -261,7 +263,7 @@ planner_agent = LlmAgent(
     include_contents="none",
 )
 
-# ── bigbang code path: one modifier -> one build_loop -> one reporter ──────────
+# ── bigbang code path: one modifier -> one validate<->fix cycle -> one reporter ──
 modifier_agent = LlmAgent(
     name="modifier_agent",
     model=_MODEL,
@@ -338,13 +340,6 @@ fixer_agent = LlmAgent(
     ),
 )
 
-build_loop = LoopAgent(
-    name="build_loop",
-    description="Iteratively builds and fixes the migrated workspace (configurable max iterations).",
-    sub_agents=[validator_agent, fixer_agent],
-    max_iterations=config.BUILD_LOOP_MAX_ITERATIONS,
-)
-
 # Skills the skill-curator agent may refine for this pattern (bigbang and incremental alike).
 CURATED_SKILLS: list[str] = [
     "java-8-to-25-re", "java-8-to-25-plan", "java-8-to-25-modify",
@@ -385,16 +380,33 @@ skill_curator_agent = make_skill_curator_agent(
     ),
 )
 
-code_pipeline_bigbang = SequentialAgent(
+code_pipeline_bigbang = make_code_pipeline_graph(
     name="java8_code_pipeline_bigbang",
-    description="Applies the full Java 8 -> 25 migration plan in one pass, builds/fixes in a loop, reviews and reports the outcome, then curates the skill library.",
-    sub_agents=[modifier_agent, build_loop, code_reviewer_agent, reporter_agent, skill_curator_agent],
+    description=(
+        "Applies the full Java 8 -> 25 migration plan in one pass, builds/fixes in a "
+        "validate->fix cycle, reviews and reports the outcome, then curates the skill library."
+    ),
+    generators=[modifier_agent],
+    validator=validator_agent,
+    fixer=fixer_agent,
+    reviewer=code_reviewer_agent,
+    reporter=reporter_agent,
+    curator=skill_curator_agent,
+    entry_brief="Build the migrated workspace and report the result.",
+    fix_brief="Fix every error the build report lists, in the workspace, in place.",
 )
 
 
-# ── incremental code path: staged modifier+build_loop passes (INCREMENTAL_STAGES) ──
+# ── incremental code path: staged modifier + validate<->fix passes (INCREMENTAL_STAGES) ──
 
-def _make_stage(stage: IncrementalStage) -> SequentialAgent:
+def _make_stage(stage: IncrementalStage) -> tuple[Workflow, LlmAgent, Workflow]:
+    """One stage as `(whole_stage_graph, modifier, build_loop_graph)`.
+
+    The three share the same agent instances: a node carries no parent, so the
+    same LlmAgent can sit in more than one graph. main.py runs the modifier and
+    the loop separately (see _run_java8_incremental_code_step); the whole-stage
+    graph is what `code_stage_<n>` is registered as.
+    """
     idx = stage.idx
     stage_label = stage.title
     phase_label = f"Phase {stage.phase} ({stage.phase_title})"
@@ -494,26 +506,47 @@ def _make_stage(stage: IncrementalStage) -> SequentialAgent:
         ),
     )
 
-    stage_loop = LoopAgent(
-        name=f"build_loop_stage{idx}",
-        description=f"Iteratively builds and fixes the workspace for {stage_label} (configurable max iterations).",
-        sub_agents=[validator, fixer],
-        max_iterations=config.BUILD_LOOP_MAX_ITERATIONS,
+    # Every node name in a graph must be unique within THAT graph only, but the
+    # cycle's state keys are namespaced by result_key — which is what keeps the
+    # eight stages, all sharing one ADK session, out of each other's budgets.
+    loop_kwargs = dict(
+        validator=validator,
+        fixer=fixer,
+        result_key=f"build_result_stage{idx}",
+        suffix=f"_stage{idx}",
+        entry_brief=(
+            f"Build the workspace after the '{stage_label}' stage and report the result."
+        ),
+        fix_brief=(
+            f"Fix every error the build report lists, without advancing the migration "
+            f"past the '{stage_label}' stage."
+        ),
     )
 
-    return SequentialAgent(
+    stage_loop = make_build_loop_graph(
+        name=f"build_loop_stage{idx}",
+        description=f"Builds and fixes the workspace for {stage_label} until it is clean or the fix budget is spent.",
+        **loop_kwargs,
+    )
+
+    stage_pipeline = make_build_loop_graph(
         name=f"stage{idx}_pipeline",
         description=f"Applies and validates {stage_label}.",
-        sub_agents=[modifier, stage_loop],
+        generators=[modifier],
+        **loop_kwargs,
     )
 
+    return stage_pipeline, modifier, stage_loop
 
-STAGE_PIPELINES: list[SequentialAgent] = [_make_stage(stage) for stage in INCREMENTAL_STAGES]
+
+_STAGES = [_make_stage(stage) for stage in INCREMENTAL_STAGES]
+
+STAGE_PIPELINES: list[Workflow] = [pipeline for pipeline, _, _ in _STAGES]
 
 # main.py drives the two halves of a stage separately: the modifier runs once per plan task
 # (a fresh context each time), then the build loop runs once over the finished stage.
-STAGE_MODIFIERS: list[LlmAgent] = [pipeline.sub_agents[0] for pipeline in STAGE_PIPELINES]
-STAGE_BUILD_LOOPS: list[LoopAgent] = [pipeline.sub_agents[1] for pipeline in STAGE_PIPELINES]
+STAGE_MODIFIERS: list[LlmAgent] = [modifier for _, modifier, _ in _STAGES]
+STAGE_BUILD_LOOPS: list[Workflow] = [loop for _, _, loop in _STAGES]
 
 _incremental_stage_results = (
     "Stages are listed in execution order. Stages whose Modify Result and Final Build Result are "

@@ -4,8 +4,9 @@ ADK agent registry for the Stella Modernizer.
 The 5 migration patterns share one shape: `re` (reverse-engineering ->
 Analysis/BRD/TechSpec/Test Inventory) -> HITL brd-review -> `plan` (from
 confirmed BRD/TechSpec) -> HITL plan-review -> code generation on a real
-per-session workspace directory (modifier -> LoopAgent(validate, fix) ->
-reporter).
+per-session workspace directory. That code phase is one ADK 2.x graph
+`Workflow` per pattern (agents/shared/workflow_graphs.py): modifier ->
+validate<->fix cycle -> reviewer -> reporter -> curator.
 
 `stack-discovery` is the exception to that shape and is not a migration: it
 maps whichever technology stacks are actually in the uploaded repo, fans out to
@@ -110,9 +111,9 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
         "code": _runner(tibco_ems_code),
     },
     "jsp-to-react-bff": {
-        "re": _runner(jsp_re_pipeline),  # SequentialAgent: jsp_re_agent -> jsp_classifier_agent
+        "re": _runner(jsp_re_pipeline),  # Workflow: jsp_re_agent -> jsp_classifier_agent
         "plan": _runner(jsp_plan),
-        "code": _runner(jsp_code),  # SequentialAgent: backend_generator -> frontend_generator -> LoopAgent(validate, fix) -> reporter
+        "code": _runner(jsp_code),  # Workflow: backend_generator -> frontend_generator -> validate<->fix cycle -> reporter
     },
     # Reverse-engineering only -- no plan, no code. `mapper` is pass 2 of the
     # dependency mapper (pass 1 is agents/shared/stack_detector.py, no model);

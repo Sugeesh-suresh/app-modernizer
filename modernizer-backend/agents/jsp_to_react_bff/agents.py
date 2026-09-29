@@ -3,7 +3,7 @@ JSP -> React + BFF agent pipeline — an architectural transformation, not a
 refactor/upgrade like the other 3 workspace-based patterns, so it has a
 genuinely different shape:
 
-    re_pipeline = SequentialAgent(jsp_re_agent, jsp_classifier_agent)
+    re_pipeline = Workflow: jsp_re_agent -> jsp_classifier_agent
         jsp_re_agent         (tool-driven: list_files/read_file) -> jsp_facts
         jsp_classifier_agent (reasoning over jsp_facts)           -> analysis
                                 (standard ANALYSIS/BRD/TECHNICAL_SPECIFICATION/
@@ -13,12 +13,11 @@ genuinely different shape:
     planner_agent   (reasoning over confirmed BRD/TechSpec)        -> plan
         (React page/component map + BFF API contract + file manifests
          for BOTH target trees + migration groups)
-    code_pipeline = SequentialAgent(
+    code_pipeline = Workflow (one graph):
         backend_generator_agent,   -- writes backend/  (Spring Boot 4 BFF, JAR)
         frontend_generator_agent,  -- writes frontend/ (React app)
-        build_loop(validator_agent, fixer_agent),  -- mvn compile backend/ + npm run build frontend/
-        reporter_agent,
-    )
+        validator_agent <-> fixer_agent cycle,  -- mvn compile backend/ + npm run build frontend/
+        code_reviewer_agent -> reporter_agent -> skill_curator_agent
 
 Unlike the other patterns, modifier here never edits the original JSP
 source — it's read-only reference material. New files land in two fresh
@@ -39,16 +38,16 @@ description for the reuse boundary):
 import os
 import pathlib
 
-from google.adk.agents import LlmAgent, LoopAgent, SequentialAgent
+from google.adk.agents import LlmAgent
 from google.adk.skills import load_skill_from_dir
 from google.adk.tools import FunctionTool
 from google.adk.tools.skill_toolset import SkillToolset
 
-from .. import config
 from ..shared.callbacks import make_skill_update_callback
 from ..shared import skill_manifest
 from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
+from ..shared.workflow_graphs import make_code_pipeline_graph, make_sequential_graph
 from ..shared.ux_designs import make_ux_design_callback
 from . import tools as fs_tools
 
@@ -88,10 +87,14 @@ jsp_classifier_agent = LlmAgent(
     include_contents="none",
 )
 
-re_pipeline = SequentialAgent(
+re_pipeline = make_sequential_graph(
     name="jsp_re_pipeline",
     description="Extracts JSP repository facts, then classifies every logic unit as frontend or backend.",
-    sub_agents=[jsp_re_agent, jsp_classifier_agent],
+    agents=[jsp_re_agent, jsp_classifier_agent],
+    briefs=[
+        "Classify the extracted JSP logic as frontend or backend, then produce the "
+        "Analysis, BRD, Technical Specification and Existing Test Inventory sections.",
+    ],
 )
 
 # ── planner_agent: BFF architecture + dual-tree file manifests ─────────────────
@@ -227,12 +230,6 @@ fixer_agent = LlmAgent(
     ),
 )
 
-build_loop = LoopAgent(
-    name="build_loop",
-    description="Iteratively builds and fixes both the backend/ and frontend/ trees (configurable max iterations).",
-    sub_agents=[validator_agent, fixer_agent],
-    max_iterations=config.BUILD_LOOP_MAX_ITERATIONS,
-)
 
 code_reviewer_agent = make_code_reviewer_agent(
     _MODEL,
@@ -278,11 +275,24 @@ skill_curator_agent = make_skill_curator_agent(
     ),
 )
 
-code_pipeline = SequentialAgent(
+code_pipeline = make_code_pipeline_graph(
     name="jsp_code_pipeline",
-    description="Generates the BFF backend then the React frontend, builds/fixes both in a loop, reviews and reports the outcome, then curates the skill library.",
-    sub_agents=[
-        backend_generator_agent, frontend_generator_agent, build_loop,
-        code_reviewer_agent, reporter_agent, skill_curator_agent,
+    description=(
+        "Generates the BFF backend then the React frontend, builds/fixes both in a "
+        "validate->fix cycle, reviews and reports the outcome, then curates the skill library."
+    ),
+    # The one pattern with two generators: it writes two separate target trees
+    # rather than editing one in place.
+    generators=[backend_generator_agent, frontend_generator_agent],
+    generator_briefs=[
+        "Generate the React frontend tree from the confirmed plan, against the BFF "
+        "backend that has just been generated.",
     ],
+    validator=validator_agent,
+    fixer=fixer_agent,
+    reviewer=code_reviewer_agent,
+    reporter=reporter_agent,
+    curator=skill_curator_agent,
+    entry_brief="Build both the backend/ and frontend/ trees and report the result.",
+    fix_brief="Fix every error the build report lists, in either tree, in place.",
 )

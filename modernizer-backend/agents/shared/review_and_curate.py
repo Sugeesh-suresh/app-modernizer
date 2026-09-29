@@ -26,8 +26,8 @@ pipeline ends with:
       `allowed_skills` — see agents/shared/skill_curator_tools.py.
 
 Every pattern's agents.py calls these two factories with its own model
-and tools/context, then appends both agents at the end of its
-SequentialAgent (after reporter_agent). main.py's author-routing (see
+and tools/context, then passes both to make_code_pipeline_graph, which
+places them at the tail of the pattern's graph (after reporter_agent). main.py's author-routing (see
 _CODE_STREAM_AUTHORS and the code_reviewer_agent/skill_curator_agent
 branches in _run_workspace_code_step) streams their output to the
 `review-stream`/`code-review-ready` and `curator-stream`/

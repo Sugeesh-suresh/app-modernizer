@@ -16,16 +16,16 @@ Skills (Pattern 2 -- file-based):
 import os
 import pathlib
 
-from google.adk.agents import LlmAgent, LoopAgent, SequentialAgent
+from google.adk.agents import LlmAgent
 from google.adk.skills import load_skill_from_dir
 from google.adk.tools import FunctionTool
 from google.adk.tools.skill_toolset import SkillToolset
 
-from .. import config
 from ..shared.callbacks import make_skill_update_callback
 from ..shared import skill_manifest
 from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
+from ..shared.workflow_graphs import make_code_pipeline_graph
 from . import tools as fs_tools
 
 _MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -143,12 +143,6 @@ fixer_agent = LlmAgent(
     ),
 )
 
-build_loop = LoopAgent(
-    name="build_loop",
-    description="Iteratively validates and fixes the migrated workspace (configurable max iterations).",
-    sub_agents=[validator_agent, fixer_agent],
-    max_iterations=config.BUILD_LOOP_MAX_ITERATIONS,
-)
 
 code_reviewer_agent = make_code_reviewer_agent(
     _MODEL,
@@ -186,8 +180,17 @@ skill_curator_agent = make_skill_curator_agent(
     ),
 )
 
-code_pipeline = SequentialAgent(
+code_pipeline = make_code_pipeline_graph(
     name="tibco_ems_code_pipeline",
-    description="Applies the migration plan, validates/fixes the workspace in a loop, reviews and reports the outcome, then curates the skill library.",
-    sub_agents=[modifier_agent, build_loop, code_reviewer_agent, reporter_agent, skill_curator_agent],
+    description=(
+        "Applies the migration plan, validates/fixes the workspace in a validate->fix cycle, reviews and reports the outcome, then curates the skill library."
+    ),
+    generators=[modifier_agent],
+    validator=validator_agent,
+    fixer=fixer_agent,
+    reviewer=code_reviewer_agent,
+    reporter=reporter_agent,
+    curator=skill_curator_agent,
+    entry_brief="Validate the migrated Pub/Sub code and configuration in the workspace and report the result.",
+    fix_brief="Fix every error the validation report lists, in the workspace, in place.",
 )

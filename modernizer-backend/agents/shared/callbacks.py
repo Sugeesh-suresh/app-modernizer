@@ -14,8 +14,18 @@ from google.adk.agents.callback_context import CallbackContext
 from google.genai import types as genai_types
 
 
-def _parse_json_safely(raw: str) -> dict:
-    """Parse JSON from model output, trying three fallback strategies."""
+def parse_json_object(raw: str) -> Optional[dict]:
+    """Recover a JSON object from model output, trying three strategies, and
+    return None when none of them works.
+
+    The single tolerant parser the whole pipeline shares — what each caller
+    does with an unrecoverable result differs and is that caller's decision,
+    which is why this one reports failure instead of guessing (see
+    _parse_json_safely just below, main.py's _parse_validation_json, and
+    shared/workflow_graphs.validation_passed — each defaults differently).
+    """
+    if not raw:
+        return None
     text = raw.strip()
     # Direct parse
     try:
@@ -35,15 +45,26 @@ def _parse_json_safely(raw: str) -> dict:
             return json.loads(text[start : end + 1])
         except json.JSONDecodeError:
             pass
-    return {"passed": True, "errors": [], "summary": "Parse error — assuming passed."}
+    return None
+
+
+def _parse_json_safely(raw: str) -> dict:
+    """Parse JSON from model output, assuming a pass when it cannot be read."""
+    return parse_json_object(raw) or {
+        "passed": True, "errors": [], "summary": "Parse error — assuming passed."
+    }
 
 
 def make_validation_exit_callback(result_key: str = "validation_result"):
-    """Return an after_agent_callback that escalates out of a LoopAgent when
-    the validation stored in *result_key* reports ``passed: true``.
+    """Return an after_agent_callback that escalates out of an enclosing loop
+    when the validation stored in *result_key* reports ``passed: true``.
 
-    Attach this to the validate_agent so the loop terminates early instead of
-    always running all max_iterations.
+    Unused by the patterns since the validate/fix cycle became a graph: the
+    cycle's `build_gate` node now reads the same verdict out of session state
+    and routes on it (see agents/shared/workflow_graphs.py), which does not
+    depend on an event action surviving a callback's return value. Kept because
+    `escalate` still means "stop" to anything that composes these agents
+    differently.
     """
 
     def _exit_on_pass(callback_context: CallbackContext) -> Optional[genai_types.Content]:

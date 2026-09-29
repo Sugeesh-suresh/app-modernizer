@@ -34,9 +34,16 @@ TEST_RETRY_ATTEMPTS: int = _int("TEST_RETRY_ATTEMPTS", 3)
 # Build/validate/fix loop (all 4 workspace-based patterns)
 # ---------------------------------------------------------------------------
 
-# Maximum validate -> fix iterations per build_loop (per stage, for the
-# java-8-to-25 incremental strategy). The loop exits early as soon as
-# validator_agent calls signal_build_success.
+# Maximum FIX passes per validate/fix cycle (per stage, for the java-8-to-25
+# incremental strategy). A validation always runs before the first fix and
+# after the last one, so a cycle that spends its whole budget runs N fixes and
+# N+1 validations. The cycle exits early as soon as validator_agent calls
+# signal_build_success or reports `passed: true`.
+#
+# Under the deprecated LoopAgent this counted (validate, fix) PAIRS, which meant
+# an exhausted loop applied one last fix that nothing re-validated -- the
+# build_result the report was written from described the code as it stood before
+# that fix. See agents/shared/workflow_graphs.py.
 BUILD_LOOP_MAX_ITERATIONS: int = _int("BUILD_LOOP_MAX_ITERATIONS", 3)
 
 # How long one build/compile command may run. The old fixed 180s could not

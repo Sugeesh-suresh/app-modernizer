@@ -29,6 +29,7 @@ from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.shared import (
     companion_detector, dependency_graph, diffing, plan_tasks, stack_detector, ux_designs,
 )
+from agents.shared.callbacks import parse_json_object
 from agents.shared.file_parser import extract_text
 from models.schemas import (
     PatternType, UploadResponse, ConfirmRequest, RefineRequest,
@@ -296,19 +297,17 @@ async def _run_step(
 
 
 def _parse_validation_json(raw: str) -> dict:
-    """Parse the JSON validation result produced by a validate agent."""
-    import re as _re2
-    text = raw.strip()
-    for parse in [
-        lambda t: json.loads(t),
-        lambda t: json.loads(_re2.sub(r"```(?:json)?\s*|\s*```", "", t).strip()),
-        lambda t: json.loads(t[t.find("{") : t.rfind("}") + 1]),
-    ]:
-        try:
-            return parse(text)
-        except Exception:
-            pass
-    return {"passed": True, "errors": [], "summary": "Parse error — assuming passed."}
+    """Parse the JSON validation result produced by a validate agent, for
+    REPORTING it to the browser.
+
+    Assumes a pass when the output cannot be read: this runs after the cycle has
+    finished, where inventing a failure the user then has to disprove is worse
+    than saying nothing. The cycle's own gate makes the opposite assumption for
+    the opposite reason — see workflow_graphs.validation_passed.
+    """
+    return parse_json_object(raw) or {
+        "passed": True, "errors": [], "summary": "Parse error — assuming passed."
+    }
 
 
 _CODE_STREAM_AUTHORS = {"modifier_agent", "backend_generator_agent", "frontend_generator_agent"}
@@ -317,8 +316,9 @@ _CODE_STREAM_AUTHORS = {"modifier_agent", "backend_generator_agent", "frontend_g
 async def _run_workspace_code_step(
     session_id: str, pattern: str, code_key: str, push_session_id: str | None = None,
 ) -> None:
-    """Run a single-stage code pipeline (one or more generator agents ->
-    LoopAgent(validator_agent, fixer_agent) -> reporter_agent) for any of
+    """Run a single-stage code pipeline — one ADK graph `Workflow` (one or more
+    generator agents -> a validator_agent<->fixer_agent cycle -> reporter_agent,
+    see agents/shared/workflow_graphs.py) — for any of
     the 5 patterns — used directly for solr-4-to-9 / oracle-19c-to-23ai /
     tibco-ems-to-pubsub / jsp-to-react-bff's "code" runner, and for
     java-8-to-25's "code_bigbang" runner. Every pattern's single-stage
@@ -396,7 +396,7 @@ async def _run_workspace_code_step(
             elif author == "skill_curator_agent":
                 sse_type = "curator-stream"
             else:
-                continue  # skip SequentialAgent / LoopAgent envelope events
+                continue  # skip the graph's own brief/gate nodes, which carry no model output
 
             for part in event.content.parts:
                 text = getattr(part, "text", None)
@@ -440,8 +440,8 @@ async def _run_standalone_agent(session_id: str, runner, message: str, sse_event
     """Run one single-agent runner to completion, streaming all of its text
     under one fixed SSE event type. Used for the incremental java-8-to-25
     path's code-reviewer/reporter/skill-curator steps, which — unlike the
-    single-stage patterns' SequentialAgent-wired versions — run as three
-    separate runner calls (each stage's own pipeline already ended)."""
+    single-stage patterns' in-graph versions — run as three separate runner
+    calls (each stage's own pipeline already ended)."""
     content = types.Content(role="user", parts=[types.Part(text=message)])
     try:
         async for event in runner.run_async(session_id=session_id, user_id=USER_ID, new_message=content):
@@ -465,8 +465,8 @@ async def _run_java8_incremental_code_step(
     passes in 4 phases (Readiness; Java 17 + Spring Boot 2.7; Spring Boot
     3.x + Java 25; Spring Boot 4 -> executable JAR — the Spring Boot stages
     only when requested), each its own
-    modifier_stage{N} -> LoopAgent(validator_stage{N}, fixer_stage{N})
-    pipeline, executed strictly in order — see
+    modifier_stage{N} -> validator_stage{N}<->fixer_stage{N} cycle graph,
+    executed strictly in order — see
     agents/java_8_to_25/agents.py's INCREMENTAL_STAGES / _make_stage.
 
     Each stage's modifier runs once per plan task (`### Task <id>: ...` blocks

@@ -417,12 +417,23 @@ def make_run_command(allowed_commands: set[str]):
     return run_command
 
 
+#: Where signal_build_success records itself for the build loop's gate node to
+#: read. One key, not one per stage: the gate clears it after every validation
+#: and the loop's entry node clears it again on the way in, so a signal can
+#: never outlive the validation that raised it (see shared/workflow_graphs.py).
+BUILD_SUCCESS_SIGNAL_KEY = "build_loop_success_signalled"
+
+
 def signal_build_success(tool_context: ToolContext) -> str:
     """Call this ONLY after the validation tool shows the build/config
     succeeded (e.g. exit code 0, no compiler errors, no config errors).
     Ends the validate/fix loop immediately instead of running the
     remaining iterations.
     """
+    # State is what the graph's build_gate reads. `escalate` was how the
+    # deprecated LoopAgent learned the same thing, and is kept because it costs
+    # nothing and still means "stop" to anything else that looks for it.
+    tool_context.state[BUILD_SUCCESS_SIGNAL_KEY] = True
     tool_context.actions.escalate = True
     tool_context.actions.skip_summarization = True
     return "Build success signalled — exiting the build loop."

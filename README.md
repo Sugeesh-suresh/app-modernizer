@@ -2,7 +2,7 @@
 
 An AI-powered application modernization platform for migrating legacy codebases to modern architectures. Each migration runs as an agentic pipeline over a **real copy of your repository on disk** — agents list, read and rewrite actual files, then run the actual build — with a human review gate before anything is planned and again before anything is changed.
 
-The platform is built on **Google ADK** with **Gemini**, and its domain knowledge lives in editable skill files rather than in Python.
+The platform is built on **Google ADK 2.x** with **Gemini**, and its domain knowledge lives in editable skill files rather than in Python. Every pattern's pipeline is an ADK **graph `Workflow`** — nodes joined by edges, with the validate→fix loop expressed as a real cycle with an explicit exit condition (see [Pipelines as graphs](#pipelines-as-graphs)).
 
 ---
 
@@ -215,7 +215,37 @@ A FastAPI service orchestrating the ADK agent pipeline, registered per pattern i
 - Streams every agent's output over SSE
 - Computes the final diff, collects generated files, then deletes the workspace and baseline
 
-**Stack:** Python 3.12, FastAPI, Google ADK, Gemini (`gemini-2.5-flash`), Uvicorn, Pydantic
+#### Pipelines as graphs
+
+ADK 2.x replaces `SequentialAgent` and `LoopAgent` with a single primitive — a `Workflow`, which is a
+directed graph of nodes joined by edges, where a node can emit a *route* that selects which of its
+outgoing edges fire. Every pattern's code phase is one such graph, built by
+`agents/shared/workflow_graphs.py`:
+
+```
+START → modifier → build_loop_start → validator → build_gate ──pass──→ code_reviewer → reporter → skill_curator
+                                          ▲                  │
+                                          └── fixer ←────────┘ fix
+```
+
+What the graph buys over the two composites it replaced:
+
+- **The loop's exit condition is a node, not a flag.** `build_gate` reads the validator's own JSON
+  verdict out of session state and routes on it, instead of depending on an `escalate` action
+  surviving its way out of a tool call. The tool (`signal_build_success`) still works and is still
+  honoured — it is now one of two independent reasons to exit, not the only one.
+- **The last fix is always verified.** `BUILD_LOOP_MAX_ITERATIONS` caps *fix* passes and a validation
+  always follows one, so the build result a report is written from describes the code actually on
+  disk. Under `LoopAgent` an exhausted loop applied a final fix that nothing re-ran.
+- **Each agent's user turn is deliberate.** In a graph a node's input is its predecessor's output, so
+  small `_brief` nodes sit between the agents and state what the next one is being asked to do,
+  rather than letting one agent's entire output become the next one's prompt.
+
+`jsp-to-react-bff` uses the same graph with two generators (it writes two target trees), and the
+java-8-to-25 incremental strategy builds the cycle on its own per stage, so `main.py` can run a
+stage's modifier once per plan task and then its cycle once over the finished stage.
+
+**Stack:** Python 3.12, FastAPI, Google ADK 2.10 (`google.adk.workflow` graphs), Gemini (`gemini-2.5-flash`), Uvicorn, Pydantic
 
 ---
 
@@ -392,7 +422,7 @@ app-modernizer/
 | `GEMINI_API_KEY` | Yes | — | Google Gemini API key |
 | `GEMINI_MODEL` | No | `gemini-2.5-flash` | Gemini model to use |
 | `DATABASE_URL` | No | — | SQLite/Postgres URL for persistent sessions (omit for in-memory) |
-| `BUILD_LOOP_MAX_ITERATIONS` | No | `3` | Validate → fix cycles per build loop, per stage |
+| `BUILD_LOOP_MAX_ITERATIONS` | No | `3` | Max **fix** passes per validate→fix cycle, per stage. A validation runs before the first fix and after the last, so a fully spent budget is N fixes and N+1 validations |
 | `TEST_RETRY_ATTEMPTS` | No | `3` | Validate → fix cycles for the test-validation loop |
 | `MODERNIZER_SKILL_LEARNING` | No | `1` | Set `0` to stop agents appending learned patterns to their own `SKILL.md` |
 | `COMMAND_TIMEOUT_SECONDS` | No | `1800` | Wall clock for one build/compile command. Raise for a big reactor build |
