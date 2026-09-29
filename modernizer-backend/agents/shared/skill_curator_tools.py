@@ -50,7 +50,7 @@ def make_skill_curator_tools(allowed_skills: list[str]):
             root = _resolve_within_skill(skill_name, ".", allowed)
         except ValueError as exc:
             return f"ERROR: {exc}"
-        paths = [str(p.relative_to(root)) for p in sorted(root.rglob("*")) if p.is_file()]
+        paths = [p.relative_to(root).as_posix() for p in sorted(root.rglob("*")) if p.is_file()]
         return "\n".join(paths) if paths else "(no files found)"
 
     def read_skill_file(skill_name: str, relative_path: str) -> str:

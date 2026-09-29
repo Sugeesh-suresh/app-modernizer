@@ -162,7 +162,7 @@ def detect_stacks(workspace_dir: str) -> list[dict]:
     for path in scannable_files(root, _SCAN_SUFFIXES):
         if all(len(hits) >= _MAX_EVIDENCE_PER_STACK for hits in evidence.values()):
             break
-        rel = str(path.relative_to(root))
+        rel = path.relative_to(root).as_posix()
         name = path.name.lower()
         suffix = path.suffix.lower()
 

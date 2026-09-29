@@ -350,7 +350,7 @@ def relevant_files(root: Path) -> dict[str, Path]:
         rel = path.relative_to(root)
         if EXCLUDED_DIRS & set(rel.parts):
             continue
-        out[str(rel)] = path
+        out[rel.as_posix()] = path
     return out
 
 

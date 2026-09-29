@@ -2,7 +2,6 @@
 Shared ADK agent callbacks for the Stella Modernizer pipeline.
 """
 import contextlib
-import fcntl
 import json
 import os
 import pathlib
@@ -12,6 +11,30 @@ from typing import Optional
 
 from google.adk.agents.callback_context import CallbackContext
 from google.genai import types as genai_types
+
+# Advisory file locking has no portable stdlib API: `fcntl` exists only on
+# Linux/macOS and `msvcrt` only on Windows. Importing `fcntl` unconditionally
+# made the whole backend fail to start on Windows.
+if os.name == "nt":
+    import msvcrt
+
+    def _lock_file(handle) -> None:
+        # Locks the first byte. LK_LOCK retries for about ten seconds and then
+        # raises OSError, which _locked treats as "could not lock".
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+
+    def _unlock_file(handle) -> None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock_file(handle) -> None:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+
+    def _unlock_file(handle) -> None:
+        fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _parse_json_safely(raw: str) -> dict:
@@ -85,17 +108,22 @@ def _locked(path: pathlib.Path):
     """
     lock_path = path.with_suffix(path.suffix + ".lock")
     handle = None
+    locked = False
     try:
         handle = open(lock_path, "w")
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        yield
+        _lock_file(handle)
+        locked = True
     except OSError:
-        # A lock we cannot take must not fail the migration; the write is skipped.
+        # A lock we cannot take must not fail the migration; proceed unlocked.
+        pass
+    try:
         yield
     finally:
         if handle is not None:
+            if locked:
+                with contextlib.suppress(OSError):
+                    _unlock_file(handle)
             with contextlib.suppress(OSError):
-                fcntl.flock(handle, fcntl.LOCK_UN)
                 handle.close()
 
 

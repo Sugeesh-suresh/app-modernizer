@@ -70,7 +70,7 @@ def validate_pubsub_mapping(tool_context: ToolContext) -> str:
         if not any(hint in name_lower for hint in _MAPPING_FILENAMES_HINT):
             continue
 
-        rel = str(path.relative_to(root))
+        rel = path.relative_to(root).as_posix()
         checked.append(rel)
         try:
             text = path.read_text(encoding="utf-8", errors="replace")

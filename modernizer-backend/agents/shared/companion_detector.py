@@ -114,7 +114,7 @@ def detect_companions(workspace_dir: str, primary_pattern: str) -> list[dict]:
             text = path.read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
-        rel = str(path.relative_to(root))
+        rel = path.relative_to(root).as_posix()
         for candidate in candidates:
             hits = evidence[candidate]
             if len(hits) >= _MAX_EVIDENCE_PER_PATTERN:

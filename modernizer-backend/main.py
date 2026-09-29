@@ -226,7 +226,7 @@ def _archive_workspace(workspace_dir: str) -> str | None:
             rel = path.relative_to(root)
             if _WORKSPACE_EXCLUDED_DIRS & set(rel.parts):
                 continue
-            zf.write(path, str(rel))
+            zf.write(path, rel.as_posix())
             wrote += 1
     if wrote == 0:
         Path(archive_path).unlink(missing_ok=True)
@@ -264,7 +264,7 @@ def _workspace_to_files(workspace_dir: str, target_lang: str) -> tuple[List[Gene
             continue
         used_bytes += len(content)
         language = path.suffix.lstrip(".").lower() or target_lang
-        files.append(GeneratedFile(path=str(rel), content=content, language=language))
+        files.append(GeneratedFile(path=rel.as_posix(), content=content, language=language))
     return files, total
 
 

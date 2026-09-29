@@ -39,7 +39,7 @@ def _list_relative_files(root: Path) -> set[str]:
             continue
         if EXCLUDED_DIRS & set(path.relative_to(root).parts):
             continue
-        out.add(str(path.relative_to(root)))
+        out.add(path.relative_to(root).as_posix())
     return out
 
 

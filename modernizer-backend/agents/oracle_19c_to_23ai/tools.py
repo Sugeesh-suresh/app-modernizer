@@ -62,7 +62,7 @@ def validate_sql_syntax(tool_context: ToolContext) -> str:
         rel_parts = path.relative_to(root).parts
         if EXCLUDED_DIRS & set(rel_parts):
             continue
-        rel = str(path.relative_to(root))
+        rel = path.relative_to(root).as_posix()
         checked.append(rel)
 
         try:

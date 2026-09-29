@@ -164,7 +164,7 @@ def _source_tree_graph(root: Path, java_files: list[Path]) -> DependencyGraph:
     texts: dict[str, str] = {}
 
     for f in java_files:
-        rel = str(f.relative_to(root))
+        rel = f.relative_to(root).as_posix()
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
         except Exception:
@@ -215,7 +215,7 @@ def _jvm_module_graph(root: Path) -> DependencyGraph | None:
         parsed = _pom_facts(pom)
         if not parsed or not parsed["artifact"]:
             continue
-        rel_dir = str(pom.parent.relative_to(root)) or "."
+        rel_dir = pom.parent.relative_to(root).as_posix() or "."
         label = f"{rel_dir}  [{parsed['artifact']}]"
         facts[label] = parsed
         # First POM wins a duplicate artifactId; a monorepo with two modules of
@@ -275,7 +275,7 @@ def _java_graph(root: Path) -> DependencyGraph:
     nodes: list[str] = []
 
     for f in java_files:
-        rel = str(f.relative_to(root))
+        rel = f.relative_to(root).as_posix()
         nodes.append(rel)
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
@@ -289,7 +289,7 @@ def _java_graph(root: Path) -> DependencyGraph:
 
     edges: list[tuple[str, str]] = []
     for f in java_files:
-        rel = str(f.relative_to(root))
+        rel = f.relative_to(root).as_posix()
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
         except Exception:
@@ -379,13 +379,13 @@ def _oracle_graph(root: Path) -> DependencyGraph:
     for f, text in file_text.items():
         for _, name in _SQL_OBJECT_RE.findall(text):
             key = name.upper().split(".")[-1]
-            object_owner[key] = str(f.relative_to(root))
-            if str(f.relative_to(root)) not in nodes:
-                nodes.append(str(f.relative_to(root)))
+            object_owner[key] = f.relative_to(root).as_posix()
+            if f.relative_to(root).as_posix() not in nodes:
+                nodes.append(f.relative_to(root).as_posix())
 
     edges: list[tuple[str, str]] = []
     for f, text in file_text.items():
-        rel = str(f.relative_to(root))
+        rel = f.relative_to(root).as_posix()
         if rel not in nodes:
             nodes.append(rel)
         for ref in _SQL_REF_RE.findall(text):
@@ -419,7 +419,7 @@ def _tibco_ems_graph(root: Path) -> DependencyGraph:
         dests = set(_EMS_DEST_RE.findall(text))
         if not dests:
             continue
-        rel = str(f.relative_to(root))
+        rel = f.relative_to(root).as_posix()
         nodes.append(rel)
         for d in dests:
             dest_files.setdefault(d, set()).add(rel)
@@ -458,18 +458,18 @@ def _resolve_jsp_ref(current: Path, root: Path, ref: str) -> str | None:
     for candidate in candidates:
         resolved = candidate.resolve()
         if resolved.exists() and root in resolved.parents:
-            return str(resolved.relative_to(root))
+            return resolved.relative_to(root).as_posix()
     return None
 
 
 def _jsp_graph(root: Path) -> DependencyGraph:
     jsp_files = _iter_files(root, {".jsp", ".jspf", ".jspx", ".tag"})
-    nodes = [str(f.relative_to(root)) for f in jsp_files]
+    nodes = [f.relative_to(root).as_posix() for f in jsp_files]
     edges: list[tuple[str, str]] = []
     taglib_users: dict[str, set[str]] = {}
 
     for f in jsp_files:
-        rel = str(f.relative_to(root))
+        rel = f.relative_to(root).as_posix()
         try:
             text = f.read_text(encoding="utf-8", errors="replace")
         except Exception:

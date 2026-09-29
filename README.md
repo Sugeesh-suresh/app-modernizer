@@ -245,7 +245,7 @@ A FastAPI service orchestrating the ADK agent pipeline, registered per pattern i
 
 ## Prerequisites
 
-- **Python 3.12+**
+- **Python 3.12+** — Linux, macOS or Windows
 - **Node.js 18+**
 - A **Google Gemini API key**
 - **Maven** and/or **Gradle** on `PATH` for the Java, TIBCO and JSP patterns — without them the build loop cannot validate, and the run completes with a failed build rather than a silent pass
@@ -307,6 +307,20 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 cd modernizer-app
 npm run dev
 ```
+
+### On Windows (PowerShell)
+
+The backend runs natively on Windows — no WSL needed. Only the activation path differs:
+
+```powershell
+cd modernizer-backend
+py -3 -m venv .venv
+.venv\Scripts\Activate.ps1          # cmd.exe: .venv\Scripts\activate.bat
+pip install -r requirements.txt
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
+or run `.\start.ps1`, the PowerShell twin of `start.sh`. The frontend commands are the same. Builds call `mvn.cmd`, `mvnw.cmd` and `gradlew.bat` automatically, so Maven/Gradle only need to be on `PATH` as usual. If `Activate.ps1` is blocked, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
 
 ### Verify both services are running
 

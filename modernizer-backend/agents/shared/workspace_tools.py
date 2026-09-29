@@ -18,7 +18,9 @@ agnostic and used as-is. `run_command` is pattern-specific (a Java pattern
 allows `mvn`/`gradle`, others allow nothing or a different toolchain) so
 it is built per pattern via `make_run_command`.
 """
+import os
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -117,7 +119,7 @@ def list_files(tool_context: ToolContext, subdir: str = ".", offset: int = 0,
         rel = path.relative_to(root)
         if EXCLUDED_DIRS & set(rel.parts):
             continue
-        paths.append(str(rel))
+        paths.append(rel.as_posix())
 
     total = len(paths)
     if total == 0:
@@ -342,6 +344,60 @@ def _clip_command_output(output: str, budget: int = 0) -> str:
     )
 
 
+_WINDOWS = os.name == "nt"
+#: Suffixes Windows launchers carry that the allow-list does not: `mvn` is really
+#: `mvn.cmd`, the Maven/Gradle wrappers are `mvnw.cmd` / `gradlew.bat`.
+_WINDOWS_SUFFIXES = (".cmd", ".bat", ".exe")
+_WRAPPERS = {"mvnw", "gradlew"}
+
+
+def _split_command(command: str) -> list[str]:
+    """Split *command* into argv. POSIX rules eat backslashes, which are path
+    separators on Windows, so there the non-POSIX splitter is used and the
+    quotes it leaves around a token are removed."""
+    if not _WINDOWS:
+        return shlex.split(command)
+    return [
+        arg[1:-1] if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in "\"'" else arg
+        for arg in shlex.split(command, posix=False)
+    ]
+
+
+def _command_name(arg0: str) -> str:
+    """The allow-list key for an executable: its bare name, without a Windows
+    launcher suffix, so `mvn.cmd` and `.\\mvnw.cmd` are checked as `mvn`/`mvnw`."""
+    name = arg0.replace("\\", "/").rsplit("/", 1)[-1]
+    lowered = name.lower()
+    for suffix in _WINDOWS_SUFFIXES:
+        if lowered.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def _resolve_executable(arg0: str, cwd: Path) -> str:
+    """The program to hand to subprocess.
+
+    On Linux/macOS this is *arg0* unchanged. On Windows, CreateProcess does not
+    consult PATHEXT, so a bare `mvn`/`gradle`/`npm` is never found even when it
+    is installed -- every build reported "not installed". PATH lookups go
+    through shutil.which, which does, and a repository's own wrapper (`mvnw`,
+    `./gradlew`) resolves to the `.cmd`/`.bat` twin Maven and Gradle ship
+    beside the shell script, which Windows cannot run.
+    """
+    if not _WINDOWS:
+        return arg0
+    path_like = "/" in arg0 or "\\" in arg0
+    name = _command_name(arg0)
+    if path_like or name in _WRAPPERS:
+        folder = (cwd / arg0).parent if path_like else cwd
+        for suffix in _WINDOWS_SUFFIXES:
+            candidate = folder / (name + suffix)
+            if candidate.is_file():
+                return str(candidate)
+        return arg0
+    return shutil.which(arg0) or arg0
+
+
 def make_run_command(allowed_commands: set[str]):
     """Build a `run_command` tool restricted to *allowed_commands* executables.
 
@@ -362,19 +418,19 @@ def make_run_command(allowed_commands: set[str]):
             return f"ERROR: '{subdir}' does not exist in the workspace."
 
         try:
-            args = shlex.split(command)
+            args = _split_command(command)
         except ValueError as exc:
             return f"ERROR: could not parse command: {exc}"
         if not args:
             return "ERROR: empty command."
 
-        executable = Path(args[0]).name
+        executable = _command_name(args[0])
         if executable not in allowed:
             return f"ERROR: '{executable}' is not permitted. Allowed commands: {allowed_list}."
 
         try:
             result = subprocess.run(
-                args,
+                [_resolve_executable(args[0], cwd), *args[1:]],
                 cwd=cwd,
                 capture_output=True,
                 text=True,
