@@ -1,0 +1,6 @@
+# Test-only dependencies. The suite could not be run from a clean checkout
+# before this file existed: pytest was present in the working .venv and declared
+# nowhere, so `python3 -m venv .venv && pip install -r requirements.txt` produced
+# an environment that could run the app but not verify it.
+-r requirements.txt
+pytest==9.1.1

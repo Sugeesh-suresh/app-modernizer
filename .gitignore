@@ -1,5 +1,8 @@
 # Python backend
-modernizer-backend/.venv/
+# `.venv*`, not just `.venv/`: a venv being replaced gets moved aside first
+# (see the README's note on copied venvs), and that backup must not be committed.
+modernizer-backend/.venv*/
+modernizer-backend/.pytest_cache/
 modernizer-backend/__pycache__/
 modernizer-backend/**/__pycache__/
 modernizer-backend/*.pyc

@@ -285,8 +285,22 @@ GEMINI_API_KEY=your_api_key_here
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt        # to run the app
+pip install -r requirements-dev.txt    # to run the app AND its tests
 ```
+
+`requirements.txt` pins the exact set a clean venv resolves, verified from empty
+on every dependency bump. Regenerate it by installing the names unpinned into an
+empty venv and freezing what pip picks — not by editing a line in place, which is
+how a pin drifts out of step with `google-adk`'s own floors.
+
+> **Never `pip install` through `.venv/bin/pip` in a venv you copied from another
+> checkout.** A venv's console scripts carry an *absolute* shebang written when
+> the venv was created, so a copied `.venv` keeps launching the original
+> checkout's interpreter: the install silently lands in the other project while
+> `pip show` cheerfully reports success. `.venv/bin/python -m pip` always
+> resolves to the venv it lives in. Recreate a copied venv rather than trusting
+> it.
 
 ### 4. Install frontend dependencies
 
@@ -328,8 +342,11 @@ curl http://127.0.0.1:8000/health
 ```bash
 cd modernizer-backend
 source .venv/bin/activate
-python -m pytest tests/ -q
+pytest -q
 ```
+
+`pytest.ini` puts the backend directory on `sys.path`, so the bare `pytest`
+script and `python -m pytest` both work from a clean checkout.
 
 The suite covers the deterministic guardrails, the stage/task and manifest parsers, agent wiring, and the contracts each skill file is expected to honour — so a skill edit that breaks a parser fails the build rather than a migration.
 

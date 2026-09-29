@@ -1,22 +1,29 @@
-# Pinned to the set this backend is actually tested against (see .venv).
-# google-adk drives the floor for fastapi/pydantic/uvicorn/starlette, so bump it
-# and these together — adk 2.10 requires fastapi>=0.133, google-genai>=2.19 and
-# starlette>=1.3.1, all of which adk 2.1 forbade.
+# Pinned to the exact set a clean `python3 -m venv` resolves and that the full
+# test suite passes against — regenerate by installing these names unpinned into
+# an empty venv and freezing what pip picks, never by editing one line in place.
+#
+# google-adk drives the floor for everything under it: 2.10 requires
+# fastapi>=0.133, google-genai>=2.19, starlette>=1.3.1 and pydantic>=2.12, all of
+# which adk 2.1 forbade. Bump adk and this block together.
 #
 # ADK 2.x replaces SequentialAgent/LoopAgent with the graph `Workflow` API
 # (google.adk.workflow), which every pattern's pipeline is built on — see
 # agents/shared/workflow_graphs.py. Do not drop back below 2.0.
 google-adk==2.10.0
-google-genai>=2.19,<3
-fastapi==0.136.1
-uvicorn[standard]==0.47.0
-pydantic==2.13.4
-python-multipart==0.0.18
-python-dotenv==1.0.1
-aiofiles==24.1.0
-pypdf>=4.0.0
-python-docx>=1.1.0
-pyyaml>=6.0
+google-genai==2.25.0
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+pydantic==2.13.5
+python-multipart==0.0.32
+python-dotenv==1.2.3
+aiofiles==25.1.0
+pypdf==6.19.0
+python-docx==1.2.0
+pyyaml==6.0.3
+# starlette is not pinned here: it is google-adk's and fastapi's dependency, and
+# pinning it separately is how the two get to disagree. adk 2.10 wants >=1.3.1,<2
+# and the set above resolves it to 1.7.0.
+#
 # Required only when DATABASE_URL is set (SQLite or Postgres backed sessions):
 # pip install "google-adk[db]" aiosqlite   # SQLite
 # pip install "google-adk[db]" asyncpg     # Postgres
