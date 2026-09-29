@@ -1,5 +1,8 @@
 export type PatternId =
   | 'java-8-to-25'
+  /** JDK-only upgrade: JSP views and the WildFly deployment are frozen. No
+   * strategy or toggles, so it goes straight to upload. */
+  | 'java-8-to-11'
   | 'solr-4-to-9'
   | 'oracle-19c-to-23ai'
   | 'tibco-ems-to-pubsub'

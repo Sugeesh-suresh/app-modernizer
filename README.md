@@ -11,12 +11,36 @@ The platform is built on **Google ADK** with **Gemini**, and its domain knowledg
 | Pattern | From | To | Validation | Strategies |
 |---|---|---|---|---|
 | **Java 8 → Java 25** | Java 8, Spring 3/4, WAR | Java 25, Spring Boot 4.x, executable JAR | Real `mvn`/`gradle` compile + package | Bigbang **or** phased incremental |
+| **Java 8 → Java 11 (JSP & WildFly preserved)** | Java 8 JSP + WildFly monolith (WAR) | Java 11, **same WAR, same JSPs, same WildFly deployment** | Real `mvn package` at release 11 + deterministic scope-fence check | Single pass, modifier chunked per plan task |
 | **Solr 4x → Solr 9x** | Solr 4.x schema, solrconfig, SolrJ | Solr 9.x, Point fields, `*SolrClient` | Deterministic config validator | Single pass |
 | **Oracle 19c → 23ai** | 19c SQL / PL/SQL, `ojdbc6` | 23ai-compatible, `ojdbc11` | Deterministic SQL validator | Single pass |
 | **TIBCO EMS → Cloud Pub/Sub** | EMS destinations, JMS clients | Pub/Sub topics, `Publisher`/`Subscriber` | Real `mvn`/`gradle` compile | Single pass |
 | **JSP → React + BFF** | JSP/JSTL WAR | React frontend + Spring Boot 4 BFF (JAR) | Real `mvn compile` + `npm run build` | Single pass, dual tree |
 
 Every migration pattern runs the full pipeline: reverse-engineer → **Analysis review (HITL)** → plan → **Plan review (HITL)** → code generation → build/fix loop → independent code review → report.
+
+### Java 8 → Java 11: a JDK upgrade inside a scope fence
+
+For a large monolith of Java classes, APIs and JSP views deployed as a WAR on WildFly, where the only acceptable change is the JDK. **Only `.java` sources and build files change**, and only as far as Java 11 requires: the compiler release, code on APIs removed from the JDK (`sun.misc.BASE64Encoder`, `sun.reflect.*`, `Thread.stop(Throwable)`…), the Java EE modules JDK 11 dropped (JAXB, JAX-WS, JAF, Common Annotations — added as `provided`, since WildFly supplies them at runtime), and the libraries and build plugins that cannot build or run on JDK 11 (Mockito 1, maven-war-plugin 2.x, old ASM/cglib/AspectJ/Lombok, Spring 3/4…). Libraries that are merely old but run on 11 are reported, not replaced.
+
+The **frozen zone** is everything else that defines the deployment: JSP (`.jsp`/`.jspf`/`.tag`/`.tld`), `src/main/webapp`, `WEB-INF`, `META-INF`, `web.xml`, every WildFly/JBoss descriptor (`jboss-*.xml`, `standalone*.xml`, `*-ds.xml`, `module.xml`, `*.cli`), and launch configuration (`standalone.conf`, `Dockerfile`). Inside build files, `<packaging>`, `<finalName>`, WildFly/JBoss deployment plugins and the maven-war-plugin configuration are frozen too (its `<version>` alone may move), as are the `javax.*` namespace and the versions of container-provided dependencies.
+
+That is enforced in code (`shared/scope_fence.py`), not asked for in a prompt:
+
+| Layer | Mechanism |
+|---|---|
+| Write time | The modifier and fixer hold fenced `write_file`/`replace_in_file` (`java_8_to_11/tools.py`). A frozen file, a non-Java/non-build file, or an edit that changes packaging, `finalName`, a WildFly plugin, the WAR plugin's configuration, goes past release 11, introduces Spring Boot or adds a `jakarta.*` import is refused with an `ERROR:` the agent reads. |
+| Validate time | `check_java11_invariants` compares the workspace with the baseline: frozen files byte-identical, build invariants held, every build file on exactly 11. The validator's `signal_build_success` re-runs it and refuses to end the loop while it fails, so a green build cannot hide a fence breach. |
+| Review time | The change audit reports any changed frozen file as a `frozen file changed` regression and never lists an untouched JSP as a coverage gap. The plan's Frozen Zone table marks every row `frozen — unchanged`, so plan conformance reports a changed one as contradicted. |
+| End of run | Before the diff, every frozen file is restored to its uploaded bytes — covering anything a Maven plugin rewrote outside the agent tools — and the report says what was undone. |
+
+The run also surfaces what it may not fix. JSPs compile on the **server's** JDK, so a scriptlet on a removed API is reported as a frozen-zone runtime risk; a WildFly too old to run Java 11, and JVM options a Java 11 JVM rejects, become escalation triggers and **Ops Actions** in the plan and report.
+
+```
+upload → RE (Java 11 blockers + frozen-zone inventory) → HUMAN: review → plan (one stage, N tasks)
+       → HUMAN: approve → modifier × N tasks (fresh context each) → build loop (mvn package + fence check)
+       → code review → report → skill curator → frozen-file restore → diff
+```
 
 ### Analysis-only pattern
 
@@ -153,7 +177,7 @@ The hard rule is that **a limit is never hit silently**:
 
 ### What is still not solved
 
-Code generation chunks per plan task — a fresh modifier context per task, rather than one context accumulating the whole repository — but **only on the `java-8-to-25` incremental path** (see `plan_tasks.py` and `_run_java8_incremental_code_step`). Bigbang and the other four patterns run their modifier once over the whole repo. On a large codebase, incremental Java is the only mode with a real code-generation scale story; extending that chunking to the other patterns needs per-pattern `modify`/`build` sub-runners, which is a structural change rather than a limit.
+Code generation chunks per plan task — a fresh modifier context per task, rather than one context accumulating the whole repository — on the `java-8-to-25` incremental path and on `java-8-to-11` (see `plan_tasks.py`, `_run_java8_incremental_code_step` and `_run_java11_code_step`). Java 8 → 25 bigbang and the other four patterns run their modifier once over the whole repo. On a large codebase, those two are the modes with a real code-generation scale story; extending that chunking to the other patterns needs per-pattern `modify`/`build` sub-runners, which is a structural change rather than a limit.
 
 ---
 
@@ -309,7 +333,7 @@ The suite covers the deterministic guardrails, the stage/task and manifest parse
 
 1. Open **http://localhost:5173**
 2. Select a pattern and upload your project as a `.zip`
-3. For **Java 8 → 25**, choose a strategy (bigbang or phased incremental) and the JUnit / Spring Boot toggles
+3. For **Java 8 → 25**, choose a strategy (bigbang or phased incremental) and the JUnit / Spring Boot toggles. **Java 8 → 11** has no options — it goes straight to upload, and the API rejects the Java 8 → 25 options for it
 4. Review any **companion migrations** detected in your repo, with their evidence
 5. Watch the reverse-engineering run, then review and edit the **BRD** and **Technical Specification** — optionally attach Swagger / OpenAPI / design files (and UX designs, for JSP → React)
 6. Review the **Migration Plan**. Read its Change Manifest, its coverage gaps, and its open questions before approving — this is the scope agreement the code review will hold the run to
@@ -358,6 +382,7 @@ app-modernizer/
     │   ├── __init__.py                    # PATTERN_RUNNERS / TARGET_LANGS registry
     │   ├── config.py                      # Model + loop-limit config
     │   ├── java_8_to_25/                  # Bigbang + 8-stage incremental pipelines
+    │   ├── java_8_to_11/                  # JDK-only upgrade; fenced write tools + invariant check
     │   ├── solr_4_to_9/
     │   ├── oracle_19c_to_23ai/
     │   ├── tibco_ems_to_pubsub/
@@ -372,6 +397,7 @@ app-modernizer/
     │       ├── plan_tasks.py              # Stage + task parsing
     │       ├── plan_contract.py           # The six questions
     │       ├── plan_coverage.py           # Plan manifest vs. what changed
+    │       ├── scope_fence.py             # Frozen files + build invariants (java-8-to-11)
     │       ├── change_audit.py            # Relevance + coverage vs. the baseline
     │       ├── skill_manifest.py          # Skill composition table
     │       ├── diffing.py                 # Baseline snapshot + per-file diffs

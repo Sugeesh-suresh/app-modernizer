@@ -5,6 +5,8 @@ from enum import Enum
 
 class PatternType(str, Enum):
     JAVA_8_TO_25 = "java-8-to-25"
+    # JDK-only upgrade: JSP views and the WildFly deployment are frozen.
+    JAVA_8_TO_11 = "java-8-to-11"
     SOLR_4_TO_9 = "solr-4-to-9"
     ORACLE_19C_TO_23AI = "oracle-19c-to-23ai"
     TIBCO_EMS_TO_PUBSUB = "tibco-ems-to-pubsub"

@@ -36,6 +36,7 @@ from typing import TypedDict
 
 from google.adk.tools import ToolContext
 
+from . import scope_fence
 from .dependency_graph import EXCLUDED_DIRS
 
 # File types worth grepping for library/API signatures — sources, build files
@@ -155,6 +156,43 @@ _JAVA_FORBIDDEN = [
        "A deliberate downgrade to make a build pass is a migration failure, not a fix."),
 ]
 
+# Java 8 -> 11 is scoped to what Java 11 itself breaks, so its legacy set is the
+# removed JDK APIs and the Java 8 compiler level -- NOT the EOL libraries the
+# 8 -> 25 set lists, which run on Java 11 and are deliberately out of scope here.
+_JAVA11_LEGACY = [
+    _m("removed JDK internal API", r"\bsun\.misc\.BASE64(?:En|De)coder\b|\bsun\.reflect\.Reflection\b|\bsun\.misc\.Cleaner\b",
+       "Removed/encapsulated since Java 9 — java.util.Base64, StackWalker, java.lang.ref.Cleaner."),
+    _m("method removed in Java 11", r"\.runFinalizersOnExit\s*\(|\bThread\.currentThread\(\)\.destroy\s*\(|\bcheckAwtEventQueueAccess\b|\bcheckTopLevelWindow\b|\bcheckSystemClipboardAccess\b|\bcheckMemberAccess\b|\bjavax\.security\.auth\.Policy\b",
+       "Removed from the JDK in Java 11 — the code does not compile on 11."),
+    _m("system class loader cast", r"\(\s*URLClassLoader\s*\)\s*(?:ClassLoader\.getSystemClassLoader|Thread\.currentThread\(\)\.getContextClassLoader)",
+       "ClassCastException on Java 9+ — the system loader is no longer a URLClassLoader."),
+    _m("Java 8 compiler level", r"<(?:source|target)>1\.[5-8]</(?:source|target)>|<maven\.compiler\.(?:source|target)>1\.[5-8]<|<java\.version>1\.[5-8]<|(?:source|target)Compatibility\s*=\s*['\"]?1\.[5-8]|VERSION_1_[5-8]",
+       "The compiler level never reached 11 — every module must target release 11."),
+    _m("Mockito 1.x", r"\bmockito-all\b|org\.mockito\.runners\.",
+       "Mockito 1.x cannot mock on Java 11 — mockito-core 2.x (org.mockito.junit runner)."),
+    _m("Java 11-incapable build plugin", r"findbugs-maven-plugin|<requireJavaVersion>\s*<version>\s*\[?1\.8",
+       "Cannot run on / rejects JDK 11."),
+]
+
+_JAVA11_MODERN = [
+    _m("release 11", r"<release>11</release>|<maven\.compiler\.release>11<|<java\.version>11<|(?:source|target)Compatibility\s*=\s*['\"]?11|VERSION_11|JavaLanguageVersion\.of\(\s*11\s*\)|release\s*=\s*11"),
+    _m("removed Java EE module as a dependency", r"\bjaxb-api\b|\bjaxws-api\b|javax\.annotation-api|javax\.activation-api|javax\.transaction-api|javax\.xml\.soap-api|jaxb-runtime|jaxws-rt"),
+    _m("JDK 9+ replacement API", r"\bjava\.util\.Base64\b|\bBase64\.get(?:Mime)?(?:En|De)coder\b|\bStackWalker\b|\bjava\.lang\.ref\.Cleaner\b|Runtime\.version\(\)"),
+    _m("Java 11-capable build plugin", r"maven-(?:compiler|surefire|failsafe|war|jar|javadoc|shade|enforcer)-plugin|jacoco-maven-plugin|spotbugs-maven-plugin|aspectj-maven-plugin|jaxb2-maven-plugin|jaxws-maven-plugin"),
+    _m("mockito-core / Mockito 2 runner", r"\bmockito-core\b|org\.mockito\.junit\.|powermock-api-mockito2|\bnullable\s*\("),
+]
+
+_JAVA11_FORBIDDEN = [
+    _m("Jakarta namespace", r"^\s*import\s+(?:static\s+)?jakarta\.",
+       "Java 11 keeps javax.* — the WildFly container provides Java EE, not Jakarta EE 9+.", re.MULTILINE),
+    _m("Java level past 11", r"<release>(?:1[2-9]|[2-9]\d)</release>|<maven\.compiler\.(?:release|source|target)>(?:1[2-9]|[2-9]\d)<|(?:source|target)Compatibility\s*=\s*['\"]?(?:1[2-9]|[2-9]\d)\b|VERSION_(?:1[2-9]|[2-9]\d)\b|JavaLanguageVersion\.of\(\s*(?:1[2-9]|[2-9]\d)\s*\)",
+       "The target is exactly Java 11."),
+    _m("Spring Boot introduced", r"spring-boot|org\.springframework\.boot",
+       "Out of scope — this migration changes the JDK only, never the framework or deployment model."),
+    _m("--add-opens / --add-exports escape hatch", r"--add-(?:opens|exports)\b|--illegal-access",
+       "Illegal reflective access is only a warning on Java 11 — an error here has another cause."),
+]
+
 _SOLR_LEGACY = [
     _m("SolrJ 4 server classes", r"\b(?:Http|Cloud|Concurrent|LBHttp)Solr(?:Server)\b",
        "Renamed to *SolrClient with builder construction in SolrJ 5+."),
@@ -207,6 +245,7 @@ _JSP_MODERN = [
 
 LEGACY_MARKERS: dict[str, list[Marker]] = {
     "java-8-to-25": _JAVA_LEGACY,
+    "java-8-to-11": _JAVA11_LEGACY,
     "solr-4-to-9": _SOLR_LEGACY,
     "oracle-19c-to-23ai": _ORACLE_LEGACY,
     "tibco-ems-to-pubsub": _TIBCO_LEGACY,
@@ -215,6 +254,7 @@ LEGACY_MARKERS: dict[str, list[Marker]] = {
 
 MODERN_MARKERS: dict[str, list[Marker]] = {
     "java-8-to-25": _JAVA_MODERN,
+    "java-8-to-11": _JAVA11_MODERN,
     "solr-4-to-9": _SOLR_MODERN,
     "oracle-19c-to-23ai": _ORACLE_MODERN,
     "tibco-ems-to-pubsub": _TIBCO_MODERN,
@@ -223,6 +263,7 @@ MODERN_MARKERS: dict[str, list[Marker]] = {
 
 FORBIDDEN_MARKERS: dict[str, list[Marker]] = {
     "java-8-to-25": _JAVA_FORBIDDEN,
+    "java-8-to-11": _JAVA11_FORBIDDEN,
 }
 
 
@@ -267,6 +308,10 @@ class ChangeAudit:
     unchanged_scanned: int = 0
     unchanged_out_of_scope: int = 0
     generated_subtrees: tuple[str, ...] = ()
+    #: Untouched files inside the pattern's scope fence (agents/shared/scope_fence.py):
+    #: frozen by design, so never scanned as coverage gaps.
+    unchanged_frozen: int = 0
+    has_fence: bool = False
     explained: list[ChangedFileAudit] = field(default_factory=list)
     unexplained: list[ChangedFileAudit] = field(default_factory=list)
     regressions: list[ChangedFileAudit] = field(default_factory=list)
@@ -349,7 +394,8 @@ def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str) -> Change
     forbidden = FORBIDDEN_MARKERS.get(pattern, [])
     subtrees = GENERATED_SUBTREES.get(pattern, ())
     audit = ChangeAudit(pattern=pattern, markers_configured=bool(legacy or modern),
-                        generated_subtrees=subtrees)
+                        generated_subtrees=subtrees,
+                        has_fence=scope_fence.fence_for(pattern) is not None)
 
     baseline_root = Path(baseline_dir).resolve() if baseline_dir else None
     workspace_root = Path(workspace_dir).resolve() if workspace_dir else None
@@ -369,6 +415,10 @@ def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str) -> Change
             if subtrees and not rel.startswith(subtrees):
                 # The original application, which this pattern leaves in place by design.
                 audit.unchanged_out_of_scope += 1
+                continue
+            if scope_fence.frozen_reason(pattern, rel):
+                # Frozen by the pattern's scope fence: untouched is the only correct state.
+                audit.unchanged_frozen += 1
                 continue
             if Path(rel).suffix.lower() in _SCAN_SUFFIXES and legacy:
                 audit.unchanged_scanned += 1
@@ -405,6 +455,13 @@ def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str) -> Change
             "legacy_added": _scan(added_lines, legacy),
             "forbidden_added": _scan(added_lines, forbidden),
         }
+        frozen = scope_fence.frozen_reason(pattern, rel)
+        if frozen:
+            # Any change inside the fence is a regression on its own, whatever
+            # the lines say -- the pattern promised this file would not move.
+            entry["forbidden_added"].insert(0, {
+                "marker": "frozen file changed", "line": f"{status}: {rel}", "note": frozen,
+            })
 
         if entry["forbidden_added"] or entry["legacy_added"]:
             audit.regressions.append(entry)
@@ -454,6 +511,13 @@ def to_markdown(audit: ChangeAudit) -> str:
             "are the original app and are **not** coverage gaps — do not report them as such. The "
             "residual-legacy check below covers the generated trees only, where a legacy marker "
             "would be a real defect.",
+        ]
+    if audit.has_fence:
+        lines += [
+            f"- This pattern has a SCOPE FENCE: {audit.unchanged_frozen} untouched file(s) are frozen "
+            "(JSP, web roots, WildFly descriptors, launch configuration) and are correct untouched — "
+            "never report them as coverage gaps. Any CHANGED frozen file appears under Regressions as "
+            "`frozen file changed` and is a CRITICAL finding.",
         ]
     if not audit.markers_configured:
         lines += [

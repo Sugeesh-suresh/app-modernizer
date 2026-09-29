@@ -498,6 +498,7 @@ def _jsp_graph(root: Path) -> DependencyGraph:
 
 _EXTRACTORS = {
     "java-8-to-25": _java_graph,
+    "java-8-to-11": _java_graph,
     "solr-4-to-9": _solr_graph,
     "oracle-19c-to-23ai": _oracle_graph,
     "tibco-ems-to-pubsub": _tibco_ems_graph,

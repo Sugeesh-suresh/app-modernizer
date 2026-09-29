@@ -14,7 +14,13 @@ each one's `re` runner, and stops at the combined document. It therefore has a
 that fan-out -- an RE skill with no target platform (see
 agents/stack_discovery/agents.py).
 
-java-8-to-25 is the one exception on the code-generation side: the user
+java-8-to-11 upgrades the JDK only, inside a scope fence that freezes the JSP
+tier and the WildFly deployment (agents/shared/scope_fence.py). Its modifier is
+registered on its own (`code_modify`, run once per plan task) and the rest of
+its code pipeline as `code_finish` (see agents/java_8_to_11/agents.py and
+main.py's _run_java11_code_step).
+
+java-8-to-25 is the other exception on the code-generation side: the user
 chooses a "bigbang" or "incremental" strategy before upload, so its code
 phase is registered as several runners instead of one -- `code_bigbang`
 for a single-pass migration straight to Java 25, or `code_stage_1`..
@@ -40,6 +46,12 @@ from .java_8_to_25.agents import (
     incremental_code_reviewer_agent as j8_incremental_code_reviewer,
     incremental_reporter_agent as j8_incremental_reporter,
     incremental_skill_curator_agent as j8_incremental_skill_curator,
+)
+from .java_8_to_11.agents import (
+    re_agent as j11_re,
+    planner_agent as j11_plan,
+    modifier_agent as j11_modify,
+    code_finish_pipeline as j11_code_finish,
 )
 from .solr_4_to_9.agents import (
     re_agent as solr_re, planner_agent as solr_plan, code_pipeline as solr_code,
@@ -94,6 +106,15 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
         "incremental_reporter": _runner(j8_incremental_reporter),
         "incremental_skill_curator": _runner(j8_incremental_skill_curator),
     },
+    # A JDK-only upgrade of a JSP + WildFly monolith. main.py runs `code_modify`
+    # once per plan task, then `code_finish` (build loop -> review -> report ->
+    # curator) once -- see _run_java11_code_step.
+    "java-8-to-11": {
+        "re": _runner(j11_re),
+        "plan": _runner(j11_plan),
+        "code_modify": _runner(j11_modify),
+        "code_finish": _runner(j11_code_finish),
+    },
     "solr-4-to-9": {
         "re": _runner(solr_re),
         "plan": _runner(solr_plan),
@@ -129,6 +150,7 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
 
 TARGET_LANGS: dict[str, str] = {
     "java-8-to-25": "java",
+    "java-8-to-11": "java",
     "solr-4-to-9": "xml",
     "oracle-19c-to-23ai": "sql",
     "tibco-ems-to-pubsub": "java",

@@ -26,8 +26,9 @@ if not os.getenv("GOOGLE_API_KEY") and os.getenv("GEMINI_API_KEY"):
 
 from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, config, session_service
 from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
+from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
-    companion_detector, dependency_graph, diffing, plan_tasks, stack_detector, ux_designs,
+    companion_detector, dependency_graph, diffing, plan_tasks, scope_fence, stack_detector, ux_designs,
 )
 from agents.shared.file_parser import extract_text
 from models.schemas import (
@@ -58,6 +59,10 @@ _COMPANION_PRIORITY = ["oracle-19c-to-23ai", "solr-4-to-9", "tibco-ems-to-pubsub
 # repo, runs each one's RE stage, and stops at the combined document. It has no
 # planner and no code pipeline, so every plan/code branch below must exclude it.
 _STACK_DISCOVERY = "stack-discovery"
+
+# A JDK-only upgrade: one strategy, no Spring Boot or JUnit toggles, and a scope
+# fence that freezes the JSP tier and the WildFly deployment.
+_JAVA_8_TO_11 = "java-8-to-11"
 
 # Every pattern whose `re` runner a stack-discovery fan-out can invoke — used to
 # pre-initialize the namespaced per-stack state keys. Wider than _CORE_PATTERNS
@@ -660,6 +665,106 @@ async def _run_java8_incremental_code_step(
     skill_curator_summary = state.get("skill_curator_summary", "")
     if skill_curator_summary:
         await _push(push_session_id, "skill-curator-ready", content=skill_curator_summary)
+
+
+async def _run_java11_code_step(session_id: str, push_session_id: str | None = None) -> None:
+    """Run the java-8-to-11 code phase: the modifier once per plan task, then
+    the build loop, reviewer, reporter and curator once over the result.
+
+    The plan's single `## Stage 1: Java 8 → Java 11` section is split into its
+    `### Task` blocks (agents/shared/plan_tasks.py) and each is applied by its
+    own `code_modify` run with a fresh context, so a large monolith never
+    accumulates every file it touches in one model context. A hand-edited plan
+    with no task blocks, or no stage heading at all, still runs — as one unit
+    over the stage section or the whole plan. Unlike java-8-to-25's stages,
+    there is nothing to skip: this pattern has exactly one stage, so a plan
+    without its heading is still entirely that stage's work.
+
+    Every write the modifier makes goes through the scope-fenced tools
+    (agents/java_8_to_11/tools.py); the frozen-file backstop runs later, in
+    _run_workflow, before the diff.
+    """
+    push_session_id = push_session_id or session_id
+    state = await _get_state(session_id)
+    plan_text = state.get("plan", "")
+
+    units, from_plan = plan_tasks.stage_units(plan_text, JAVA11_STAGE_TITLE)
+    if not units:
+        units = [plan_tasks.PlanTask(id="all", title=JAVA11_STAGE_TITLE, body=plan_text)]
+    preamble = f"You are applying the '{JAVA11_STAGE_TITLE}' migration plan, one task at a time."
+
+    modifier_runner = PATTERN_RUNNERS[_JAVA_8_TO_11]["code_modify"]
+    stage_meta = {"stage": 1, "total": 1}
+    summaries: list[str] = []
+    progress = 5
+
+    for task_index, task in enumerate(units, start=1):
+        task_meta = {
+            "task_id": task.id, "task_title": task.title,
+            "task_index": task_index, "task_total": len(units),
+        }
+        if from_plan:
+            await _push(push_session_id, "task-start", **stage_meta, **task_meta)
+        await _update_state(session_id, {"current_task": f"{preamble}\n\n{task.body}", "modify_result": ""})
+        message = types.Content(role="user", parts=[types.Part(text=(
+            f"Apply task {task.id} ({task.title}) of the confirmed plan to the workspace."
+        ))])
+        try:
+            async for event in modifier_runner.run_async(
+                session_id=session_id, user_id=USER_ID, new_message=message,
+            ):
+                if (getattr(event, "author", "") or "") != "modifier_agent":
+                    continue
+                if not event.content or not event.content.parts:
+                    continue
+                for part in event.content.parts:
+                    text = getattr(part, "text", None)
+                    if text:
+                        progress = min(progress + 1, 60)
+                        await _push(push_session_id, "code-stream", content=text, progress=progress)
+                        await asyncio.sleep(0)
+        except Exception:
+            # One failed task must not abandon the rest — the build loop still runs.
+            traceback.print_exc()
+            summaries.append(f"### Task {task.id}: {task.title}\nFAILED — see the server log.")
+            continue
+        task_state = await _get_state(session_id)
+        summaries.append(f"### Task {task.id}: {task.title}\n{(task_state.get('modify_result') or '').strip()}")
+        if from_plan:
+            await _push(push_session_id, "task-complete", **stage_meta, **task_meta)
+
+    # The build loop, reviewer, reporter and curator read one modify result for the run.
+    await _update_state(session_id, {"modify_result": "\n\n".join(summaries).strip(), "current_task": ""})
+    await _run_workspace_code_step(session_id, _JAVA_8_TO_11, "code_finish", push_session_id=push_session_id)
+
+
+async def _enforce_scope_fence(session_id: str) -> None:
+    """Put every frozen file back exactly as uploaded, before the diff.
+
+    The fenced tools already refuse agent writes inside the fence, so for an
+    agent this is a no-op. It exists for what the tools cannot see: a build
+    plugin run by `mvn` during validation rewriting a descriptor or a JSP. If
+    anything was undone, the reviewer's audit had already flagged it (it ran on
+    the pre-restore workspace), and the report gets a note saying so.
+    """
+    state = await _get_state(session_id)
+    pattern = state.get("pattern", "")
+    if not scope_fence.fence_for(pattern):
+        return
+    undone = scope_fence.restore_frozen(pattern, state.get("baseline_dir", ""), state.get("workspace_dir", ""))
+    if not undone:
+        return
+    print(f"[scope-fence] {pattern}: undid {len(undone)} frozen-file change(s): {undone}", flush=True)
+    note = (
+        "\n\n---\n\n## Scope Fence Enforcement (automated)\n\n"
+        f"{len(undone)} frozen file(s) differed from the upload after code generation and were put back "
+        "exactly as uploaded before the result was assembled. The delivered workspace does not contain "
+        "these changes; the independent review above saw them before they were undone.\n\n"
+        + "\n".join(f"- `{path}` — {action}" for path, action in undone)
+    )
+    final_report = (state.get("final_report", "") or "") + note
+    await _update_state(session_id, {"final_report": final_report})
+    await _push(session_id, "report-ready", content=final_report)
 
 
 # ---------------------------------------------------------------------------
@@ -1329,6 +1434,8 @@ async def _run_bundle_code_generation(session_id: str, bundle: list[str]) -> Non
         # whenever a companion migration was selected alongside it.
         if pattern == "java-8-to-25" and migration_strategy == "incremental":
             await _run_java8_incremental_code_step(run_session_id, push_session_id=session_id)
+        elif pattern == _JAVA_8_TO_11:
+            await _run_java11_code_step(run_session_id, push_session_id=session_id)
         else:
             code_key = "code_bigbang" if pattern == "java-8-to-25" else "code"
             await _run_workspace_code_step(run_session_id, pattern, code_key, push_session_id=session_id)
@@ -1476,6 +1583,12 @@ async def _run_workflow(session_id: str) -> None:
         else:
             await _run_bundle_code_generation(session_id, bundle)
 
+        # ── Scope fence backstop: frozen files back to their uploaded bytes ─
+        try:
+            await _enforce_scope_fence(session_id)
+        except Exception:
+            traceback.print_exc()
+
         # ── Step 4: Diff + final file collection ────────────────────────────
         state = await _get_state(session_id)
         workspace_dir = state.get("workspace_dir", "")
@@ -1588,6 +1701,20 @@ async def upload_repository(
             detail=(
                 "Stack discovery is reverse-engineering only — it produces no plan and no code, so "
                 "the migration strategy and the JUnit/Spring Boot upgrade toggles do not apply."
+            ),
+        )
+    # The Java 11 upgrade has one strategy and changes the JDK only, so the
+    # Java 8 -> 25 options would promise work the fence forbids (Spring Boot)
+    # or a shape the pipeline does not have (a phased run). Rejected, not ignored.
+    if pattern.value == _JAVA_8_TO_11 and (
+        migration_strategy != "bigbang" or junit_upgrade or springboot_upgrade
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Java 8 → Java 11 is a JDK-only upgrade in a single pass — the phased strategy and the "
+                "JUnit/Spring Boot upgrade toggles do not apply. JSP views and the WildFly deployment "
+                "are left exactly as uploaded."
             ),
         )
     try:

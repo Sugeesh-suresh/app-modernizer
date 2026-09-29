@@ -31,6 +31,8 @@ COMPANION_LABELS: dict[str, str] = {
     "solr-4-to-9": "Solr 4x → Solr 9x",
     "tibco-ems-to-pubsub": "TIBCO EMS → Google Cloud Pub/Sub",
     "java-8-to-25": "Java 8 → Java 25",
+    # A primary only, never a companion -- listed so _label() has a heading for it.
+    "java-8-to-11": "Java 8 → Java 11",
 }
 
 _SCAN_SUFFIXES = {".xml", ".properties", ".yml", ".yaml", ".java", ".gradle", ".kts"}

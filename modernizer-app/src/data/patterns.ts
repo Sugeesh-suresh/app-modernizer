@@ -21,6 +21,25 @@ export const PATTERNS: PatternConfig[] = [
     ],
   },
   {
+    id: 'java-8-to-11',
+    title: 'Java 8 → Java 11 (JSP & WildFly preserved)',
+    description:
+      'For large JSP + WildFly monoliths that must move to Java 11 and nothing else. Only Java sources and build files change — compiler release, APIs removed from the JDK, and the libraries and plugins that cannot run on 11. JSPs, WildFly descriptors, packaging and the javax namespace stay exactly as uploaded, enforced by the tools rather than requested.',
+    from: 'Java 8 (WAR)',
+    to: 'Java 11 (same WAR)',
+    fromBadge: 'bg-amber-500/20 text-amber-700 border-amber-500/30',
+    toBadge: 'bg-emerald-500/20 text-emerald-700 border-emerald-500/30',
+    gradient: 'from-amber-500/10 via-transparent to-emerald-500/10',
+    iconBg: 'bg-gradient-to-br from-amber-500 to-emerald-600',
+    benefits: [
+      'JSP, web.xml & WildFly descriptors frozen — writes to them are refused',
+      'Packaging, finalName, javax.* and WildFly plugins verified unchanged',
+      'pom.xml dependencies & plugins moved only as far as Java 11 needs',
+      'Removed JDK APIs & Java EE modules (JAXB, JAX-WS…) fixed per task',
+      'Real mvn package at release 11 + deterministic fence check',
+    ],
+  },
+  {
     id: 'solr-4-to-9',
     title: 'Solr 4x → Solr 9x',
     description:
