@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Upload, FolderOpen, FileCode2, X, ArrowLeft, Loader2, Palette, FileText, ImagePlus } from 'lucide-react';
+import { Upload, FolderOpen, FileCode2, X, ArrowLeft, Loader2, Palette, FileText, ImagePlus, Paperclip } from 'lucide-react';
 import type { PatternId, JavaMigrationOptions } from '../types';
-import { INVENTORY_PATTERNS, RE_ONLY_PATTERNS } from '../types';
+import { RE_ONLY_PATTERNS } from '../types';
 import { PATTERNS } from '../data/patterns';
-import { uploadRepository } from '../api';
+import { fetchAnalysisReview, uploadRepository } from '../api';
 
 // UX designs — the limits mirror modernizer-backend/agents/shared/ux_designs.py.
 const UX_PATTERNS: PatternId[] = ['jsp-to-react-bff'];
@@ -33,7 +33,7 @@ interface Props {
   pattern: PatternId;
   options?: JavaMigrationOptions | null;
   /** `filesTruncated` > 0 means the server could not unpack the whole archive. */
-  onSessionCreated: (sessionId: string, filesTruncated: number) => void;
+  onSessionCreated: (sessionId: string, filesTruncated: number, analysisReview: boolean) => void;
   onBack: () => void;
 }
 
@@ -44,6 +44,18 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
   const [uxDragging, setUxDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [uxFiles, setUxFiles] = useState<File[]>([]);
+  const contextRef = useRef<HTMLInputElement>(null);
+  const [contextFiles, setContextFiles] = useState<File[]>([]);
+  // Whether this server shows the analysis for review before planning (null
+  // until known). Without that screen, context docs can only be attached here.
+  const [analysisReview, setAnalysisReview] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchAnalysisReview()
+      .then((modes) => live && setAnalysisReview(modes[pattern] ?? true))
+      .catch(() => live && setAnalysisReview(true));
+    return () => { live = false; };
+  }, [pattern]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,6 +64,7 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
   // Reverse-engineering-only: the run ends at the document, so this screen must
   // not describe plan and code-generation steps that will never happen.
   const reOnly = RE_ONLY_PATTERNS.includes(pattern);
+  const showContextPicker = !reOnly && analysisReview === false;
 
   // Thumbnail URLs for image designs; released whenever the list changes or the screen unmounts.
   const uxPreviews = useMemo(
@@ -109,10 +122,11 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
     setUploading(true);
     setError(null);
     try {
-      const { session_id, files_truncated } = await uploadRepository(
-        pattern, file, options, supportsUx ? uxFiles : [],
+      const { session_id, files_truncated, analysis_review } = await uploadRepository(
+        pattern, file, options, supportsUx ? uxFiles : [], showContextPicker ? contextFiles : [],
       );
-      onSessionCreated(session_id, files_truncated ?? 0);
+      // The server's answer for this run wins over the settings fetched above.
+      onSessionCreated(session_id, files_truncated ?? 0, analysis_review ?? true);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
       setUploading(false);
@@ -278,6 +292,60 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
         </div>
       )}
 
+      {/* Context docs — only for runs with no analysis-review screen, which is
+          where they are attached otherwise. */}
+      {showContextPicker && (
+        <div className="mt-6 glass rounded-xl p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-900">
+                <Paperclip size={15} className="text-slate-500" />
+                Context for the planner
+                <span className="text-xs font-normal text-slate-500">(optional)</span>
+              </p>
+              <p className="text-xs text-slate-600 mt-1">
+                Swagger / OpenAPI specs, design notes or data dictionaries the migration plan should take into account.
+              </p>
+            </div>
+            <button
+              onClick={() => contextRef.current?.click()}
+              className="shrink-0 flex items-center gap-1.5 text-xs bg-slate-900/5 hover:bg-slate-900/10 border border-slate-900/10 text-slate-700 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+            >
+              <Paperclip size={13} />
+              Add files
+            </button>
+          </div>
+          <input
+            ref={contextRef}
+            type="file"
+            multiple
+            accept=".pdf,.docx,.doc,.json,.txt,.md,.yaml,.yml,.xml,.csv,.toml,.properties"
+            className="hidden"
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []);
+              setContextFiles((prev) => [...prev, ...picked]);
+              e.target.value = '';
+            }}
+          />
+          {contextFiles.length > 0 && (
+            <ul className="mt-3 space-y-1">
+              {contextFiles.map((f, i) => (
+                <li key={`${f.name}-${f.size}-${i}`} className="flex items-center justify-between text-xs text-slate-700">
+                  <span className="flex items-center gap-1.5 truncate"><FileText size={12} />{f.name}</span>
+                  <button
+                    onClick={() => setContextFiles(contextFiles.filter((_, j) => j !== i))}
+                    aria-label={`Remove ${f.name}`}
+                    className="text-slate-500 hover:text-red-600 cursor-pointer"
+                  >
+                    <X size={12} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {/* Error */}
       {error && (
         <div className="mt-4 text-sm text-red-600 bg-red-400/10 border border-red-400/20 rounded-lg px-4 py-3">
@@ -300,13 +368,11 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
               ]
             : [
                 'A deterministic scan builds a dependency graph & migration groups',
-                pattern === 'java-8-to-11'
-                  ? 'Every file is scanned for Java 11 blockers, build facts & frozen JSP/WildFly files — no AI tokens'
-                  : INVENTORY_PATTERNS.includes(pattern)
-                    ? 'Every file is scanned against this migration\'s checklist — versions, affected files & lines, tests — no AI tokens'
-                    : 'AI reverse-engineers your codebase — BRD, tech spec & test inventory',
-                INVENTORY_PATTERNS.includes(pattern)
-                  ? 'You review and edit the inventory, then review, edit, or refine the plan'
+                analysisReview === false
+                  ? 'Every file is scanned against this migration\'s checklist (no AI tokens) and passed straight to the planner'
+                  : 'AI reverse-engineers your codebase — BRD, tech spec & test inventory',
+                analysisReview === false
+                  ? 'You review, edit, or ask the planner to refine the migration plan'
                   : 'You review, edit, or ask the planner to refine the BRD and plan',
                 'Migration agents apply the plan, then build/fix in a loop until it compiles',
               ]

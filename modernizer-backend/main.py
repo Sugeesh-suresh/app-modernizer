@@ -1293,6 +1293,16 @@ def _uses_inventory(pattern: str, discovery: bool) -> bool:
             and config.MIGRATION_ANALYSIS != "agent")
 
 
+def _analysis_review(pattern: str) -> bool:
+    """Whether `pattern`'s analysis goes to a human before planning. An agent's
+    analysis is an interpretation of the code, so a person confirms it (the
+    brd-review gate). A deterministic inventory is a function of the code and
+    is passed straight to the planner; the human checkpoint is the plan."""
+    if pattern == _JAVA_8_TO_11:
+        return config.JAVA11_ANALYSIS == "agent"
+    return not _uses_inventory(pattern, discovery=pattern == _STACK_DISCOVERY)
+
+
 async def _run_migration_inventory(session_id: str, pattern: str, feedback: str | None = None) -> None:
     """Analysis for java-8-to-25 / solr-4-to-9 / oracle-19c-to-23ai /
     tibco-ems-to-pubsub without a model (agents/shared/migration_inventory.py),
@@ -1433,7 +1443,8 @@ async def _run_java11_re(session_id: str, message: str, refine: bool = False) ->
     await _run_step(session_id, "re_synthesize", _JAVA_8_TO_11, message=message, sse_event_type="re-stream")
 
 
-async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | None = None) -> None:
+async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | None = None,
+                         announce: bool = True) -> None:
     """Runs each pattern's re_agent once. With `feedback` set (the "Refine
     with AI" flow), each pattern is asked to revise its own previous
     namespaced section rather than explore from scratch — this is what
@@ -1550,7 +1561,10 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
         tech_spec = f"{banner}\n{tech_spec}" if tech_spec else banner
 
     await _update_state(session_id, {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory})
-    await _push(session_id, "brd-ready", brd=brd, technical_spec=tech_spec, test_inventory=test_inventory)
+    # announce=False: an inventory going straight to the planner is not shown
+    # for review, and brd-ready is what opens the review screen.
+    if announce:
+        await _push(session_id, "brd-ready", brd=brd, technical_spec=tech_spec, test_inventory=test_inventory)
 
 
 async def _run_bundle_plan(session_id: str, bundle: list[str], feedback: str | None = None) -> None:
@@ -1798,16 +1812,25 @@ async def _run_workflow(session_id: str) -> None:
             state = await _get_state(session_id)
             bundle = _bundle_for(state)
 
-        # ── Step 1: Reverse Engineering -> Analysis + BRD + TechSpec + Tests ──
-        await _push(session_id, "step-change", step="reverse-engineering")
-        await _run_bundle_re(session_id, bundle)
-        await _push(session_id, "step-change", step="brd-review")
+        if any(_analysis_review(p) for p in bundle):
+            # ── Step 1: Reverse Engineering -> Analysis + BRD + TechSpec + Tests ──
+            await _push(session_id, "step-change", step="reverse-engineering")
+            await _run_bundle_re(session_id, bundle)
+            await _push(session_id, "step-change", step="brd-review")
 
-        # ── HITL: Wait for Analysis confirmation (BRD + TechSpec) ───────────
-        await _brd_gates[session_id].wait()
+            # ── HITL: Wait for Analysis confirmation (BRD + TechSpec) ───────────
+            await _brd_gates[session_id].wait()
 
-        # ── Step 2: Plan Generation ──────────────────────────────────────────
-        await _push(session_id, "step-change", step="plan-generation")
+            # ── Step 2: Plan Generation ──────────────────────────────────────────
+            await _push(session_id, "step-change", step="plan-generation")
+        else:
+            # ── Inventory patterns: dependency mapper -> planner ─────────────────
+            # The inventory is built as the planner's input and is not shown for
+            # review; the plan is the human checkpoint. The gate is closed so a
+            # late confirm/refine/context-file call is refused, not half-applied.
+            await _push(session_id, "step-change", step="plan-generation")
+            await _run_bundle_re(session_id, bundle, announce=False)
+            _brd_gates[session_id].set()
         await _run_bundle_plan(session_id, bundle)
         await _push(session_id, "step-change", step="plan-review")
 
@@ -1925,6 +1948,7 @@ async def upload_repository(
     junit_upgrade: bool = Form(False),
     springboot_upgrade: bool = Form(False),
     ux_files: list[UploadFile] | None = File(None),
+    context_files: list[UploadFile] | None = File(None),
 ):
     # Optional UX designs (JSP -> React only) — checked before any workspace is created.
     ux_uploads = [(u.filename or "design", await u.read()) for u in (ux_files or [])]
@@ -1957,6 +1981,16 @@ async def upload_repository(
                 "are left exactly as uploaded."
             ),
         )
+    # Optional context documents (Swagger, OpenAPI, design notes) for the planner.
+    # Also accepted on the analysis-review screen, but patterns without that
+    # screen can only attach them here, before the planner runs.
+    context_uploads = [(c.filename or "context", await c.read()) for c in (context_files or [])]
+    if context_uploads and pattern.value == _STACK_DISCOVERY:
+        raise HTTPException(status_code=400, detail="Stack discovery produces no plan, so context files do not apply.")
+    additional_context = "".join(
+        f"\n\n--- CONTEXT FILE: {name} ---\n{text}"
+        for name, raw_ctx in context_uploads if (text := extract_text(name, raw_ctx)).strip()
+    )
     try:
         ux_designs.validate(ux_uploads)
     except ux_designs.UxDesignError as exc:
@@ -2029,6 +2063,8 @@ async def upload_repository(
         ),
     )
     session_id = session.id
+    if additional_context:
+        await _update_state(session_id, {"additional_context": additional_context})
 
     # Set up per-session infrastructure
     _sse_queues[session_id] = asyncio.Queue()
@@ -2050,6 +2086,8 @@ async def upload_repository(
         files_found=files_found,
         files_truncated=extraction.truncated,
         ux_designs=len(ux_manifest),
+        analysis_review=_analysis_review(pattern.value),
+        context_files=additional_context.count("--- CONTEXT FILE: "),
     )
 
 
@@ -2349,6 +2387,14 @@ async def get_session(session_id: str):
         "generated_files": files,
         "changed_files": changed_files,
     }
+
+
+@app.get("/api/patterns/analysis-review")
+async def analysis_review_by_pattern():
+    """Which patterns show their analysis for review before planning. Follows
+    MIGRATION_ANALYSIS / JAVA11_ANALYSIS, so the upload page describes the run
+    this server will actually do."""
+    return {p.value: _analysis_review(p.value) for p in PatternType}
 
 
 @app.get("/health")

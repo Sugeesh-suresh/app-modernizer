@@ -50,6 +50,11 @@ class UploadResponse(BaseModel):
     files_truncated: int = 0
     # Number of UX design files attached (JSP -> React only)
     ux_designs: int = 0
+    # False when the analysis is a deterministic inventory passed straight to
+    # the planner: the run has no reverse-engineering or analysis-review step.
+    analysis_review: bool = True
+    # Context files (Swagger, OpenAPI, design docs) accepted with the upload.
+    context_files: int = 0
 
 
 class ConfirmRequest(BaseModel):

@@ -119,7 +119,16 @@ def test_each_pattern_reaches_its_own_code_step_and_completes(monkeypatch, tmp_p
     assert harness.code == [expected]
     steps = [e["step"] for e in events if e["type"] == "step-change"]
     assert steps[-1] == "complete"
-    assert {"reverse-engineering", "brd-review", "plan-generation", "plan-review", "code-generation"} <= set(steps)
+    assert {"plan-generation", "plan-review", "code-generation"} <= set(steps)
+    if pattern == "jsp-to-react-bff":
+        # An agent's analysis is reviewed by a person before planning.
+        assert {"reverse-engineering", "brd-review"} <= set(steps)
+        assert any(e["type"] == "brd-ready" for e in events)
+    else:
+        # An inventory goes from the dependency mapper straight to the planner.
+        assert "reverse-engineering" not in steps and "brd-review" not in steps
+        assert not any(e["type"] == "brd-ready" for e in events)
+        assert steps.index("plan-generation") == steps.index("dependency-graph") + 1
     assert any(e["type"] == "workflow-complete" for e in events)
     # Every code runner key the dispatch uses must exist.
     if expected[2]:
@@ -173,12 +182,16 @@ def test_migration_analysis_agent_restores_the_reverse_engineering_agent(monkeyp
     events, _ = _run(tmp_path, pattern)
     assert not [e for e in events if e["type"] == "error"], events
     assert harness.steps == [("re", pattern), ("plan", pattern)]
+    # ...and with it the human review of the agent's analysis.
+    assert "brd-review" in [e["step"] for e in events if e["type"] == "step-change"]
+    assert any(e["type"] == "brd-ready" for e in events)
+    assert main._analysis_review(pattern) is True
 
 
 @pytest.mark.parametrize("pattern", ["java-8-to-25", "solr-4-to-9", "oracle-19c-to-23ai", "tibco-ems-to-pubsub"])
-def test_inventory_reaches_the_planner_state_and_the_review_screen(monkeypatch, tmp_path, pattern):
+def test_inventory_reaches_the_planner_without_a_review_gate(monkeypatch, tmp_path, pattern):
     """What the planner is templated with ({brd}, {technical_spec},
-    {test_inventory}) is the inventory, and the brd-review gate still shows it."""
+    {test_inventory}) is the inventory, and nobody is asked to review it."""
     harness = _Harness(monkeypatch)
     seen = {}
 
@@ -195,8 +208,8 @@ def test_inventory_reaches_the_planner_state_and_the_review_screen(monkeypatch, 
     assert "## Legacy Stack Blockers" in seen["technical_spec"]
     assert seen["technical_spec"].startswith("## Dependency Graph & Migration Groups")  # still injected
     assert seen["test_inventory"].strip()
-    brd_ready = next(e for e in events if e["type"] == "brd-ready")
-    assert "## Legacy Stack Blockers" in brd_ready["technical_spec"]
+    assert not any(e["type"] == "brd-ready" for e in events)
+    assert main._brd_gates[list(main._sse_queues)[-1]].is_set()        # late review calls are refused
 
 
 def test_refine_keeps_the_reviewers_feedback_for_the_planner(monkeypatch, tmp_path):
@@ -246,3 +259,68 @@ def test_stack_discovery_still_runs_the_reverse_engineering_agents(monkeypatch, 
     assert harness.steps == [("re", p) for p in stacks]
     for p in stacks:
         assert "re" in PATTERN_RUNNERS[p]
+
+
+@pytest.mark.parametrize("pattern, review", [
+    ("java-8-to-25", False), ("solr-4-to-9", False), ("oracle-19c-to-23ai", False),
+    ("tibco-ems-to-pubsub", False), ("java-8-to-11", False),
+    ("jsp-to-react-bff", True), ("stack-discovery", True),
+])
+def test_the_server_tells_the_frontend_which_runs_have_an_analysis_review(monkeypatch, pattern, review):
+    monkeypatch.setattr(main, "_run_workflow", lambda sid: asyncio.sleep(0))
+    with TestClient(main.app) as client:
+        assert client.get("/api/patterns/analysis-review").json()[pattern] is review
+        res = client.post("/api/upload", data={"pattern": pattern},
+                          files={"file": ("repo.zip", _zip(), "application/zip")})
+    assert res.status_code == 200, res.text
+    assert res.json()["analysis_review"] is review
+
+
+def test_context_files_attached_at_upload_reach_the_planner(monkeypatch):
+    """Without a review screen, the upload is the only place to attach them."""
+    monkeypatch.setattr(main, "_run_workflow", lambda sid: asyncio.sleep(0))
+    with TestClient(main.app) as client:
+        res = client.post("/api/upload", data={"pattern": "oracle-19c-to-23ai"}, files=[
+            ("file", ("repo.zip", _zip(), "application/zip")),
+            ("context_files", ("api.yaml", b"openapi: 3.0.0\npaths: {/orders: {}}", "application/yaml")),
+        ])
+    assert res.status_code == 200, res.text
+    assert res.json()["context_files"] == 1
+    state = asyncio.run(main._get_state(res.json()["session_id"]))
+    assert "--- CONTEXT FILE: api.yaml ---" in state["additional_context"]
+    assert "/orders" in state["additional_context"]
+
+
+def test_the_planner_message_carries_the_upload_context(monkeypatch, tmp_path):
+    messages = []
+
+    async def fake_run_step(session_id, step_key, pattern, message, sse_event_type):
+        messages.append(message)
+        await main._update_state(session_id, {"plan": "# plan"})
+
+    monkeypatch.setattr(main, "_run_step", fake_run_step)
+    state = main._initial_state("solr-4-to-9", str(tmp_path), str(tmp_path), "[]", "bigbang", False, False)
+    sid = asyncio.run(session_service.create_session(app_name=APP_NAME, user_id=USER_ID, state=state)).id
+    main._sse_queues[sid] = asyncio.Queue()
+    asyncio.run(main._update_state(sid, {"additional_context": "\n\n--- CONTEXT FILE: api.yaml ---\nopenapi"}))
+    asyncio.run(main._run_bundle_plan(sid, ["solr-4-to-9"]))
+    assert "CONTEXT FILE: api.yaml" in messages[0]
+
+
+def test_stack_discovery_refuses_context_files():
+    with TestClient(main.app) as client:
+        res = client.post("/api/upload", data={"pattern": "stack-discovery"}, files=[
+            ("file", ("repo.zip", _zip(), "application/zip")),
+            ("context_files", ("api.yaml", b"openapi: 3.0.0", "application/yaml")),
+        ])
+    assert res.status_code == 400
+
+
+def test_late_review_calls_are_refused_once_the_inventory_went_to_the_planner(monkeypatch, tmp_path):
+    _Harness(monkeypatch)
+    events, _ = _run(tmp_path, "tibco-ems-to-pubsub")
+    sid = list(main._sse_queues)[-1]
+    with TestClient(main.app) as client:
+        assert client.post(f"/api/sessions/{sid}/refine-brd", json={"feedback": "x"}).status_code == 400
+        assert client.post(f"/api/sessions/{sid}/context-files",
+                           files={"files": ("a.txt", b"x", "text/plain")}).status_code == 400

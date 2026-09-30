@@ -17,7 +17,7 @@ import { PATTERNS } from './data/patterns';
 import type {
   PatternId, JavaMigrationOptions as JavaOptions, WorkflowState, WorkflowStep, SSEEvent, StageResult,
 } from './types';
-import { INVENTORY_PATTERNS, RE_ONLY_PATTERNS } from './types';
+import { RE_ONLY_PATTERNS } from './types';
 
 const INITIAL_STATE: WorkflowState = {
   sessionId: null,
@@ -31,6 +31,7 @@ const INITIAL_STATE: WorkflowState = {
   generatedFiles: [],
   generatedFilesTotal: 0,
   filesTruncated: 0,
+  analysisReview: true,
   changedFiles: [],
   streamingContent: '',
   validationContent: '',
@@ -378,11 +379,12 @@ export default function App() {
     setState((s) => ({ ...s, javaOptions: options }));
   };
 
-  const handleSessionCreated = (sessionId: string, filesTruncated = 0) => {
+  const handleSessionCreated = (sessionId: string, filesTruncated = 0, analysisReview = true) => {
     setState((s) => ({
       ...s,
       sessionId,
       filesTruncated,
+      analysisReview,
       step: 'dependency-graph',
       streamingContent: '',
       progress: 0,
@@ -453,7 +455,6 @@ export default function App() {
   const showStepIndicator = state.pattern !== null && state.step !== 'upload';
   const needsJavaOptions = state.pattern === 'java-8-to-25' && !state.javaOptions;
   const reOnly = state.pattern !== null && RE_ONLY_PATTERNS.includes(state.pattern);
-  const inventory = state.pattern !== null && INVENTORY_PATTERNS.includes(state.pattern);
 
   // The rail shows only the steps this run will actually reach: an RE-only run
   // never plans or generates, and every other run never maps stacks. A step left
@@ -462,6 +463,9 @@ export default function App() {
     ? ['plan-generation', 'plan-review', 'code-generation']
     : ['stack-mapping'];
   if (state.companionRecommendations.length === 0) skipSteps.push('companion-selection');
+  // A deterministic inventory goes from the dependency mapper straight to the
+  // planner: the server never enters these steps, so the rail does not show them.
+  if (!state.analysisReview) skipSteps.push('reverse-engineering', 'brd-review');
 
   return (
     <div className="min-h-screen">
@@ -556,7 +560,6 @@ export default function App() {
             onConfirm={handleConfirmBrd}
             onRefine={handleRefineBrd}
             reOnly={reOnly}
-            inventory={inventory}
           />
         )}
 

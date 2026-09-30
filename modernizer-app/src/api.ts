@@ -2,11 +2,20 @@ import type { PatternId, JavaMigrationOptions } from './types';
 
 const BASE = 'http://localhost:8000';
 
+/** Which patterns show their analysis for review before planning, as this
+ * server is configured (MIGRATION_ANALYSIS / JAVA11_ANALYSIS). */
+export async function fetchAnalysisReview(): Promise<Partial<Record<PatternId, boolean>>> {
+  const res = await fetch(`${BASE}/api/patterns/analysis-review`);
+  if (!res.ok) throw new Error('Failed to load analysis settings');
+  return res.json();
+}
+
 export async function uploadRepository(
   pattern: PatternId,
   file: File,
   options?: JavaMigrationOptions | null,
   uxFiles: File[] = [],
+  contextFiles: File[] = [],
 ): Promise<{
   session_id: string;
   files_found: number;
@@ -14,12 +23,18 @@ export async function uploadRepository(
    * Non-zero means every result from this session covers only part of the repo. */
   files_truncated?: number;
   ux_designs: number;
+  /** False when the analysis is a deterministic inventory passed straight to
+   * the planner: the run has no reverse-engineering or analysis-review step. */
+  analysis_review?: boolean;
+  context_files?: number;
 }> {
   const form = new FormData();
   form.append('pattern', pattern);
   form.append('file', file);
   // Optional UX designs — the backend only accepts them for the JSP → React pattern.
   for (const design of uxFiles) form.append('ux_files', design);
+  // Optional Swagger / OpenAPI / design docs for the planner.
+  for (const doc of contextFiles) form.append('context_files', doc);
   if (options) {
     form.append('migration_strategy', options.strategy);
     form.append('junit_upgrade', String(options.junitUpgrade));

@@ -1,6 +1,5 @@
 import { Check, Loader2, Clock } from 'lucide-react';
 import type { PatternId, WorkflowStep } from '../types';
-import { INVENTORY_PATTERNS } from '../types';
 
 const ALL_STEPS: { id: WorkflowStep; label: string }[] = [
   { id: 'upload', label: 'Upload' },
@@ -26,14 +25,8 @@ interface Props {
   skipSteps?: WorkflowStep[];
 }
 
-export function StepIndicator({ currentStep, pattern, progress, progressMessage, skipSteps = [] }: Props) {
-  // The analysis step keeps its id (the backend still emits it, and the rail
-  // locates the current step by id) but is named for what runs: a deterministic
-  // inventory for the migration patterns, an AI agent for the rest.
-  const inventory = pattern !== null && INVENTORY_PATTERNS.includes(pattern);
-  const STEPS = ALL_STEPS
-    .filter((s) => !skipSteps.includes(s.id))
-    .map((s) => (inventory && s.id === 'reverse-engineering' ? { ...s, label: 'Inventory' } : s));
+export function StepIndicator({ currentStep, progress, progressMessage, skipSteps = [] }: Props) {
+  const STEPS = ALL_STEPS.filter((s) => !skipSteps.includes(s.id));
   const STEP_ORDER = STEPS.map((s) => s.id);
   const currentIndex = STEP_ORDER.indexOf(currentStep);
 
