@@ -59,3 +59,14 @@ errors and their fixes.
   human decision)
 
 No file contents in the summary.
+
+Then add, after the Fix Result, a `## Lessons` block with one entry per reported error you fixed, so
+future runs of this pattern can avoid it. It is published into this pattern's modifier skill once the
+next validation confirms the error is gone. Leave out errors you did not fix, or fixed by guessing.
+
+## Lessons
+- Error: <the reported error message, copied verbatim from the report>
+  Cause: <why the earlier step produced it, in general terms>
+  Resolution: <the change that fixes it, written so it applies to any repository (no file paths,
+  no project names): e.g. "keep `javax.sql.DataSource`: `javax.sql` is Java SE and is not renamed
+  by the Jakarta migration">

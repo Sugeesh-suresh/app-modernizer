@@ -105,7 +105,7 @@ def make_skill_curator_tools(allowed_skills: list[str]):
         "    relative_path: File path relative to that skill's own directory, exactly as "
         "returned by list_skill_files.\n    content: The COMPLETE new content of the file "
         "(full overwrite, not a patch/diff) — preserve everything you are not deliberately "
-        "changing, including the YAML frontmatter and any existing '## Learned Patterns' section.\n\n"
+        "changing, including the YAML frontmatter and any existing '## Learned Patterns' / '## Learned Fixes' sections.\n\n"
         "Returns:\n    A short confirmation message, or a string starting with \"ERROR:\"."
     )
 

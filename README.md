@@ -228,7 +228,11 @@ A worked example is checked in at [`modernizer-backend/tests/fixtures/sample-pla
 
 Every agent loads its prompt and reference material at runtime from `agents/skills/<skill-name>/SKILL.md` (plus `references/*.md`) via ADK's `SkillToolset`, instead of hard-coding instructions in Python. Long migration checklists and before/after code patterns stay out of the agent-wiring code, and each pattern's domain knowledge can be edited independently.
 
-After each run, a **skill curator** agent refines that pattern's own skills from concrete evidence — a real build error, a real review finding — with write access scoped to an explicit allow-list. Validator and fixer agents also append observed error patterns to their own `SKILL.md`; that writing is `flock`-guarded, capped, and can be switched off with `MODERNIZER_SKILL_LEARNING=0` for read-only or shared checkouts.
+After each run, a **skill curator** agent refines that pattern's own skills from concrete evidence — a real build error, a real review finding — with write access scoped to an explicit allow-list. Validators also append the errors they observe to their own `SKILL.md`.
+
+**Resolved build errors are fed forward to the agent that writes the code** (`shared/learned_fixes.py`). After fixing a build error, the fixer states in a `## Lessons` block the error verbatim, its cause, and a resolution written for any repository. Only lessons about errors the validator actually reported are kept, and they stay pending until the next validation. A lesson is published only if that validation no longer reports its error, or the build passes; a fix that did not work is dropped. Verified lessons go under `## Learned Fixes` in the pattern's **modifier** skill (`<pattern>-modify`; for JSP → React, the React or BFF generator of the tree that failed) and in its fix skill. Repository paths and line numbers are removed, the newest resolution replaces an older one for the same error, and the section is capped at 25 entries. The next run's modifier reads the error, the cause and what to do before writing any code.
+
+All of this writing is `flock`-guarded, capped, and can be switched off with `MODERNIZER_SKILL_LEARNING=0` for read-only or shared checkouts.
 
 ---
 
@@ -489,7 +493,7 @@ app-modernizer/
 | `DATABASE_URL` | No | — | SQLite/Postgres URL for persistent sessions (omit for in-memory) |
 | `BUILD_LOOP_MAX_ITERATIONS` | No | `3` | Validate → fix cycles per build loop, per stage |
 | `TEST_RETRY_ATTEMPTS` | No | `3` | Validate → fix cycles for the test-validation loop |
-| `MODERNIZER_SKILL_LEARNING` | No | `1` | Set `0` to stop agents appending learned patterns to their own `SKILL.md` |
+| `MODERNIZER_SKILL_LEARNING` | No | `1` | Set `0` to stop agents writing learned patterns and verified learned fixes into the `SKILL.md` files |
 | `COMMAND_TIMEOUT_SECONDS` | No | `1800` | Wall clock for one build/compile command. Raise for a big reactor build |
 | `WORKSPACE_MAX_FILES` | No | `60000` | Files one upload may unpack. Exceeding it is **reported, never silent** |
 | `WORKSPACE_MAX_TOTAL_BYTES` | No | `2000000000` | Bytes one upload may unpack, same guarantee |

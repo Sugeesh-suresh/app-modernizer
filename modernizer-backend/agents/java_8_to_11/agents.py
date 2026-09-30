@@ -36,6 +36,9 @@ from .. import config
 from ..shared.model_config import make_model
 from ..shared import skill_manifest
 from ..shared.callbacks import make_skill_update_callback
+from ..shared.learned_fixes import (
+    jsp_targets, make_lesson_capture_callback, make_lesson_verify_callback, skill_targets,
+)
 from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
 from . import tools as fs_tools
@@ -244,11 +247,15 @@ validator_agent = LlmAgent(
     ],
     output_key="build_result",
     include_contents="none",
-    after_agent_callback=make_skill_update_callback(
-        validation_key="build_result",
-        skill_md_path=_SKILLS_DIR / "java-8-to-11-validate" / "SKILL.md",
-        section_header="Validation Pass",
-    ),
+    after_agent_callback=[
+        # A verified resolution from the previous fix pass goes to the modifier's skill.
+        make_lesson_verify_callback("build_result", "pending_lessons", skill_targets(_SKILLS_DIR, "java-8-to-11-modify", "java-8-to-11-fix"), "java-8-to-11"),
+        make_skill_update_callback(
+            validation_key="build_result",
+            skill_md_path=_SKILLS_DIR / "java-8-to-11-validate" / "SKILL.md",
+            section_header="Validation Pass",
+        ),
+    ],
 )
 
 fixer_agent = LlmAgent(
@@ -263,11 +270,9 @@ fixer_agent = LlmAgent(
     tools=[_skill("java-8-to-11-fix"), *_writing_tools()],
     output_key="fix_result",
     include_contents="none",
-    after_agent_callback=make_skill_update_callback(
-        validation_key="build_result",
-        skill_md_path=_SKILLS_DIR / "java-8-to-11-fix" / "SKILL.md",
-        section_header="Fix Pass",
-    ),
+    # The fixer states each resolution (its `## Lessons` block); it is published only
+    # once the next validation shows the error gone (see shared/learned_fixes.py).
+    after_agent_callback=make_lesson_capture_callback("fix_result", "build_result", "pending_lessons"),
 )
 
 build_loop = LoopAgent(

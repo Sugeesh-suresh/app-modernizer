@@ -27,7 +27,8 @@ Not evidence — do not act on these:
 4. Call `read_skill_file` on that file. Make the SMALLEST edit that fixes the concrete gap:
    - Prefer adding one row to an existing checklist/table, one bullet to an existing list, or one short paragraph — over rewriting whole sections.
    - Preserve the file's existing structure, tone, and frontmatter (`name`/`description`) exactly unless the frontmatter itself is now inaccurate.
-   - Preserve any existing `## Learned Patterns` section verbatim (that's written by a different, automatic mechanism after every build/fix pass) — add your own note in a clearly-separated location if relevant, never inside that section.
+   - Preserve any existing `## Learned Patterns` and `## Learned Fixes` sections verbatim (they are written by automatic mechanisms after build/fix passes — `## Learned Fixes` holds verified error → resolution entries) — add your own note in a clearly-separated location if relevant, never inside those sections.
+   - When a fix you are recording resolved an error, write the resolution, not only the symptom: a future run needs to know what to do, not just what went wrong. Put it in the skill of the agent that should have avoided the error (usually the `-modify` / `-generate` skill).
    - Never delete existing guidance unless it is now demonstrably wrong — curating means refining, not pruning.
 5. Call `write_skill_file` with the complete new file content (full overwrite — include everything you're not changing, unmodified).
 6. Re-read what you wrote makes sense as standalone instructions for a future run that has no memory of this one — a skill file must stand on its own; do not write anything that only makes sense with this run's specific context in hand.
