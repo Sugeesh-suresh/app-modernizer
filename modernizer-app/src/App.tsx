@@ -17,7 +17,7 @@ import { PATTERNS } from './data/patterns';
 import type {
   PatternId, JavaMigrationOptions as JavaOptions, WorkflowState, WorkflowStep, SSEEvent, StageResult,
 } from './types';
-import { RE_ONLY_PATTERNS } from './types';
+import { INVENTORY_PATTERNS, RE_ONLY_PATTERNS } from './types';
 
 const INITIAL_STATE: WorkflowState = {
   sessionId: null,
@@ -453,6 +453,7 @@ export default function App() {
   const showStepIndicator = state.pattern !== null && state.step !== 'upload';
   const needsJavaOptions = state.pattern === 'java-8-to-25' && !state.javaOptions;
   const reOnly = state.pattern !== null && RE_ONLY_PATTERNS.includes(state.pattern);
+  const inventory = state.pattern !== null && INVENTORY_PATTERNS.includes(state.pattern);
 
   // The rail shows only the steps this run will actually reach: an RE-only run
   // never plans or generates, and every other run never maps stacks. A step left
@@ -555,6 +556,7 @@ export default function App() {
             onConfirm={handleConfirmBrd}
             onRefine={handleRefineBrd}
             reOnly={reOnly}
+            inventory={inventory}
           />
         )}
 

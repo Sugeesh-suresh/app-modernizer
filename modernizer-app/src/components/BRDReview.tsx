@@ -104,13 +104,17 @@ interface Props {
    * rather than advancing to plan generation, so the button must not promise a
    * plan that will never be generated. */
   reOnly?: boolean;
+  /** The analysis is a deterministic inventory, not an agent's document. It is
+   * a function of the code, so there is nothing to "refine": feedback travels
+   * to the planner with Confirm (confirm-brd appends it to the BRD). */
+  inventory?: boolean;
 }
 
 type ActiveTab = 'brd' | 'techspec' | 'tests';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refining, refiningContent, onConfirm, onRefine, reOnly = false }: Props) {
+export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refining, refiningContent, onConfirm, onRefine, reOnly = false, inventory = false }: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('brd');
   // Reset the editable drafts whenever freshly (re)generated content arrives —
   // adjusting state during render per https://react.dev/learn/you-might-not-need-an-effect
@@ -180,8 +184,9 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
         <div>
           <h2 className="text-xl font-bold text-slate-900">Analysis Review</h2>
           <p className="text-sm text-slate-600 mt-0.5">
-            Review and edit the AI-generated BRD and Technical Specification. Upload additional context files
-            (Swagger, OpenAPI, design diagrams) to enrich the migration plan.
+            {inventory
+              ? 'Review and edit the migration inventory — every file was scanned against this migration\'s checklist, no AI. The planner builds the plan from the Technical Specification. Upload additional context files (Swagger, OpenAPI, design diagrams) to enrich it.'
+              : 'Review and edit the AI-generated BRD and Technical Specification. Upload additional context files (Swagger, OpenAPI, design diagrams) to enrich the migration plan.'}
           </p>
         </div>
       </div>
@@ -195,7 +200,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
           }`}
         >
           <FileText size={14} />
-          Business Requirements Document
+          {inventory ? 'Scope' : 'Business Requirements Document'}
         </button>
         <button
           onClick={() => setActiveTab('techspec')}
@@ -382,11 +387,15 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
       {/* Feedback */}
       {showFeedback ? (
         <div className="mb-4">
-          <label className="text-sm font-medium text-slate-700 mb-2 block">Feedback / Change Requests (optional)</label>
+          <label className="text-sm font-medium text-slate-700 mb-2 block">
+            {inventory ? 'Notes for the planner (optional)' : 'Feedback / Change Requests (optional)'}
+          </label>
           <textarea
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
-            placeholder="e.g. 'Add GDPR compliance section to BRD' or 'Update the dependency graph to include the auth service'"
+            placeholder={inventory
+              ? "e.g. 'Leave the reporting module on Ehcache 2 for now' or 'The audit queue must keep strict ordering'"
+              : "e.g. 'Add GDPR compliance section to BRD' or 'Update the dependency graph to include the auth service'"}
             rows={3}
             className="w-full glass border border-slate-900/10 rounded-xl px-4 py-3 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:border-red-500 resize-none"
           />
@@ -395,7 +404,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
         <button onClick={() => setShowFeedback(true)}
           className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 mb-4 transition-colors">
           <MessageSquare size={15} />
-          Add feedback or change requests
+          {inventory ? 'Add notes for the planner' : 'Add feedback or change requests'}
         </button>
       )}
 
@@ -433,6 +442,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
               ? 'Confirm & Finish'
               : 'Confirm Analysis & Generate Plan'}
         </button>
+        {!inventory && (
         <button
           onClick={handleRefine}
           disabled={confirming || refining || anyUploading || !feedback.trim()}
@@ -442,10 +452,13 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
           {refining ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
           {refining ? 'Refining…' : reOnly ? 'Refine Analysis' : 'Refine with Planner'}
         </button>
+        )}
         <p className="text-xs text-slate-500">
           {anyUploading
             ? 'Waiting for file uploads to finish…'
-            : reOnly
+            : inventory
+              ? 'Confirm sends the inventory, your edits and your notes to the planner.'
+              : reOnly
               ? 'Refine re-runs the analysis with your feedback; Confirm finishes the run — this pattern produces no plan or code.'
               : 'Refine re-runs the planner with your feedback; Confirm advances to plan generation.'}
         </p>

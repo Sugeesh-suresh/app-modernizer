@@ -305,7 +305,9 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
                   : INVENTORY_PATTERNS.includes(pattern)
                     ? 'Every file is scanned against this migration\'s checklist — versions, affected files & lines, tests — no AI tokens'
                     : 'AI reverse-engineers your codebase — BRD, tech spec & test inventory',
-                'You review, edit, or ask the planner to refine the BRD and plan',
+                INVENTORY_PATTERNS.includes(pattern)
+                  ? 'You review and edit the inventory, then review, edit, or refine the plan'
+                  : 'You review, edit, or ask the planner to refine the BRD and plan',
                 'Migration agents apply the plan, then build/fix in a loop until it compiles',
               ]
           ).map((s, i) => (
