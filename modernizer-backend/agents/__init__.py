@@ -32,9 +32,11 @@ agents/java_8_to_25/agents.py's INCREMENTAL_STAGES and main.py's
 _run_java8_incremental_code_step for the orchestration).
 """
 import os
+from google.adk.apps import App
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 
+from .shared.unknown_tool_guard import UnknownToolGuard
 from .java_8_to_25.agents import (
     re_agent as j8_re,
     planner_agent as j8_plan,
@@ -80,8 +82,17 @@ else:
     session_service = InMemorySessionService()
 
 
+# One guard for every runner: a model calling a tool this app never declared
+# (e.g. `google:python_interpreter`) gets an error it can recover from instead
+# of ending the run -- see agents/shared/unknown_tool_guard.py.
+UNKNOWN_TOOL_GUARD = UnknownToolGuard()
+
+
 def _runner(agent) -> Runner:
-    return Runner(app_name=APP_NAME, agent=agent, session_service=session_service)
+    return Runner(
+        app=App(name=APP_NAME, root_agent=agent, plugins=[UNKNOWN_TOOL_GUARD]),
+        session_service=session_service,
+    )
 
 
 PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
