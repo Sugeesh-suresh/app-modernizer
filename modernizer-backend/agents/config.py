@@ -22,6 +22,19 @@ def _int(key: str, default: int) -> int:
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 # ---------------------------------------------------------------------------
+# Model call retries (429 quota / rate limits, 408, 5xx, timeouts)
+# ---------------------------------------------------------------------------
+
+# With no retry options the Google GenAI SDK makes exactly one attempt, so the
+# first 429 RESOURCE_EXHAUSTED ended the run. These drive the SDK's own retry
+# (exponential backoff with jitter). Defaults are sized for per-minute quotas:
+# 8 attempts waiting ~2, 4, 8, 16, 32, 60, 60 s — about three minutes in all
+# before a call is given up. Set LLM_RETRY_ATTEMPTS=1 to disable.
+LLM_RETRY_ATTEMPTS: int = _int("LLM_RETRY_ATTEMPTS", 8)
+LLM_RETRY_INITIAL_DELAY: float = float(os.getenv("LLM_RETRY_INITIAL_DELAY", "2") or 2)
+LLM_RETRY_MAX_DELAY: float = float(os.getenv("LLM_RETRY_MAX_DELAY", "60") or 60)
+
+# ---------------------------------------------------------------------------
 # Test validation retry loop
 # ---------------------------------------------------------------------------
 

@@ -30,7 +30,6 @@ comes from.
 target platform, so it is registered with an `re` runner and nothing else — see
 stack_detector.EXTRACTION_ONLY_PATTERNS.
 """
-import os
 import pathlib
 
 from google.adk.agents import LlmAgent
@@ -38,9 +37,10 @@ from google.adk.skills import load_skill_from_dir
 from google.adk.tools import FunctionTool
 from google.adk.tools.skill_toolset import SkillToolset
 
+from ..shared.model_config import make_model
 from . import tools as fs_tools
 
-_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+_MODEL = make_model()
 _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
 
 

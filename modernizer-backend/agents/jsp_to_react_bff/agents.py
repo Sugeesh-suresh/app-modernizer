@@ -36,7 +36,6 @@ description for the reuse boundary):
   spring-boot-bff-generate -- generic (any Spring Boot BFF target): JAR-packaged BFF generation
   jsp-to-react-bff-validate/-fix/-report -- this-pipeline-specific: dual-tree build loop
 """
-import os
 import pathlib
 
 from google.adk.agents import LlmAgent, LoopAgent, SequentialAgent
@@ -45,6 +44,7 @@ from google.adk.tools import FunctionTool
 from google.adk.tools.skill_toolset import SkillToolset
 
 from .. import config
+from ..shared.model_config import make_model
 from ..shared.callbacks import make_skill_update_callback
 from ..shared import skill_manifest
 from ..shared.plan_contract import make_plan_contract_callback
@@ -52,7 +52,7 @@ from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_cura
 from ..shared.ux_designs import make_ux_design_callback
 from . import tools as fs_tools
 
-_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+_MODEL = make_model()
 _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
 
 

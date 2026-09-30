@@ -31,6 +31,17 @@ for _warning in LLM_AUTH.warnings:
 if LLM_AUTH.error:
     print(f"[startup] ERROR: {LLM_AUTH.error} Uploads are refused until this is fixed.", flush=True)
 
+# The SDK logs each retry (429 quota, 5xx) at INFO, which uvicorn's logging
+# setup never shows, so a run waiting out a quota looked hung. Surface them.
+import logging  # noqa: E402
+
+_retry_log = logging.getLogger("google_genai._api_client")
+_retry_log.setLevel(logging.INFO)
+if not _retry_log.handlers:
+    _retry_handler = logging.StreamHandler()
+    _retry_handler.setFormatter(logging.Formatter("[llm] %(message)s"))
+    _retry_log.addHandler(_retry_handler)
+
 from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, config, session_service
 from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
@@ -1539,6 +1550,20 @@ async def _run_stack_discovery_workflow(session_id: str) -> None:
     await _push(session_id, "workflow-complete")
 
 
+def _describe_error(exc: Exception) -> str:
+    """The message the UI shows for a failed run. A 429 that outlasted every
+    retry gets an explanation of what to change, not just the raw API error."""
+    if getattr(exc, "code", None) == 429:
+        return (
+            "The model quota was still exhausted (429 RESOURCE_EXHAUSTED) after "
+            f"{config.LLM_RETRY_ATTEMPTS} attempts with backoff of up to {config.LLM_RETRY_MAX_DELAY:.0f}s. "
+            "Wait for the quota window to reset and retry, raise the quota for this model (Vertex AI / "
+            "Gemini API quotas page), avoid running several uploads at once, or raise LLM_RETRY_ATTEMPTS / "
+            f"LLM_RETRY_MAX_DELAY in .env. Details: {exc}"
+        )
+    return str(exc)
+
+
 async def _run_workflow(session_id: str) -> None:
     try:
         state = await _get_state(session_id)
@@ -1650,7 +1675,7 @@ async def _run_workflow(session_id: str) -> None:
 
     except Exception as exc:
         traceback.print_exc()  # the UI only receives str(exc); keep the full traceback in the server log
-        await _push(session_id, "error", message=str(exc))
+        await _push(session_id, "error", message=_describe_error(exc))
         try:
             state = await _get_state(session_id)
             for key in ("workspace_dir", "baseline_dir"):

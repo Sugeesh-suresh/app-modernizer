@@ -10,7 +10,6 @@ Skills (Pattern 2 -- file-based):
   Each agent loads its instructions and reference material from
   agents/skills/<skill-name>/ at runtime via SkillToolset.
 """
-import os
 import pathlib
 
 from google.adk.agents import LlmAgent, LoopAgent, SequentialAgent
@@ -19,13 +18,14 @@ from google.adk.tools import FunctionTool
 from google.adk.tools.skill_toolset import SkillToolset
 
 from .. import config
+from ..shared.model_config import make_model
 from ..shared.callbacks import make_skill_update_callback
 from ..shared import skill_manifest
 from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
 from . import tools as fs_tools
 
-_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+_MODEL = make_model()
 _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
 
 

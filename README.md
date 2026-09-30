@@ -481,6 +481,9 @@ app-modernizer/
 | `WORKSPACE_MAX_TOTAL_BYTES` | No | `2000000000` | Bytes one upload may unpack, same guarantee |
 | `LIST_FILES_MAX_PATHS` | No | `2000` | Paths per `list_files` page |
 | `READ_FILE_MAX_CHARS` | No | `20000` | Characters per `read_file` window |
+| `LLM_RETRY_ATTEMPTS` | No | `8` | Attempts per model call on 429 / 408 / 5xx, with exponential backoff. `1` disables retries |
+| `LLM_RETRY_INITIAL_DELAY` | No | `2` | Seconds before the first retry |
+| `LLM_RETRY_MAX_DELAY` | No | `60` | Longest wait between retries, in seconds |
 | `SEARCH_MAX_RESULTS` | No | `200` | Matches per `search_files` page (the total is always reported) |
 | `SEARCH_MAX_FILE_BYTES` | No | `2000000` | Files larger than this are skipped by `search_files`, and counted as skipped |
 | `COMMAND_OUTPUT_MAX_CHARS` | No | `40000` | Characters of build output returned (head + tail) |

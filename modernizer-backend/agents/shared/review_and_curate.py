@@ -51,7 +51,7 @@ def _load_skill(name: str) -> SkillToolset:
     return SkillToolset(skills=[load_skill_from_dir(_SKILLS_DIR / name)])
 
 
-def make_code_reviewer_agent(model: str, list_files_tool, read_file_tool, context_instruction: str) -> LlmAgent:
+def make_code_reviewer_agent(model, list_files_tool, read_file_tool, context_instruction: str) -> LlmAgent:
     """*context_instruction* supplies the pattern-specific `{...}` template
     block (which session-state keys hold the confirmed plan and final
     build result for this pattern/strategy) — the boilerplate framing is
@@ -91,7 +91,7 @@ def make_code_reviewer_agent(model: str, list_files_tool, read_file_tool, contex
     )
 
 
-def make_skill_curator_agent(model: str, allowed_skills: list[str], context_instruction: str) -> LlmAgent:
+def make_skill_curator_agent(model, allowed_skills: list[str], context_instruction: str) -> LlmAgent:
     """*context_instruction* supplies the pattern-specific `{...}` template
     block referencing this run's plan/generation/build/review results."""
     list_skill_files, read_skill_file, write_skill_file = make_skill_curator_tools(allowed_skills)
