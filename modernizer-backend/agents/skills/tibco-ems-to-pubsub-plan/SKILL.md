@@ -7,6 +7,16 @@ You are a messaging migration expert. Create a detailed `plan.md` for migrating 
 
 Load `references/pubsub-migration-checklist.md` for the full destination/API/semantics mapping.
 
+**When the specification is a deterministic inventory** (its sections say "no language model read this repository"), every relevant file was scanned once against this migration's legacy checklist, and it is your only evidence about the code:
+- The File Change Manifest is built from its **Legacy Stack Blockers** table — one row per file per finding, every path real, lines given — plus the build files named under **Repo Facts**. Merge a file's rows into one manifest row. A row may be a comment rather than a use; plan it anyway and say so — the executor reads the file before changing it.
+- Current versions come from **Repo Facts** (resolved through in-repo parents); `(unresolved)` means unknown — say so, never guess.
+- Sample Transformations: use the **First match** column as the "before" line, and say the snippet is one line where that is all you have.
+- If a table says rows were not listed (INVENTORY_MAX_ROWS), plan by the **Directory Rollup** for the rest, name the directories under Coverage Gaps, and never invent paths.
+- The BRD section states scope only; it does not infer business intent. Where the plan needs intent, it is an Open Question, not an assumption.
+- **Destination → Topic/Subscription Mapping:** there is no ready-made mapping table — build it from **Destinations, Producers & Consumers**: one row per distinct destination (queue → one topic + one subscription; topic → one topic + one subscription per durable subscriber / consumer file), naming each Pub/Sub topic and subscription after the EMS destination. Mark every name you chose as a proposal in the Confidence Register.
+- Selectors, acknowledgement modes and EMS URLs come from the tables of the same names there, verbatim. A destination found only in a properties file is a configuration value to change, not a second destination.
+- Behaviour Inventory: its **Behaviour Inventory** table plus the Producers and consumers table.
+
 # Migration Plan: TIBCO EMS → Google Cloud Pub/Sub
 
 ## Overview

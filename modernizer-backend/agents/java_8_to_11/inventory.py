@@ -16,13 +16,14 @@ use or a comment. The document says so, and the planner and modifier (which
 read the files they change) make those calls.
 """
 import re
-import xml.etree.ElementTree as ET
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from ..shared import scope_fence
+from ..shared.pom_facts import below as _below, parse_pom as _parse_pom, resolver as _resolver
 from ..shared.dependency_graph import EXCLUDED_DIRS
+from ..shared.evidence import sample as _sample
 
 PATTERN = "java-8-to-11"
 _TEXT_SUFFIXES = {".java", ".jsp", ".jspf", ".jspx", ".tag", ".tagx", ".xml", ".properties", ".gradle", ".kts"}
@@ -140,117 +141,6 @@ LIBRARY_PRESENT = [
 # ---------------------------------------------------------------------------
 # POM facts
 # ---------------------------------------------------------------------------
-
-def _local(tag: str) -> str:
-    return tag.rsplit("}", 1)[-1]
-
-
-def _child(el, name):
-    return next((c for c in el if _local(c.tag) == name), None)
-
-
-def _text(el, name) -> str:
-    c = _child(el, name) if el is not None else None
-    return (c.text or "").strip() if c is not None and c.text else ""
-
-
-def _version_key(v: str) -> tuple:
-    nums = re.findall(r"\d+", v or "")
-    return tuple(int(n) for n in nums[:4]) if nums else ()
-
-
-def _below(version: str, floor: str) -> bool | None:
-    """True/False, or None when the version is unknown or unresolved."""
-    if not version or "${" in version:
-        return None
-    a, b = _version_key(version), _version_key(floor)
-    return a < b if a else None
-
-
-@dataclass
-class Pom:
-    path: str
-    artifact: str
-    group: str
-    packaging: str
-    parent: str
-    final_name: str
-    properties: dict = field(default_factory=dict)
-    plugins: list = field(default_factory=list)       # (group, artifact, version, block text)
-    dependencies: list = field(default_factory=list)  # (group, artifact, version, scope, managed)
-    levels: list = field(default_factory=list)        # (setting, level)
-    raw: str = ""
-
-
-def _parse_pom(root: Path, rel: str) -> Pom | None:
-    path = root / rel
-    try:
-        raw = path.read_text(encoding="utf-8", errors="replace")
-        el = ET.fromstring(raw)
-    except Exception:
-        return None
-    parent = _child(el, "parent")
-    build = _child(el, "build")
-    pom = Pom(
-        path=rel, artifact=_text(el, "artifactId"),
-        group=_text(el, "groupId") or _text(parent, "groupId"),
-        packaging=_text(el, "packaging") or "jar", parent=_text(parent, "artifactId"),
-        final_name=_text(build, "finalName"), raw=raw,
-    )
-    props = _child(el, "properties")
-    if props is not None:
-        pom.properties = {_local(p.tag): (p.text or "").strip() for p in props}
-    for node in el.iter():
-        tag = _local(node.tag)
-        if tag == "plugin":
-            pom.plugins.append((_text(node, "groupId") or "org.apache.maven.plugins", _text(node, "artifactId"),
-                                _text(node, "version"), ET.tostring(node, encoding="unicode")))
-    for section, managed in (("dependencies", False), ("dependencyManagement", True)):
-        container = _child(el, section)
-        if container is None:
-            continue
-        deps = _child(container, "dependencies") if managed else container
-        for d in (deps if deps is not None else []):
-            if _local(d.tag) == "dependency":
-                pom.dependencies.append((_text(d, "groupId"), _text(d, "artifactId"), _text(d, "version"),
-                                         _text(d, "scope") or ("" if managed else "compile"), managed))
-    pom.levels = scope_fence.declared_java_levels(rel, raw)
-    return pom
-
-
-def _resolver(poms: dict[str, Pom]):
-    """Resolve `${property}` through a POM and its in-repo parents."""
-    by_artifact = {p.artifact: p for p in poms.values()}
-
-    def chain(pom: Pom):
-        seen = set()
-        while pom and pom.artifact not in seen:
-            seen.add(pom.artifact)
-            yield pom
-            pom = by_artifact.get(pom.parent)
-
-    def resolve(pom: Pom, value: str, depth: int = 0) -> str:
-        if not value or "${" not in value or depth > 5:
-            return value
-        def repl(m):
-            key = m.group(1)
-            if key in ("project.version", "version"):
-                return m.group(0)
-            for p in chain(pom):
-                if key in p.properties:
-                    return p.properties[key]
-            return m.group(0)
-        return resolve(pom, re.sub(r"\$\{([^}]+)\}", repl, value), depth + 1)
-
-    def managed_version(pom: Pom, group: str, artifact: str) -> str:
-        for p in chain(pom):
-            for g, a, v, _, managed in p.dependencies:
-                if managed and a == artifact and (not group or g == group) and v:
-                    return resolve(p, v)
-        return ""
-
-    return resolve, managed_version
-
 
 # ---------------------------------------------------------------------------
 # The scan
@@ -405,7 +295,7 @@ def build(workspace_dir: str) -> Inventory:
             for cat in CATEGORIES:
                 hit_lines = [i for i, line in enumerate(lines, 1) if cat.regex.search(line)]
                 if hit_lines:
-                    target[cat.name].append((rel, hit_lines, lines[hit_lines[0] - 1].strip()[:160]))
+                    target[cat.name].append((rel, hit_lines, _sample(lines[hit_lines[0] - 1])))
 
         if suffix == ".java" and not is_test:
             for kind, rx in ENDPOINTS:
@@ -436,7 +326,7 @@ def _blocker_tables(inv, change, risk, max_rows) -> list[str]:
     for c in change:
         for f, lines, sample in inv.blockers.get(c.name, []):
             shown = ", ".join(map(str, lines[:8])) + (" …" if len(lines) > 8 else "")
-            rows.append(f"| `{f}` | {shown} | {c.name} | `{sample.replace('|', '/')}` | {c.fix} |")
+            rows.append(f"| `{f}` | {shown} | {c.name} | `{sample}` | {c.fix} |")
     out += _clip(rows, max_rows, "blocker rows") or ["| — | — | none found | — | — |"]
     out += ["", "## Behavioural Risks (review; no change required by Java 11)", "",
             "| Category | Files | Examples | Note |", "|---|---|---|---|"]

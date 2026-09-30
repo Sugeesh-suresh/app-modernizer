@@ -1,5 +1,6 @@
 import { Brain, FileText, GitBranch, Code2, ShieldCheck, Wrench, CheckCircle2, Network, Search, Sparkles, Circle, Loader2 } from 'lucide-react';
 import type { PatternId, WorkflowStep, CodeSubStep, ValidationResult, StageResult, TaskProgress } from '../types';
+import { INVENTORY_PATTERNS } from '../types';
 import { phasesForRun } from '../data/incrementalStages';
 
 const SUB_STEP_BADGE: Partial<Record<CodeSubStep, { icon: React.ReactNode; label: string; color: string }>> = {
@@ -96,7 +97,11 @@ export function ProcessingView({
   currentTask,
   springbootUpgrade,
 }: Props) {
-  const config = STEP_CONFIG[step] ?? STEP_CONFIG['reverse-engineering'];
+  const base = STEP_CONFIG[step] ?? STEP_CONFIG['reverse-engineering'];
+  // These patterns analyse with a deterministic scan, not an AI agent.
+  const config = step === 'reverse-engineering' && pattern && INVENTORY_PATTERNS.includes(pattern)
+    ? { ...base, title: 'Building the Migration Inventory', subtitle: 'Scanning every file against this migration\'s checklist — no AI tokens…' }
+    : base;
   const isCodeStep = step === 'code-generation';
   const isIncrementalJava = pattern === 'java-8-to-25' && currentStage > 0;
   const showBuildLoopPanel = isCodeStep && !isIncrementalJava;

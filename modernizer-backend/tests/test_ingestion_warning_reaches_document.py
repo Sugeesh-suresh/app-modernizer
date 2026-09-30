@@ -29,6 +29,8 @@ _RE_OUTPUT = (
 
 @pytest.fixture
 def stub_re(monkeypatch):
+    # These pin the agent path; the inventory path has its own test below.
+    monkeypatch.setattr(config, "MIGRATION_ANALYSIS", "agent")
     async def fake_run_step(session_id, step_key, pattern, message, sse_event_type):
         await main._update_state(session_id, {"analysis": _RE_OUTPUT})
 
@@ -103,6 +105,22 @@ class TestWarningReachesTheDocument:
         state = asyncio.run(main._get_state(sid))
         assert "Incomplete repository" not in state["brd"]
         assert state["brd"].strip() == "the brd body"
+
+    def test_banner_leads_the_inventory_document_too(self, monkeypatch, tmp_path):
+        """java-8-to-25 analyses with the deterministic inventory by default; an
+        inventory of a partial upload is just as partial."""
+        monkeypatch.setattr(config, "MIGRATION_ANALYSIS", "inventory")
+        state = main._initial_state("java-8-to-25", str(tmp_path), str(tmp_path), "[]", "bigbang", False, False,
+                                    ingestion_warning="**3 of 10 files were not unpacked**.")
+        sid = asyncio.run(session_service.create_session(app_name=APP_NAME, user_id=USER_ID, state=state)).id
+        main._sse_queues[sid] = asyncio.Queue()
+
+        asyncio.run(main._run_bundle_re(sid, ["java-8-to-25"]))
+
+        state = asyncio.run(main._get_state(sid))
+        for key in ("brd", "technical_spec"):
+            assert state[key].lstrip().startswith("> ⚠️ **Incomplete repository.**"), key
+        assert "no language model read this repository" in state["brd"]
 
     def test_a_truncated_upload_populates_the_state_key(self, tmp_path, monkeypatch):
         """Closes the loop from the extraction itself, not a hand-written string."""

@@ -64,7 +64,7 @@ export function PatternSelection({ onSelect }: Props) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
           {[
             { step: '01', label: 'Upload Repo', desc: 'Upload your project as a ZIP file' },
-            { step: '02', label: 'Reverse Engineer', desc: 'AI analyses architecture & business logic' },
+            { step: '02', label: 'Analyse', desc: 'Deterministic migration inventory (JSP → React: AI reverse engineering)' },
             { step: '03', label: 'Review BRD & Plan', desc: 'Confirm requirements and migration plan' },
             { step: '04', label: 'Generate Code', desc: 'AI produces the fully migrated codebase' },
           ].map((item, i) => (

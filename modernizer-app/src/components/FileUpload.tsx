@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Upload, FolderOpen, FileCode2, X, ArrowLeft, Loader2, Palette, FileText, ImagePlus } from 'lucide-react';
 import type { PatternId, JavaMigrationOptions } from '../types';
-import { RE_ONLY_PATTERNS } from '../types';
+import { INVENTORY_PATTERNS, RE_ONLY_PATTERNS } from '../types';
 import { PATTERNS } from '../data/patterns';
 import { uploadRepository } from '../api';
 
@@ -302,7 +302,9 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
                 'A deterministic scan builds a dependency graph & migration groups',
                 pattern === 'java-8-to-11'
                   ? 'Every file is scanned for Java 11 blockers, build facts & frozen JSP/WildFly files — no AI tokens'
-                  : 'AI reverse-engineers your codebase — BRD, tech spec & test inventory',
+                  : INVENTORY_PATTERNS.includes(pattern)
+                    ? 'Every file is scanned against this migration\'s checklist — versions, affected files & lines, tests — no AI tokens'
+                    : 'AI reverse-engineers your codebase — BRD, tech spec & test inventory',
                 'You review, edit, or ask the planner to refine the BRD and plan',
                 'Migration agents apply the plan, then build/fix in a loop until it compiles',
               ]

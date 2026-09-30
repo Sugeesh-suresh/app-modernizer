@@ -46,6 +46,7 @@ if not _retry_log.handlers:
 from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, config, session_service
 from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11 import inventory as java11_inventory
+from agents.shared import migration_inventory
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, diffing, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -1268,6 +1269,52 @@ def _batch_by_size(items: list[str], budget: int) -> list[list[str]]:
     return batches
 
 
+def _with_reviewer_notes(document: str, feedback: str | None) -> str:
+    """An inventory is a function of the code, so "Refine with AI" cannot reword
+    it: the reviewer's feedback is kept as Reviewer Notes at the top of the
+    scope (BRD) section, which the planner reads."""
+    if not feedback:
+        return document
+    return document.replace(
+        "<!-- SECTION: BRD -->\n",
+        "<!-- SECTION: BRD -->\n\n## Reviewer Notes\n\n" + feedback.strip() + "\n\n"
+        "_Carried to the planner as written. The inventory itself is regenerated from the code; "
+        "to change its content, edit the document before confirming._\n",
+        1,
+    )
+
+
+def _uses_inventory(pattern: str, discovery: bool) -> bool:
+    """Whether `pattern`'s analysis is the deterministic inventory rather than
+    its reverse-engineering agent. Stack discovery always runs the agents — its
+    output is a description of each stack, not a migration checklist — and so
+    does JSP -> React + BFF, which has no inventory."""
+    return (not discovery and pattern in migration_inventory.INVENTORY_PATTERNS
+            and config.MIGRATION_ANALYSIS != "agent")
+
+
+async def _run_migration_inventory(session_id: str, pattern: str, feedback: str | None = None) -> None:
+    """Analysis for java-8-to-25 / solr-4-to-9 / oracle-19c-to-23ai /
+    tibco-ems-to-pubsub without a model (agents/shared/migration_inventory.py),
+    written to state["analysis"] in the four-section format their
+    reverse-engineering agents produce, so the review, the planner and the
+    code steps are unchanged."""
+    state = await _get_state(session_id)
+    workspace_dir = state.get("workspace_dir", "")
+    await _push(session_id, "progress", message=f"Scanning the repository for the {_label(pattern)} inventory",
+                progress=10)
+    started = time.monotonic()
+    document = await asyncio.to_thread(
+        migration_inventory.to_document, pattern, workspace_dir, config.INVENTORY_MAX_ROWS)
+    document = _with_reviewer_notes(document, feedback)
+    elapsed = time.monotonic() - started
+    print(f"[inventory] {pattern} in {elapsed:.1f}s", flush=True)
+    await _push(session_id, "re-stream", content=(
+        f"**{_label(pattern)} inventory** — generated in {elapsed:.1f}s without a language model.\n"
+    ))
+    await _update_state(session_id, {"analysis": document})
+
+
 async def _run_java11_inventory(session_id: str, feedback: str | None = None) -> None:
     """java-8-to-11 analysis without a model: the deterministic Java 11 inventory
     (agents/java_8_to_11/inventory.py), written to state["analysis"] in the same
@@ -1284,14 +1331,7 @@ async def _run_java11_inventory(session_id: str, feedback: str | None = None) ->
     started = time.monotonic()
     inventory = await asyncio.to_thread(java11_inventory.build, workspace_dir)
     document = java11_inventory.to_document(inventory, max_rows=config.INVENTORY_MAX_ROWS)
-    if feedback:
-        document = document.replace(
-            "<!-- SECTION: BRD -->\n",
-            "<!-- SECTION: BRD -->\n\n## Reviewer Notes\n\n" + feedback.strip() + "\n\n"
-            "_Carried to the planner as written. The inventory itself is regenerated from the code; "
-            "to change its content, edit the document before confirming._\n",
-            1,
-        )
+    document = _with_reviewer_notes(document, feedback)
     elapsed = time.monotonic() - started
     print(f"[inventory] {inventory.files_scanned:,} files / {inventory.lines_scanned:,} lines in {elapsed:.1f}s", flush=True)
     await _push(session_id, "re-stream", content=(
@@ -1447,6 +1487,8 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
             await _run_java11_re(session_id, message, refine=bool(feedback))
         elif pattern == _JAVA_8_TO_11:
             await _run_java11_inventory(session_id, feedback)
+        elif _uses_inventory(pattern, discovery):
+            await _run_migration_inventory(session_id, pattern, feedback)
         else:
             await _run_step(session_id, "re", pattern, message=message, sse_event_type="re-stream")
         state = await _get_state(session_id)

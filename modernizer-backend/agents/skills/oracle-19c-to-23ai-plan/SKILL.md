@@ -7,6 +7,15 @@ You are an Oracle migration expert. Create a detailed `plan.md` for migrating th
 
 Load `references/oracle19c-to-23ai-checklist.md` to identify every compatibility change required and every optional 23ai feature worth proposing.
 
+**When the specification is a deterministic inventory** (its sections say "no language model read this repository"), every relevant file was scanned once against this migration's legacy checklist, and it is your only evidence about the code:
+- The File Change Manifest is built from its **Legacy Stack Blockers** table — one row per file per finding, every path real, lines given — plus the build files named under **Repo Facts**. Merge a file's rows into one manifest row. A row may be a comment rather than a use; plan it anyway and say so — the executor reads the file before changing it.
+- Current versions come from **Repo Facts** (resolved through in-repo parents); `(unresolved)` means unknown — say so, never guess.
+- Sample Transformations: use the **First match** column as the "before" line, and say the snippet is one line where that is all you have.
+- If a table says rows were not listed (INVENTORY_MAX_ROWS), plan by the **Directory Rollup** for the rest, name the directories under Coverage Gaps, and never invent paths.
+- The BRD section states scope only; it does not infer business intent. Where the plan needs intent, it is an Open Question, not an assumption.
+- Behaviour Inventory: its **Behaviour Inventory** table (tables, views, packages, procedures, functions, triggers, and PL/SQL calls from Java), with **Database Objects** for counts by type.
+- JDBC URLs come from **JDBC Connections** (credentials already redacted — never ask for them in the plan).
+
 # Migration Plan: Oracle 19c → Oracle 23ai
 
 ## Overview

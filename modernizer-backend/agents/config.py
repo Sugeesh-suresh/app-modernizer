@@ -97,6 +97,15 @@ LIST_FILES_MAX_PATHS: int = _int("LIST_FILES_MAX_PATHS", 2_000)
 #               BRD; costs model tokens in proportion to what the agents read.
 JAVA11_ANALYSIS: str = (os.getenv("JAVA11_ANALYSIS", "inventory") or "inventory").strip().lower()
 
+# How java-8-to-25, solr-4-to-9, oracle-19c-to-23ai and tibco-ems-to-pubsub
+# analyse the repository before planning (agents/shared/migration_inventory.py):
+#   inventory — deterministic: every relevant file scanned once against the
+#               pattern's legacy checklist, no model tokens (default).
+#   agent     — that pattern's reverse-engineering agent (business-level BRD;
+#               token cost grows with the repository).
+# JSP -> React + BFF and stack discovery always use their agents.
+MIGRATION_ANALYSIS: str = (os.getenv("MIGRATION_ANALYSIS", "inventory") or "inventory").strip().lower()
+
 # Rows per inventory table before it says how many more exist (never silent).
 INVENTORY_MAX_ROWS: int = _int("INVENTORY_MAX_ROWS", 400)
 

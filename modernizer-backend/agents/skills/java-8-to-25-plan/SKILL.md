@@ -7,6 +7,14 @@ You are a Java migration expert. Create a detailed `plan.md` for migrating this 
 
 Load `references/java8-to-java25-checklist.md` to identify every language-level, library, and tooling change needed for the full Java 8 → 25 jump.
 
+**When the specification is a deterministic inventory** (its sections say "no language model read this repository"), every relevant file was scanned once against this migration's legacy checklist, and it is your only evidence about the code:
+- The File Change Manifest is built from its **Legacy Stack Blockers** table — one row per file per finding, every path real, lines given — plus the build files named under **Repo Facts**. Merge a file's rows into one manifest row. A row may be a comment rather than a use; plan it anyway and say so — the executor reads the file before changing it.
+- Current versions come from **Repo Facts** (resolved through in-repo parents); `(unresolved)` means unknown — say so, never guess.
+- Sample Transformations: use the **First match** column as the "before" line, and say the snippet is one line where that is all you have.
+- If a table says rows were not listed (INVENTORY_MAX_ROWS), plan by the **Directory Rollup** for the rest, name the directories under Coverage Gaps, and never invent paths.
+- The BRD section states scope only; it does not infer business intent. Where the plan needs intent, it is an Open Question, not an assumption.
+- Behaviour Inventory: its **Behaviour Inventory** table (endpoints, jobs, consumers, web.xml mappings), and the **Persistence & View Layer** table for SQL paths and views. Packaging comes from **Packaging & Deployment Model**.
+
 **Spring Boot target (both strategies):** when `{springboot_upgrade}` is true, the final state is always the newest **Spring Boot 4.x deployed as an executable JAR** with an embedded Tomcat — never a WAR — with Spring Data JPA for persistence, Thymeleaf instead of JSP, and every conflicting legacy library removed. The `springboot-war-to-boot4` skill defines it. Use the scanner's Packaging & Deployment Model and Persistence & View Layer repo facts to size that work, never to keep a WAR.
 
 ## Every plan answers six questions
@@ -29,7 +37,7 @@ Ground every claim in the BRD, the Technical Specification and the Existing Test
 
 `## 2. What Stays the Same`. The most commonly missed section, and the one that makes review manageable — it is how a reviewer knows what they do *not* have to check.
 
-- `### Explicit Non-Changes` — the contracts this migration does not touch, stated as flat assertions a reviewer can hold the result to: no REST endpoint paths, methods or request/response shapes change; no database schema or table/column names change; no message topic, queue or payload shape changes; no business logic, calculation or validation rule changes; no configuration key names change (or, where any of these *do* change, name the exception here rather than leaving the assertion false). Derive them from the Technical Specification's API Contracts, Data Model and Configuration Inventory.
+- `### Explicit Non-Changes` — the contracts this migration does not touch, stated as flat assertions a reviewer can hold the result to: no REST endpoint paths, methods or request/response shapes change; no database schema or table/column names change; no message topic, queue or payload shape changes; no business logic, calculation or validation rule changes; no configuration key names change (or, where any of these *do* change, name the exception here rather than leaving the assertion false). Derive them from the Technical Specification's API Contracts, Data Model and Configuration Inventory (from an inventory: its Behaviour Inventory and Persistence & View Layer).
 - `### Out of Scope` — everything the analysis noticed and is deliberately leaving alone: a bug found in passing, dead code, SQL that looks old but works, a deprecated library a toggle excludes, a stage this run does not include. Give each a one-line reason. Listing them is what stops "while we're here" scope creep during the run, and it is also what tells the reviewer these were seen rather than missed.
 
 ### 3. Why This Is Safe
@@ -37,7 +45,7 @@ Ground every claim in the BRD, the Technical Specification and the Existing Test
 `## 3. Why This Is Safe`.
 
 - `### Risk Tier` — **Low / Medium / High**, and the factor that drove it, with evidence. Never the bare word. Score three factors separately: **blast radius** (how much of the system this reaches), **novelty** (how much of the work is an API rewrite rather than a version bump, and how much of it has no worked precedent in this codebase), and **behavioural opacity** (how much behaviour has no test proving it). Say which factor set the tier, and cite the evidence — "High: 14 of 31 files are Ehcache 2 and Hibernate 3 API rewrites, and the Test Inventory shows no test covering the cache layer".
-- `### Behaviour Inventory` — a table of every behaviour this migration must preserve: Behaviour | Kind (endpoint / SQL path / message producer / message consumer / scheduled job / batch) | Where it lives | Evidence it exists (verified or inferred). Take it from the Technical Specification's API Contracts, Persistence & View Layer and the Analysis's API Surface. This is the full set of things that must still work afterwards, and question 4 is answered against it row by row — so an incomplete inventory silently shrinks the proof obligation.
+- `### Behaviour Inventory` — a table of every behaviour this migration must preserve: Behaviour | Kind (endpoint / SQL path / message producer / message consumer / scheduled job / batch) | Where it lives | Evidence it exists (verified or inferred). Take it from the Technical Specification's API Contracts (or, from an inventory, its Behaviour Inventory), Persistence & View Layer and the Analysis's API Surface where one was given. This is the full set of things that must still work afterwards, and question 4 is answered against it row by row — so an incomplete inventory silently shrinks the proof obligation.
 - `### Blast Radius` — what outside this repository this change can reach: other repos that consume these endpoints, shared schemas, message topics with other producers or consumers, libraries this repo publishes, and anything that would need to move in the same coordinated release. Where nothing is reachable, say so explicitly — "no published artefacts, no shared schema, no other consumers identified in the specification" — rather than omitting the section.
 
 ### 4. How We'll Prove It Worked

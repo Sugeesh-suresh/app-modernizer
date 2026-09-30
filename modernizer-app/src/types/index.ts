@@ -19,6 +19,15 @@ export type PatternId =
  * it — see MIGRATION_PATTERNS in App.tsx. */
 export const RE_ONLY_PATTERNS: PatternId[] = ['stack-discovery'];
 
+/** Patterns whose analysis step is a deterministic inventory (every file
+ * scanned against the migration's checklist, no model tokens) rather than a
+ * reverse-engineering agent — the backend default (MIGRATION_ANALYSIS /
+ * JAVA11_ANALYSIS=inventory). JSP -> React + BFF and stack discovery keep
+ * their agents. */
+export const INVENTORY_PATTERNS: PatternId[] = [
+  'java-8-to-11', 'java-8-to-25', 'solr-4-to-9', 'oracle-19c-to-23ai', 'tibco-ems-to-pubsub',
+];
+
 export type WorkflowStep =
   | 'upload'
   | 'dependency-graph'
