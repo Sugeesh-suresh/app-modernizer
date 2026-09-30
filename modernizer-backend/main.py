@@ -46,7 +46,7 @@ from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, config, ses
 from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
-    companion_detector, dependency_graph, diffing, plan_tasks, scope_fence, stack_detector, ux_designs,
+    companion_detector, dependency_graph, diffing, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
 )
 from agents.shared.file_parser import extract_text
 from models.schemas import (
@@ -927,6 +927,13 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         "plan": "",
         # One plan task at a time, rendered into the stage modifier's instruction (see plan_tasks).
         "current_task": "",
+        # java-8-to-11 chunked reverse engineering (see _run_java11_re): the unit
+        # being analysed, its findings, and the findings the merge/combine steps read.
+        "re_scope": "",
+        "module_findings": "",
+        "merged_findings": "",
+        "re_findings": "",
+        "re_findings_json": "[]",
         "additional_context": "",
         "generated_files_json": "[]",
         # Browsable preview vs the complete result: `generated_files_json` is
@@ -1232,6 +1239,125 @@ async def _run_stack_mapping(session_id: str) -> list[dict]:
     return stacks
 
 
+def _clip_findings(text: str, limit: int, label: str) -> str:
+    """Findings cut to *limit* characters, with the cut stated where the
+    document's reader and the combining agent will see it — never silently."""
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return (
+        text[:limit].rstrip()
+        + f"\n\n> ⚠ **Findings for {label} were cut at {limit:,} characters.** Rows after this point are "
+        "missing from this document; raise RE_FINDINGS_MAX_CHARS / RE_SYNTHESIS_MAX_CHARS to keep them."
+    )
+
+
+def _batch_by_size(items: list[str], budget: int) -> list[list[str]]:
+    """Consecutive batches whose joined size stays within *budget*."""
+    batches: list[list[str]] = []
+    size = 0
+    for item in items:
+        if batches and size + len(item) <= budget:
+            batches[-1].append(item)
+            size += len(item)
+        else:
+            batches.append([item])
+            size = len(item)
+    return batches
+
+
+async def _run_java11_re(session_id: str, message: str, refine: bool = False) -> None:
+    """java-8-to-11 reverse engineering, chunked so that no single model request
+    grows with the size of the repository.
+
+    1. Split the repository into units (re_units.plan_units): each Maven/Gradle
+       module, split further along its directories above RE_UNIT_MAX_FILES.
+    2. Run `re_module` once per unit, each with a fresh context: it writes that
+       unit's Module Findings.
+    3. If all findings together exceed RE_SYNTHESIS_MAX_CHARS, merge them with
+       `re_merge` in batches that fit, repeating until they do. Each merged result
+       is capped at half the budget, so every round strictly reduces the count.
+    4. `re_synthesize` writes the four-section document into state["analysis"],
+       exactly where the single-pass agent put it, so everything downstream is
+       unchanged.
+
+    A refine ("Refine with AI") re-runs step 4 only, from the stored findings and
+    the reviewer's feedback: re-analysing every unit to reword a document would
+    cost the whole run again. RE_UNIT_MAX_FILES=0 falls back to the single-pass
+    agent.
+    """
+    if config.RE_UNIT_MAX_FILES <= 0:
+        await _run_step(session_id, "re", _JAVA_8_TO_11, message=message, sse_event_type="re-stream")
+        return
+
+    state = await _get_state(session_id)
+    budget = max(config.RE_SYNTHESIS_MAX_CHARS, 2)
+    per_unit = min(config.RE_FINDINGS_MAX_CHARS, budget // 2)
+    stored = json.loads(state.get("re_findings_json") or "[]")
+
+    if refine and stored:
+        findings = stored
+    else:
+        units = re_units.plan_units(state.get("workspace_dir", ""), config.RE_UNIT_MAX_FILES)
+        total = len(units)
+        print(f"[re] {total} unit(s) of at most {config.RE_UNIT_MAX_FILES} files", flush=True)
+        await _push(session_id, "re-stream", content=(
+            f"\n**Large-repository mode:** analysing {total} unit(s) of at most "
+            f"{config.RE_UNIT_MAX_FILES} files, each in its own run.\n"
+        ))
+        findings = []
+        failed = 0
+        for index, unit in enumerate(units, 1):
+            await _push(session_id, "progress", message=f"Reverse engineering unit {index}/{total}: {unit.label}",
+                        progress=int(5 + 80 * (index - 1) / max(total, 1)))
+            await _push(session_id, "re-stream", content=f"\n\n### Unit {index}/{total}: {unit.label}\n")
+            await _update_state(session_id, {"re_scope": unit.describe(), "module_findings": ""})
+            error = ""
+            try:
+                await _run_step(
+                    session_id, "re_module", _JAVA_8_TO_11,
+                    message=f"Analyse unit {unit.id} ({unit.label}) and write its Module Findings.",
+                    sse_event_type="re-stream",
+                )
+                text = (await _get_state(session_id)).get("module_findings", "")
+            except Exception as exc:
+                traceback.print_exc()
+                failed += 1
+                text = ""
+                error = _describe_error(exc)
+            if not text.strip():
+                reason = error or "the run returned no findings"
+                text = (f"## Unit {unit.id}: {unit.label}\n\n> ⚠ **Not analysed** — {reason}. "
+                        "Nothing in this unit is covered by this document.")
+            findings.append(_clip_findings(text, per_unit, f"unit {unit.id} ({unit.label})"))
+        if units and failed == len(units):
+            raise RuntimeError(f"Reverse engineering failed for every unit ({failed}). Last error: {findings[-1]}")
+        await _update_state(session_id, {"re_findings_json": json.dumps(findings)})
+
+    rounds = 0
+    while sum(len(f) for f in findings) > budget and len(findings) > 1:
+        rounds += 1
+        merged: list[str] = []
+        batches = _batch_by_size(findings, budget)
+        for number, batch in enumerate(batches, 1):
+            if len(batch) == 1:
+                merged.append(batch[0])
+                continue
+            await _push(session_id, "progress", message=(
+                f"Merging findings: round {rounds}, batch {number}/{len(batches)}"), progress=88)
+            await _update_state(session_id, {"re_findings": "\n\n---\n\n".join(batch), "merged_findings": ""})
+            await _run_step(session_id, "re_merge", _JAVA_8_TO_11,
+                            message="Merge these Module Findings.", sse_event_type="re-stream")
+            text = (await _get_state(session_id)).get("merged_findings", "")
+            merged.append(_clip_findings(text, budget // 2, f"merged batch {rounds}.{number}"))
+        findings = merged
+
+    combined = _clip_findings("\n\n---\n\n".join(findings), budget, "the combined findings")
+    await _push(session_id, "progress", message="Writing the analysis document from the findings", progress=92)
+    await _update_state(session_id, {"re_findings": combined, "analysis": ""})
+    await _run_step(session_id, "re_synthesize", _JAVA_8_TO_11, message=message, sse_event_type="re-stream")
+
+
 async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | None = None) -> None:
     """Runs each pattern's re_agent once. With `feedback` set (the "Refine
     with AI" flow), each pattern is asked to revise its own previous
@@ -1282,7 +1408,10 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
         elif len(bundle) > 1:
             message += f" Focus specifically on the {_label(pattern)} migration domain."
 
-        await _run_step(session_id, "re", pattern, message=message, sse_event_type="re-stream")
+        if pattern == _JAVA_8_TO_11:
+            await _run_java11_re(session_id, message, refine=bool(feedback))
+        else:
+            await _run_step(session_id, "re", pattern, message=message, sse_event_type="re-stream")
         state = await _get_state(session_id)
         combined = state.get("analysis", "")
         _, brd, tech_spec, test_inventory = _parse_re_sections(combined)

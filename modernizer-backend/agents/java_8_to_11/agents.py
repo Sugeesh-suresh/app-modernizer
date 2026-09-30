@@ -72,6 +72,12 @@ def _skill(name: str) -> SkillToolset:
     return SkillToolset(skills=[load_skill_from_dir(_SKILLS_DIR / name)])
 
 
+def _skills(*names: str) -> SkillToolset:
+    """One SkillToolset for several skills — two separate toolsets would declare
+    list_skills/load_skill twice, which Gemini rejects."""
+    return SkillToolset(skills=[load_skill_from_dir(_SKILLS_DIR / name) for name in names])
+
+
 def _writing_tools() -> list:
     return [
         FunctionTool(fs_tools.list_files),
@@ -102,9 +108,77 @@ re_agent = LlmAgent(
     include_contents="none",
 )
 
+# ── chunked reverse engineering (large repositories) ────────────────────────────
+# `re_agent` above analyses the whole repository in one run. On a large monolith
+# that run resends every file it has read on every model call, so requests grow
+# until they exhaust the token quota (429) or the context window. main.py's
+# _run_java11_re instead splits the repository into units (agents/shared/
+# re_units.py), runs `module_re_agent` once per unit with a fresh context, merges
+# the findings in bounded batches if they are too large for one request
+# (`findings_merge_agent`), and writes the four-section document from them
+# (`re_synthesis_agent`). Setting RE_UNIT_MAX_FILES=0 restores the single run.
+
+module_re_agent = LlmAgent(
+    name="java11_module_re",
+    model=_MODEL,
+    description="Reverse-engineers ONE unit of a large Java 8 JSP/WildFly repository and writes structured Module Findings.",
+    instruction=(
+        "Load and execute the `java-8-to-11-re-module` skill for the unit below, using list_files, "
+        "search_files and read_file. These tools are the only way to inspect the code: nothing in this "
+        "environment executes code.\n\n## Your Unit\n{re_scope}"
+    ),
+    tools=[
+        _skills("java-8-to-11-re-module", "java-8-to-11-re"),
+        FunctionTool(fs_tools.list_files),
+        FunctionTool(fs_tools.search_files),
+        FunctionTool(fs_tools.read_file),
+    ],
+    output_key="module_findings",
+    include_contents="none",
+)
+
+findings_merge_agent = LlmAgent(
+    name="java11_findings_merge",
+    model=_MODEL,
+    description="Merges several units' Module Findings into one, when all of them are too large for a single request.",
+    instruction=(
+        "Load the `java-8-to-11-re-module` skill for the Module Findings format. Merge the findings below "
+        "into ONE findings document in that same format, headed `## Units <first id>-<last id>`. Keep "
+        "every row of every Java 11 Blockers table — the migration plan's file manifest is built from "
+        "them — merging only exact duplicates. Keep every Frozen-Zone row. Keep every build fact that "
+        "differs between units. Entry points and tests may be summarised as counts per unit plus the "
+        "rows that matter for Java 11. Keep every open question. Do not add anything the findings do "
+        "not say.\n\n## Findings to merge\n{re_findings}"
+    ),
+    tools=[_skill("java-8-to-11-re-module")],
+    output_key="merged_findings",
+    include_contents="none",
+)
+
+re_synthesis_agent = LlmAgent(
+    name="java11_re_synthesize",
+    model=_MODEL,
+    description="Writes the four-section Analysis/BRD/Technical Specification/Test Inventory from every unit's Module Findings.",
+    instruction=(
+        "Load the `java-8-to-11-re` skill and write its four-section document, following its OUTPUT "
+        "CONTRACT (the five SECTION markers, as separators, in order) and its section contents exactly. "
+        "Its DISCOVERY WORKFLOW has already been carried out, unit by unit, by separate runs: the Module "
+        "Findings below are its results and your only evidence. You have no workspace tools — do not "
+        "try to inspect files, and never claim to have read a file the findings do not cite. Carry every "
+        "row of every unit's Java 11 Blockers table into the Analysis blocker table and the Technical "
+        "Specification's dependency, removed-module and Frozen Zone sections; the plan's file manifest "
+        "depends on them. Where a unit's findings say they were cut or a unit failed, say so in "
+        "Assessment Scope and Confidence.\n\n## Module Findings\n{re_findings}"
+    ),
+    tools=[_skill("java-8-to-11-re")],
+    output_key="analysis",
+    include_contents="none",
+)
+
 # ── planner_agent ────────────────────────────────────────────────────────────
 _PLAN_SKILL_ROSTER: list[tuple[str, str]] = [
-    ("java-8-to-11-re", "Reverse-engineered this repository into the confirmed BRD, Technical Specification and Test Inventory"),
+    ("java-8-to-11-re-module", "Analysed the repository unit by unit (module, or part of one) into Module Findings"),
+    ("java-8-to-11-re", "Combined the Module Findings into the confirmed BRD, Technical Specification and Test Inventory"),
     ("java-8-to-11-plan", "Produces this plan"),
     ("java-8-to-11-modify", "Applies each task's `.java` and build-file changes, inside the scope fence"),
     ("java-8-to-11-validate", "Packages the WAR at release 11 and checks the scope-fence invariants"),
@@ -204,7 +278,7 @@ build_loop = LoopAgent(
 )
 
 CURATED_SKILLS: list[str] = [
-    "java-8-to-11-re", "java-8-to-11-plan", "java-8-to-11-modify",
+    "java-8-to-11-re", "java-8-to-11-re-module", "java-8-to-11-plan", "java-8-to-11-modify",
     "java-8-to-11-validate", "java-8-to-11-fix", "java-8-to-11-report",
 ]
 

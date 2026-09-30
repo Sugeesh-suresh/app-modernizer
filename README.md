@@ -34,6 +34,8 @@ That is enforced in code (`shared/scope_fence.py`), not asked for in a prompt:
 | Review time | The change audit reports any changed frozen file as a `frozen file changed` regression and never lists an untouched JSP as a coverage gap. The plan's Frozen Zone table marks every row `frozen — unchanged`, so plan conformance reports a changed one as contradicted. |
 | End of run | Before the diff, every frozen file is restored to its uploaded bytes — covering anything a Maven plugin rewrote outside the agent tools — and the report says what was undone. |
 
+**Reverse engineering is chunked, so repository size does not grow any single request.** One agent run resends every file it has read on every model call, which on a monolith exhausts the token quota (429) and eventually the context window. Instead the repository is split into units (`shared/re_units.py`) — each Maven/Gradle module, split further along its directories above `RE_UNIT_MAX_FILES` — every file in exactly one unit. Each unit gets its own run (`java-8-to-11-re-module`) writing structured Module Findings; findings too large for one request are merged in bounded batches; a final run writes the usual four-section document from them. Measured on the same 40-file, 4-module repository: largest request 635,326 → 158,909 characters, total sent 13.0M → 3.5M. "Refine with AI" rewrites from the stored findings rather than re-analysing every unit.
+
 The run also surfaces what it may not fix. JSPs compile on the **server's** JDK, so a scriptlet on a removed API is reported as a frozen-zone runtime risk; a WildFly too old to run Java 11, and JVM options a Java 11 JVM rejects, become escalation triggers and **Ops Actions** in the plan and report.
 
 ```
@@ -178,7 +180,7 @@ The hard rule is that **a limit is never hit silently**:
 
 ### What is still not solved
 
-Code generation chunks per plan task — a fresh modifier context per task, rather than one context accumulating the whole repository — on the `java-8-to-25` incremental path and on `java-8-to-11` (see `plan_tasks.py`, `_run_java8_incremental_code_step` and `_run_java11_code_step`). Java 8 → 25 bigbang and the other four patterns run their modifier once over the whole repo. On a large codebase, those two are the modes with a real code-generation scale story; extending that chunking to the other patterns needs per-pattern `modify`/`build` sub-runners, which is a structural change rather than a limit.
+Code generation chunks per plan task — a fresh modifier context per task, rather than one context accumulating the whole repository — on the `java-8-to-25` incremental path and on `java-8-to-11` (whose reverse engineering is chunked per unit too) (see `plan_tasks.py`, `_run_java8_incremental_code_step` and `_run_java11_code_step`). Java 8 → 25 bigbang and the other four patterns run their modifier once over the whole repo. On a large codebase, those two are the modes with a real code-generation scale story; extending that chunking to the other patterns needs per-pattern `modify`/`build` sub-runners, which is a structural change rather than a limit.
 
 ---
 
@@ -484,6 +486,9 @@ app-modernizer/
 | `LLM_RETRY_ATTEMPTS` | No | `8` | Attempts per model call on 429 / 408 / 5xx, with exponential backoff. `1` disables retries |
 | `LLM_RETRY_INITIAL_DELAY` | No | `2` | Seconds before the first retry |
 | `LLM_RETRY_MAX_DELAY` | No | `60` | Longest wait between retries, in seconds |
+| `RE_UNIT_MAX_FILES` | No | `300` | Java 8 → 11: files per reverse-engineering unit, each analysed in its own run. `0` = one run over the whole repository |
+| `RE_FINDINGS_MAX_CHARS` | No | `20000` | Characters of findings kept per unit; a cut is stated in the document |
+| `RE_SYNTHESIS_MAX_CHARS` | No | `400000` | Characters of findings per combining request; above it, findings are merged in batches first |
 | `SEARCH_MAX_RESULTS` | No | `200` | Matches per `search_files` page (the total is always reported) |
 | `SEARCH_MAX_FILE_BYTES` | No | `2000000` | Files larger than this are skipped by `search_files`, and counted as skipped |
 | `COMMAND_OUTPUT_MAX_CHARS` | No | `40000` | Characters of build output returned (head + tail) |

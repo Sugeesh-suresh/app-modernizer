@@ -86,6 +86,22 @@ READ_FILE_MAX_CHARS: int = _int("READ_FILE_MAX_CHARS", 20_000)
 # response of every RE run, spent before a single file has been read.
 LIST_FILES_MAX_PATHS: int = _int("LIST_FILES_MAX_PATHS", 2_000)
 
+# ---------------------------------------------------------------------------
+# Chunked reverse engineering (java-8-to-11) — see agents/shared/re_units.py
+# ---------------------------------------------------------------------------
+
+# Files per reverse-engineering unit. Each unit is analysed in its own agent
+# run, so this bounds how much one run can read (and resend on every call).
+RE_UNIT_MAX_FILES: int = _int("RE_UNIT_MAX_FILES", 300)
+
+# Characters of findings kept per unit. Longer findings are cut, and the cut is
+# stated in the document — never silent.
+RE_FINDINGS_MAX_CHARS: int = _int("RE_FINDINGS_MAX_CHARS", 20_000)
+
+# Characters of findings one combining request may carry (~4 chars per token).
+# Above it, findings are first merged in batches that each fit.
+RE_SYNTHESIS_MAX_CHARS: int = _int("RE_SYNTHESIS_MAX_CHARS", 400_000)
+
 # Matches one search_files call returns before it paginates. The total is always
 # reported, so a capped page never reads as the whole answer.
 SEARCH_MAX_RESULTS: int = _int("SEARCH_MAX_RESULTS", 200)

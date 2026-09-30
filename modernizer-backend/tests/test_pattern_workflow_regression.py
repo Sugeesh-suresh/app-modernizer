@@ -35,8 +35,13 @@ class _Harness:
 
         async def fake_run_step(session_id, step_key, pattern, message, sse_event_type):
             self.steps.append((step_key, pattern))
-            key = "analysis" if step_key == "re" else "plan"
-            await main._update_state(session_id, {key: RE_OUTPUT if step_key == "re" else f"# {pattern} plan"})
+            # java-8-to-11 analyses unit by unit (re_module) and then combines (re_synthesize).
+            key, value = {
+                "re": ("analysis", RE_OUTPUT),
+                "re_synthesize": ("analysis", RE_OUTPUT),
+                "re_module": ("module_findings", "## Unit 1: findings"),
+            }.get(step_key, ("plan", f"# {pattern} plan"))
+            await main._update_state(session_id, {key: value})
 
         async def fake_workspace_step(session_id, pattern, code_key, push_session_id=None):
             self.code.append(("single-pass", pattern, code_key))
@@ -107,7 +112,9 @@ def test_each_pattern_reaches_its_own_code_step_and_completes(monkeypatch, tmp_p
     events, _ = _run(tmp_path, pattern, strategy)
 
     assert not [e for e in events if e["type"] == "error"], events
-    assert harness.steps == [("re", pattern), ("plan", pattern)]
+    # The small test repository is one unit, so java-8-to-11 runs one unit analysis, then combines.
+    expected_re = [("re_module", pattern), ("re_synthesize", pattern)] if pattern == "java-8-to-11" else [("re", pattern)]
+    assert harness.steps == expected_re + [("plan", pattern)]
     assert harness.code == [expected]
     steps = [e["step"] for e in events if e["type"] == "step-change"]
     assert steps[-1] == "complete"

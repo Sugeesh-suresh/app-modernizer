@@ -393,7 +393,9 @@ class TestReviewEvidence:
 
 class TestWiring:
     def test_runners_and_target_language(self):
-        assert set(PATTERN_RUNNERS[P]) == {"re", "plan", "code_modify", "code_finish"}
+        assert set(PATTERN_RUNNERS[P]) == {
+            "re", "re_module", "re_merge", "re_synthesize", "plan", "code_modify", "code_finish",
+        }
         assert TARGET_LANGS[P] == "java"
 
     def test_writing_agents_hold_only_the_fenced_tools(self):

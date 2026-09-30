@@ -54,6 +54,9 @@ from .java_8_to_11.agents import (
     planner_agent as j11_plan,
     modifier_agent as j11_modify,
     code_finish_pipeline as j11_code_finish,
+    module_re_agent as j11_re_module,
+    findings_merge_agent as j11_re_merge,
+    re_synthesis_agent as j11_re_synthesize,
 )
 from .solr_4_to_9.agents import (
     re_agent as solr_re, planner_agent as solr_plan, code_pipeline as solr_code,
@@ -121,7 +124,11 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
     # once per plan task, then `code_finish` (build loop -> review -> report ->
     # curator) once -- see _run_java11_code_step.
     "java-8-to-11": {
-        "re": _runner(j11_re),
+        "re": _runner(j11_re),                  # single pass (RE_UNIT_MAX_FILES=0)
+        # Chunked reverse engineering — main.py's _run_java11_re.
+        "re_module": _runner(j11_re_module),
+        "re_merge": _runner(j11_re_merge),
+        "re_synthesize": _runner(j11_re_synthesize),
         "plan": _runner(j11_plan),
         "code_modify": _runner(j11_modify),
         "code_finish": _runner(j11_code_finish),
