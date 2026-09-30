@@ -23,6 +23,19 @@ construction — every file was scanned — and it is your only evidence:
 - Frozen Zone: its **Frozen (never modified)** table, keeping `frozen — unchanged`.
 - If a table says rows were not listed (INVENTORY_MAX_ROWS), say so under
   Coverage Gaps and plan the listed rows; never invent the missing paths.
+- **Copy every path exactly as the inventory prints it**, including the
+  leading folder the repository was uploaded in (`stella-ui-master/pom.xml`,
+  never `pom.xml`). A bare `pom.xml` means the file at the repository root —
+  write it only when the inventory lists a `pom.xml` with no folder. Paths
+  that match no file are flagged at the top of the plan for the reviewer.
+- Every **Java 11 Blockers** row is a required change, including *system
+  class loader cast to URLClassLoader* (it throws `ClassCastException` on
+  Java 9+) and *Mockito 1 API removed in 2.x*. Plan each one; do not move it
+  to Out of Scope or Behavioural Risks.
+- *Mockito 1 runner import* is listed under Behavioural Risks because the run
+  rewrites it mechanically once the build is on Mockito 2 — do **not** create
+  tasks for it, and list it under Explicit Non-Changes as handled
+  automatically.
 
 ## The boundary this plan must respect
 
@@ -116,7 +129,13 @@ compiling with `release` 11, same WAR, same WildFly deployment, same JSPs).
 - `### Dependency & Version Delta` — `Component | Current | Target | Scope |
   Why it must move`. Cover the JDK/compiler release, the build tool/wrapper if
   it must move, every build plugin that must move, removed-JDK-module
-  artifacts to add, and every library that must move. "Why" is one of:
+  artifacts to add, and every library that must move. When a move **renames
+  the artifact**, write both coordinates: PowerMock 1.x →
+  `org.powermock:powermock-api-mockito2:2.0.9` (the old
+  `powermock-api-mockito` has no 2.x), `mockito-all` →
+  `org.mockito:mockito-core:2.28.2`. Use only versions from the matrix or the
+  specification — never a pre-release or build-stamped version
+  (`2.4.0-b180608.0325`), and never a transitive artifact on its own. "Why" is one of:
   *documented Java 11 incompatibility* (name it), *removed JDK module*,
   *build plugin cannot run on JDK 11*, *evidence in spec* (cite it). Never
   invent a current version — take it from the specification.

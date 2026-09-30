@@ -177,6 +177,51 @@ Inside WildFly the loader is a JBoss Modules loader, never a
 `URLClassLoader`, on any Java version — code doing this was already only
 working outside the container. Say so in the summary.
 
+### Adding jars to the class path at runtime (`addURL` through reflection)
+
+Typical in a `ClassPathUpdater` / `ClasspathHacker` utility. Java 9+ has no
+supported way to append to the system class path at runtime, so this is
+never a one-line fix — but it must not be left as it is, because the cast
+throws `ClassCastException` on the first call.
+
+```java
+// before — ClassCastException on Java 9+ at the cast
+URLClassLoader sys = (URLClassLoader) ClassLoader.getSystemClassLoader();
+Method addURL = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
+addURL.setAccessible(true);
+addURL.invoke(sys, url);
+
+// after — keep the old behaviour where it still exists, and give every other
+// runtime one class loader that owns the added entries
+private static final List<URL> ADDED = new CopyOnWriteArrayList<>();
+private static volatile URLClassLoader added;
+
+public static synchronized void add(URL url) throws Exception {
+    ClassLoader sys = ClassLoader.getSystemClassLoader();
+    if (sys instanceof URLClassLoader) {                  // Java 8, some launchers
+        Method addURL = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
+        addURL.setAccessible(true);
+        addURL.invoke(sys, url);
+        return;
+    }
+    ADDED.add(url);                                        // Java 9+
+    added = new URLClassLoader(ADDED.toArray(new URL[0]), sys);
+}
+
+/** The loader to use for classes from the added entries (the system loader on Java 8). */
+public static ClassLoader loader() {
+    URLClassLoader l = added;
+    return l != null ? l : ClassLoader.getSystemClassLoader();
+}
+```
+
+Keep the public method signatures; add `loader()` only if callers load
+classes by name and can be pointed at it. If callers rely on
+`Class.forName(name)` finding the added classes through the default loader,
+that cannot be preserved on Java 9+ — say so in the summary, naming the
+callers, so a human decides (a `-cp` entry, or a `Class-Path` manifest
+entry, keeps it working without code).
+
 ## Java version parsing
 
 ```java
@@ -212,6 +257,16 @@ import org.mockito.junit.MockitoJUnitRunner;
 `anyString()` / `any(Foo.class)` no longer match `null` in Mockito 2. A test
 stubbing with them and passing `null` now falls through to the default
 answer; use `nullable(String.class)` to keep the old meaning.
+
+`InvocationOnMock.getArgumentAt(i, Foo.class)` was removed in 2.x — use
+`getArgument(i)` (the type is inferred). Any other `org.mockito.internal.*`
+import is internal API that 2.x moved or removed: replace it with the public
+API that does the same job.
+
+`org.mockito.runners.MockitoJUnitRunner` still exists in 2.x (deprecated; a
+subclass of `org.mockito.junit.MockitoJUnitRunner`) and is removed in 4.x.
+The run rewrites that import mechanically once the build is on Mockito 2 —
+do not spend a task on it, and do not count it as a failure if you see it.
 
 `MockitoJUnitRunner` in 2.x is strict by default and reports unused stubs as
 failures — `MockitoJUnitRunner.Silent` keeps 1.x behaviour when a task says

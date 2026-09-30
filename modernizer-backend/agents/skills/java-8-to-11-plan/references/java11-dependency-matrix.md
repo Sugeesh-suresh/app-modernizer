@@ -85,9 +85,16 @@ Exceptions:
 | AspectJ (aspectjrt / aspectjweaver / aspectjtools) | below 1.9.2 | newest 1.9.x that still supports compliance 11 | |
 | Lombok | below 1.18.4 | newest 1.18.x | |
 | mockito-all 1.x / mockito-core 1.x | always | `mockito-core` **2.28.2** | the minimal hop: Java 11 support landed in 2.23, and 2.x still has `Matchers`, `anyObject()` and `org.mockito.runners` that 4.x deletes. Test code changes: runner package, `anyString()` no longer matches null, `Whitebox` removed |
-| PowerMock 1.x | always | 2.0.9 (`powermock-api-mockito2`) | |
+| PowerMock 1.x | always | 2.0.9 — and the Mockito module's **artifactId changes**: `powermock-api-mockito` → `powermock-api-mockito2` | `powermock-api-mockito:2.x` does not exist (it stops at 1.7.4); a build asking for it fails to download, often as 401 from a repository manager. `powermock-module-junit4` keeps its name |
 | commons-lang3 | below 3.8 and `SystemUtils`/`JavaVersion` used | 3.8.1+ | older versions misread Java 9+ version strings |
 | JavaFX | used | OpenJFX 11 | a decision, not a bump — escalate |
+
+Versions in this table are released versions that exist on Maven Central.
+Never plan a version that is not here or in the specification: an invented
+version — especially a build-stamped pre-release like `2.4.0-b180608.0325` —
+does not download. A JAXB/JAX-WS **implementation** (`jaxb-runtime`,
+`jaxws-rt`) is `2.3.x` (`2.3.1`); never a `2.4.0-b…` pre-release, and never
+its transitive artifacts (`txw2`, `istack-commons-runtime`) on their own.
 
 ## Explicitly not moved by this migration
 

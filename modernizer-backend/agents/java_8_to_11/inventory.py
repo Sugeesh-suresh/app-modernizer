@@ -70,8 +70,21 @@ CATEGORIES: list[Category] = [
        r"\.runFinalizersOnExit\s*\(|\bcheckAwtEventQueueAccess\b|\bcheckTopLevelWindow\b|\bcheckSystemClipboardAccess\b|\bcheckMemberAccess\b|\bjavax\.security\.auth\.Policy\b", True,
        "rewrite on the replacement API"),
     _c("JavaFX (not in JDK 11)", r"\bjavafx\.", True, "OpenJFX dependency — human decision"),
-    _c("system class loader cast to URLClassLoader", r"\(\s*URLClassLoader\s*\)", False,
-       "ClassCastException on Java 9+ if the cast target is the system loader — check each"),
+    # The system class loader is not a URLClassLoader since Java 9: casting it, or
+    # reaching URLClassLoader.addURL through reflection to extend the class path,
+    # throws on the first call. Always a change (see the modify reference).
+    _c("system class loader cast to URLClassLoader",
+       r"\(\s*(?:java\.net\.)?URLClassLoader\s*\)\s*(?:java\.lang\.)?ClassLoader\s*\.\s*getSystemClassLoader\s*\("
+       r"|getDeclaredMethod\s*\(\s*\"addURL\"", True,
+       "ClassCastException on Java 9+ — read java.class.path, or give added jars their own URLClassLoader"),
+    _c("Mockito 1 API removed in 2.x (test sources)",
+       r"\borg\.mockito\.internal\.|\.getArgumentAt\s*\(", True,
+       "Whitebox / other internal API → public API or plain reflection; getArgumentAt(i, T.class) → getArgument(i)"),
+    _c("other cast to URLClassLoader",
+       r"\(\s*(?:java\.net\.)?URLClassLoader\s*\)(?!\s*(?:java\.lang\.)?ClassLoader\s*\.\s*getSystemClassLoader)", False,
+       "ClassCastException on Java 9+ when the object is the system (or context) loader — check what is cast"),
+    _c("Mockito 1 runner import (rewritten mechanically by the run)", r"\borg\.mockito\.runners\.", False,
+       "still compiles on Mockito 2.x (deprecated); the run rewrites it to org.mockito.junit once the build is on 2.x — no task needed"),
     _c("java.version parsing", r"getProperty\s*\(\s*\"java\.(?:specification\.)?version\"", False,
        "'1.x' assumptions break on '11' — Runtime.version()"),
     _c("reflective access (setAccessible)", r"\.setAccessible\s*\(\s*true\s*\)", False,
@@ -375,7 +388,7 @@ def to_document(inv: Inventory, max_rows: int = 400) -> str:
     out += ["", "## Open Questions", "",
             "- Does the WildFly runtime run on Java 11 at deployment time? Evidence found: "
             + ("; ".join(inv.wildfly[:5]) if inv.wildfly else "none in the repository — confirm with the platform owner."),
-            "- CORBA / JavaFX / URLClassLoader matches, if any, need a human decision per file."]
+            "- CORBA / JavaFX matches, if any, need a human decision per file."]
 
     out += ["", "<!-- SECTION: BRD -->", "", "# Java 11 Inventory — Scope", "", method, "",
             "## Objective", "", "Compile and package the unchanged application at Java release 11, deployable to "

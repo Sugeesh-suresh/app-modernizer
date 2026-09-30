@@ -282,6 +282,18 @@ def _check_pom(fence: Fence, before: str, after: str) -> list[str]:
         )
     # The WAR plugin may need a newer *version* to run on JDK 11 (2.x cannot), but
     # its configuration shapes the deployed archive and must stay byte-for-byte.
+    # A dependency that will not resolve is not fixed by pointing the build at
+    # another repository: that is environment configuration (settings.xml,
+    # credentials), and adding one to a POM ships it to every build.
+    for tag in ("repository", "pluginRepository", "mirror", "server"):
+        added = len(re.findall(rf"<{tag}>", after)) - len(re.findall(rf"<{tag}>", before))
+        if added > 0:
+            problems.append(
+                f"a `<{tag}>` was added — repositories, mirrors and credentials are build-environment "
+                "configuration, never part of this migration. A dependency that fails to download with "
+                "401/403/'could not transfer' usually has a coordinate or version that does not exist: "
+                "check the one the migration changed"
+            )
     if [_normalise_block(b, True) for b in _plugin_blocks(before, lambda a: a == "maven-war-plugin")] != \
        [_normalise_block(b, True) for b in _plugin_blocks(after, lambda a: a == "maven-war-plugin")]:
         problems.append(
@@ -408,6 +420,71 @@ def restore_frozen(pattern: str, baseline_dir: str, workspace_dir: str) -> list[
     return undone
 
 
+# Coordinates that do not exist in any public repository. A build asking for
+# one fails to download it, and a repository manager commonly answers that
+# with 401 rather than 404 — which reads as an authentication problem.
+_NO_SUCH_ARTIFACT = [
+    # (groupId, artifactId, lowest major that does not exist, what to use instead)
+    ("org.powermock", "powermock-api-mockito", 2,
+     "PowerMock 2 publishes this module as `powermock-api-mockito2` (same groupId and version); "
+     "`powermock-api-mockito` stops at 1.7.x"),
+    ("org.mockito", "mockito-all", 2,
+     "`mockito-all` was discontinued after 1.x (its only 2.x is the pre-release 2.0.2-beta) — use "
+     "`org.mockito:mockito-core`"),
+]
+_PRE_RELEASE = re.compile(r"-b\d{6}|[.-](?:alpha|beta|rc|cr|m|ea|snapshot)[.\d-]*$|-SNAPSHOT$", re.IGNORECASE)
+
+
+def _major(version: str) -> int | None:
+    m = re.match(r"\s*(\d+)", version or "")
+    return int(m.group(1)) if m else None
+
+
+def _resolved_coordinates(root: str) -> dict[tuple[str, str, str], str]:
+    """{(pom, groupId, artifactId): resolved version} for every dependency and
+    plugin in the Maven build under `root`, properties resolved through
+    in-repo parents."""
+    from .pom_facts import parse_pom, resolver  # pom_facts imports this module
+    base = Path(root)
+    poms = {rel: pom for rel in _files(base) if PurePosixPath(rel).name == "pom.xml"
+            if (pom := parse_pom(base, rel))}
+    resolve, managed_version = resolver(poms)
+    out: dict[tuple[str, str, str], str] = {}
+    for rel, pom in poms.items():
+        for g, a, v, _scope, _managed in pom.dependencies:
+            version = resolve(pom, v) if v else managed_version(pom, g, a)
+            if a and version and "${" not in version:
+                out[(rel, g, a)] = version
+        for g, a, v, _block in pom.plugins:
+            version = resolve(pom, v) if v else ""
+            if a and version and "${" not in version:
+                out[(rel, g, a)] = version
+    return out
+
+
+def coordinate_problems(baseline_dir: str, workspace_dir: str) -> list[str]:
+    """Dependency and plugin versions this migration introduced that cannot be
+    downloaded: a coordinate that does not exist, or a pre-release version."""
+    before = _resolved_coordinates(baseline_dir) if baseline_dir else {}
+    after = _resolved_coordinates(workspace_dir) if workspace_dir else {}
+    unchanged = set(before.items())
+    problems = []
+    for (rel, g, a), version in sorted(after.items()):
+        if ((rel, g, a), version) in unchanged:
+            continue  # as uploaded: whatever it is, this migration did not introduce it
+        for group, artifact, from_major, instead in _NO_SUCH_ARTIFACT:
+            major = _major(version)
+            if g == group and a == artifact and major is not None and major >= from_major:
+                problems.append(f"`{rel}` — `{g}:{a}:{version}` does not exist: {instead}")
+        if _PRE_RELEASE.search(version):
+            problems.append(
+                f"`{rel}` — `{g}:{a}:{version}` is a pre-release version, set by this migration. Use a "
+                "released version (the plan's dependency matrix names one); invented or pre-release "
+                "versions are what fail to download with 401/404"
+            )
+    return problems
+
+
 def verify_invariants(pattern: str, baseline_dir: str, workspace_dir: str) -> tuple[list[str], list[str]]:
     """(problems, notes) for the migrated workspace as a whole.
 
@@ -461,6 +538,7 @@ def verify_invariants(pattern: str, baseline_dir: str, workspace_dir: str) -> tu
         if rel.endswith(".java"):
             for problem in check_edit(pattern, rel, "", _text(after[rel])):
                 problems.append(f"`{rel}` (new file) — {problem}")
+    problems += coordinate_problems(baseline_dir, workspace_dir)
     return problems, notes
 
 

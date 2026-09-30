@@ -9,7 +9,7 @@ import tempfile
 import time
 import traceback
 from contextlib import asynccontextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import List, NamedTuple
 
 from dotenv import load_dotenv
@@ -46,10 +46,11 @@ if not _retry_log.handlers:
 from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, config, session_service
 from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11 import inventory as java11_inventory
+from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.shared import migration_inventory
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
-    companion_detector, dependency_graph, diffing, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
+    companion_detector, dependency_graph, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
 )
 from agents.shared.file_parser import extract_text
 from models.schemas import (
@@ -688,6 +689,50 @@ async def _run_java8_incremental_code_step(
         await _push(push_session_id, "skill-curator-ready", content=skill_curator_summary)
 
 
+def _workspace_paths(workspace_dir: str) -> list[str]:
+    root = Path(workspace_dir)
+    if not workspace_dir or not root.exists():
+        return []
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*")
+                  if p.is_file() and not (_WORKSPACE_EXCLUDED_DIRS & set(p.relative_to(root).parts)))
+
+
+def _task_paths(listed: list[str], workspace_paths: list[str]) -> list[str]:
+    """Workspace files a task's `Files:` line names (exact, glob, directory or
+    unique suffix — the same resolution plan conformance uses)."""
+    out: list[str] = []
+    for entry in listed:
+        for path in plan_coverage._resolve(entry, workspace_paths):
+            if path not in out:
+                out.append(path)
+    return out
+
+
+def _file_digests(workspace_dir: str, paths: list[str]) -> dict[str, str]:
+    import hashlib
+    out = {}
+    for rel in paths:
+        try:
+            out[rel] = hashlib.sha256((Path(workspace_dir) / rel).read_bytes()).hexdigest()
+        except OSError:
+            out[rel] = ""
+    return out
+
+
+def _unexplained_unchanged(workspace_dir: str, before: dict[str, str], modify_result: str) -> list[str]:
+    """Files the task listed that are byte-identical after it and that the
+    modifier did not list under "Files skipped" (by path or file name)."""
+    skipped = ""
+    m = _re.search(r"Files skipped[^\n]*(?:\n(?!\s*-\s*(?:Refused|Anything|Task|Files changed)).*)*",
+                   modify_result, flags=_re.IGNORECASE)
+    if m:
+        skipped = m.group(0)
+    after = _file_digests(workspace_dir, list(before))
+    return [rel for rel, digest in before.items()
+            if digest and after.get(rel) == digest
+            and rel not in skipped and PurePosixPath(rel).name not in skipped]
+
+
 async def _run_java11_code_step(session_id: str, push_session_id: str | None = None) -> None:
     """Run the java-8-to-11 code phase: the modifier once per plan task, then
     the build loop, reviewer, reporter and curator once over the result.
@@ -718,6 +763,23 @@ async def _run_java11_code_step(session_id: str, push_session_id: str | None = N
     stage_meta = {"stage": 1, "total": 1}
     summaries: list[str] = []
     progress = 5
+    workspace_dir = state.get("workspace_dir", "")
+    workspace_paths = _workspace_paths(workspace_dir)
+
+    async def run_modifier(text: str) -> None:
+        nonlocal progress
+        message = types.Content(role="user", parts=[types.Part(text=text)])
+        async for event in modifier_runner.run_async(session_id=session_id, user_id=USER_ID, new_message=message):
+            if (getattr(event, "author", "") or "") != "modifier_agent":
+                continue
+            if not event.content or not event.content.parts:
+                continue
+            for part in event.content.parts:
+                chunk = getattr(part, "text", None)
+                if chunk:
+                    progress = min(progress + 1, 60)
+                    await _push(push_session_id, "code-stream", content=chunk, progress=progress)
+                    await asyncio.sleep(0)
 
     for task_index, task in enumerate(units, start=1):
         task_meta = {
@@ -726,33 +788,57 @@ async def _run_java11_code_step(session_id: str, push_session_id: str | None = N
         }
         if from_plan:
             await _push(push_session_id, "task-start", **stage_meta, **task_meta)
+        task_files = _task_paths(task.files, workspace_paths)
+        before = _file_digests(workspace_dir, task_files)
         await _update_state(session_id, {"current_task": f"{preamble}\n\n{task.body}", "modify_result": ""})
-        message = types.Content(role="user", parts=[types.Part(text=(
-            f"Apply task {task.id} ({task.title}) of the confirmed plan to the workspace."
-        ))])
         try:
-            async for event in modifier_runner.run_async(
-                session_id=session_id, user_id=USER_ID, new_message=message,
-            ):
-                if (getattr(event, "author", "") or "") != "modifier_agent":
-                    continue
-                if not event.content or not event.content.parts:
-                    continue
-                for part in event.content.parts:
-                    text = getattr(part, "text", None)
-                    if text:
-                        progress = min(progress + 1, 60)
-                        await _push(push_session_id, "code-stream", content=text, progress=progress)
-                        await asyncio.sleep(0)
+            await run_modifier(f"Apply task {task.id} ({task.title}) of the confirmed plan to the workspace.")
+            result = ((await _get_state(session_id)).get("modify_result") or "").strip()
+            # A listed file left exactly as it was, and not explained under
+            # "Files skipped", is work the task did not do: send it back once.
+            left = _unexplained_unchanged(workspace_dir, before, result)
+            if left:
+                await _push(push_session_id, "progress", progress=progress, message=(
+                    f"Task {task.id}: {len(left)} listed file(s) unchanged — asking the modifier to finish them"))
+                listed = "\n".join(f"- `{p}`" for p in left)
+                await _update_state(session_id, {"modify_result": "", "current_task": (
+                    f"{preamble}\n\n{task.body}\n\n## Not done yet\nYour previous pass on this task left these "
+                    f"listed files exactly as they were, without listing them under Files skipped:\n{listed}\n"
+                    "Apply this task's change to each of them now (read each file first). If one truly needs no "
+                    "change, list it under Files skipped with the reason.")})
+                await run_modifier(f"Finish task {task.id} ({task.title}): the files named under 'Not done yet'.")
+                retry = ((await _get_state(session_id)).get("modify_result") or "").strip()
+                result = f"{result}\n\n{retry}".strip()
+                left = _unexplained_unchanged(workspace_dir, before, result)
+                if left:
+                    result += ("\n\n**⚠ NOT APPLIED** — listed in this task but still unchanged after a retry, with "
+                               "no reason given:\n" + "\n".join(f"- `{p}`" for p in left))
         except Exception:
             # One failed task must not abandon the rest — the build loop still runs.
             traceback.print_exc()
             summaries.append(f"### Task {task.id}: {task.title}\nFAILED — see the server log.")
             continue
-        task_state = await _get_state(session_id)
-        summaries.append(f"### Task {task.id}: {task.title}\n{(task_state.get('modify_result') or '').strip()}")
+        summaries.append(f"### Task {task.id}: {task.title}\n{result}")
         if from_plan:
             await _push(push_session_id, "task-complete", **stage_meta, **task_meta)
+
+    # Exact, behaviour-preserving rewrites too numerous for a task per file
+    # (agents/java_8_to_11/mechanical.py) — after the tasks, so the build is
+    # already on the Mockito version they require.
+    try:
+        rewritten, why_not = await asyncio.to_thread(java11_mechanical.rewrite_mockito_runner, workspace_dir)
+    except Exception:
+        traceback.print_exc()
+        rewritten, why_not = [], "failed — see the server log"
+    if rewritten or "org.mockito.runners" in "".join(summaries) or why_not.startswith("the build still"):
+        shown = "\n".join(f"- `{p}`" for p in rewritten[:50]) + (
+            f"\n- … and {len(rewritten) - 50} more" if len(rewritten) > 50 else "")
+        summaries.append(
+            "### Mechanical rewrite: Mockito runner import\n"
+            + (f"`org.mockito.runners.MockitoJUnitRunner` → `org.mockito.junit.MockitoJUnitRunner` in "
+               f"{len(rewritten)} file(s) (identical behaviour: the old class is a deprecated subclass of the "
+               f"new one in Mockito 2.x/3.x):\n{shown}" if rewritten else f"Not applied: {why_not}.")
+        )
 
     # The build loop, reviewer, reporter and curator read one modify result for the run.
     await _update_state(session_id, {"modify_result": "\n\n".join(summaries).strip(), "current_task": ""})
@@ -1600,6 +1686,13 @@ async def _run_bundle_plan(session_id: str, bundle: list[str], feedback: str | N
         await _run_step(session_id, "plan", pattern, message=plan_msg, sse_event_type="plan-stream")
         state = await _get_state(session_id)
         plan = state.get("plan", "")
+        if pattern == _JAVA_8_TO_11:
+            # Every Java 11 change is to an existing file, so every manifest path
+            # must be one: shortened paths are resolved, the rest flagged for review.
+            plan, fixed, missing = plan_paths.reconcile(plan, state.get("workspace_dir", ""))
+            if fixed or missing:
+                print(f"[plan] paths corrected: {fixed}; not found: {missing}", flush=True)
+                await _update_state(session_id, {"plan": plan})
         await _update_state(session_id, {f"plan_{pattern}": plan})
         plans[pattern] = plan
 

@@ -18,7 +18,11 @@
 | `Execution default-war of goal ...maven-war-plugin:2.x:war failed` | WAR plugin 2.x on JDK 9+ | maven-war-plugin 3.4.0 — `<version>` only |
 | surefire `The forked VM terminated without properly saying goodbye` during compile/package | surefire below 2.22 | 2.22.2 |
 | `Rule 0: org.apache.maven.plugins.enforcer.RequireJavaVersion failed` | enforcer range excludes 11 | widen the range to admit 11 |
-| `cannot find symbol: class MockitoJUnitRunner` (in `org.mockito.runners`) | Mockito 2 moved it | `org.mockito.junit.MockitoJUnitRunner` |
+| `cannot find symbol: class MockitoJUnitRunner` (in `org.mockito.runners`) | only on Mockito 4+ (2.x/3.x keep it, deprecated) | `org.mockito.junit.MockitoJUnitRunner` |
+| `cannot find symbol: method getArgumentAt(int,java.lang.Class<…>)` | removed in Mockito 2 | `getArgument(i)` |
+| `Could not transfer artifact org.powermock:powermock-api-mockito:pom:2.x` (401/404/absent) | the artifact does not exist at 2.x | `powermock-api-mockito2`, same version |
+| `Could not transfer artifact …:2.4.0-b…` / any 401 on a version this run set | invented or pre-release version | the released version from the plan's matrix (JAXB 2.3.1); remove transitive artifacts added on their own |
+| `ClassCastException: …AppClassLoader cannot be cast to java.net.URLClassLoader` (at test/run time) | system loader is not a URLClassLoader on 9+ | the modify reference's "Adding jars to the class path at runtime" pattern |
 | `cannot find symbol: class Whitebox` | removed in Mockito 2 | set the field through the class's own setter/constructor or reflection in the test |
 | `java.lang.NoSuchFieldError` / `IllegalArgumentException: Unsupported class file` from Spring during `package` of an XML/annotation scan | Spring 3.x ASM | Spring 5.3.x (per the plan) |
 | Lombok: `java.lang.IllegalAccessError ... com.sun.tools.javac` | Lombok below 1.18.4 | newest 1.18.x |

@@ -47,6 +47,14 @@ That is enforced in code (`shared/scope_fence.py`), not asked for in a prompt:
 
 **With `JAVA11_ANALYSIS=agent`, reverse engineering is chunked, so repository size does not grow any single request.** One agent run resends every file it has read on every model call, which on a monolith exhausts the token quota (429) and eventually the context window. Instead the repository is split into units (`shared/re_units.py`) — each Maven/Gradle module, split further along its directories above `RE_UNIT_MAX_FILES` — every file in exactly one unit. Each unit gets its own run (`java-8-to-11-re-module`) writing structured Module Findings; findings too large for one request are merged in bounded batches; a final run writes the usual four-section document from them. Measured on the same 40-file, 4-module repository: largest request 635,326 → 158,909 characters, total sent 13.0M → 3.5M. "Refine with AI" rewrites from the stored findings rather than re-analysing every unit.
 
+**Guards from real monolith runs.** Five problems from real runs are now handled by the pipeline, not left to the model:
+- **Coordinates that do not exist are rejected.** Validation fails on a dependency this migration set to a coordinate that does not exist (`powermock-api-mockito:2.x` — PowerMock 2 ships it as `powermock-api-mockito2`; `mockito-all:2.x`) or to a pre-release/build-stamped version (`2.4.0-b180608.0325`). A repository manager often answers these with 401, which looked like an authentication problem.
+- **Repositories cannot be added to a POM.** An edit that adds `<repository>`, `<pluginRepository>`, `<mirror>` or `<server>` is refused. The fix skill checks whether the failing coordinate is one this run introduced before it calls a download failure environmental.
+- **More changes are required, not just flagged.** The inventory treats `(URLClassLoader) ClassLoader.getSystemClassLoader()`, reflective `addURL`, and Mockito 1 APIs removed in 2.x (`Whitebox`, `getArgumentAt`) as required changes.
+- **The Mockito runner import is rewritten mechanically** (`org.mockito.runners` → `org.mockito.junit`) once the build is on Mockito 2. The old runner is a deprecated subclass of the new one, so behaviour is unchanged.
+- **Tasks must account for every listed file.** A task that leaves a listed file unchanged, without saying why, is sent back once; a file still unchanged after that is reported as **NOT APPLIED**.
+- **Plan paths are checked against the repository.** Paths the planner shortened (`pom.xml` for `<top-folder>/pom.xml`) are corrected when unambiguous, and the rest are flagged at the top of the plan for the reviewer.
+
 The run also surfaces what it may not fix. JSPs compile on the **server's** JDK, so a scriptlet on a removed API is reported as a frozen-zone runtime risk; a WildFly too old to run Java 11, and JVM options a Java 11 JVM rejects, become escalation triggers and **Ops Actions** in the plan and report.
 
 ```

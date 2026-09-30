@@ -54,6 +54,22 @@ Load `references/java11-code-patterns.md` for the exact shapes.
 - Never change `<packaging>`, `<finalName>`, a WildFly/JBoss/cargo plugin
   block, `<parent>` coordinates of a spec BOM, or the version of a `provided`
   dependency.
+- **Coordinates must exist.** Use exactly the groupId, artifactId and version
+  your task names (the plan takes them from the dependency matrix). Never
+  invent or "adjust" a version, never use a pre-release (`-b180608…`,
+  `-beta`, `-RC`, `-M1`, `-SNAPSHOT`), and never add a transitive artifact
+  (`txw2`, `istack-commons`, …) — the library that needs it brings it.
+- **Some upgrades rename the artifact, not just the version.** Change both:
+  | From | To |
+  |---|---|
+  | `org.powermock:powermock-api-mockito` 1.x | `org.powermock:powermock-api-mockito2` 2.0.9 |
+  | `org.mockito:mockito-all` 1.x | `org.mockito:mockito-core` 2.28.2 |
+  When the version comes from a property (`${powermock.version}`), change the
+  property and every `<artifactId>` that needs the new name, in every POM
+  that declares it.
+- **Never add `<repositories>`, `<pluginRepositories>`, `<mirrors>` or
+  credentials.** Where artifacts come from is environment configuration; the
+  fence refuses it.
 
 ## Java sources
 
@@ -63,19 +79,30 @@ Typical Java 11 fixes (patterns in the reference):
   tolerance. Byte-for-byte output compatibility matters: stored or
   transmitted values must not change.
 - `sun.reflect.Reflection.getCallerClass()` → `StackWalker`.
-- A cast of the system class loader to `URLClassLoader` → read
-  `java.class.path` (or the specific resource) instead.
+- A cast of the system class loader to `URLClassLoader` (the inventory
+  lists every one — each must change: it throws `ClassCastException` on
+  Java 9+) → reading its URLs: read `java.class.path`; adding URLs at runtime
+  (`addURL` through reflection): the pattern under "Adding jars to the class
+  path at runtime" in the reference. Never leave the cast in place.
 - `java.version` parsing that assumes `1.x` → `Runtime.version().feature()`.
 - `_` used as an identifier → a named variable.
 - `Thread.stop(Throwable)`, `Thread.destroy()`, `runFinalizersOnExit` —
   these cannot be translated mechanically. Apply the smallest safe
   replacement the task describes, or report it if the task does not describe
   one.
-- Test sources: Mockito 1 → 2 API moves (runner package, `Matchers` still
-  works in 2.x, `anyString()` no longer matches null — only change a test's
-  meaning if the task says so).
+- Test sources: Mockito 1 → 2 API breaks — `Whitebox` and
+  `getArgumentAt(i, Type.class)` are gone (reference has the replacements);
+  `Matchers` still works in 2.x; `anyString()` no longer matches null — only
+  change a test's meaning if the task says so. The runner import
+  (`org.mockito.runners` → `org.mockito.junit`) is rewritten mechanically by
+  the run; leave it.
 
 ## Output
+
+Every file on your task's `Files:` line must end up either changed or listed
+under "Files skipped" with the reason. The run compares each listed file
+before and after your task; a file you neither changed nor explained is sent
+back to you once, and if it is still untouched it is reported as not applied.
 
 When every file in your task is handled, output:
 

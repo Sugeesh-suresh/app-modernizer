@@ -40,6 +40,33 @@ errors and their fixes.
   error here has a different cause.
 - **Never** downgrade a library to make the build pass.
 
+## Dependencies that fail to download
+
+`Could not transfer artifact …`, `Could not resolve dependencies`,
+`Failed to read artifact descriptor`, `status code: 401` / `403` / `404`,
+`(absent)` — before calling it an environment problem, check whether this
+migration introduced the coordinate:
+
+1. Find the failing `groupId:artifactId:version` in the error.
+2. Is that artifact or version something this run changed (a bumped version,
+   a renamed or newly added dependency)? Compare with the plan's Dependency &
+   Version Delta. If yes, the coordinate is almost certainly wrong — a
+   repository manager answers 401 for artifacts that do not exist as often as
+   404. Fix the coordinate:
+   - `powermock-api-mockito` at 2.x → `powermock-api-mockito2` (same version);
+   - `mockito-all` at 2.x → `mockito-core` 2.28.2;
+   - a pre-release or build-stamped version (`2.4.0-b180608.0325`, `-beta`,
+     `-RC`) → the released version in the plan's matrix (JAXB: 2.3.1);
+   - a transitive artifact added on its own (`txw2`, `istack-commons`) →
+     remove it; the library that needs it brings it.
+3. Only if the coordinate is exactly as uploaded (the migration did not touch
+   it) is it an environment problem (credentials, network). Then change
+   nothing and report it under "Errors not resolved" as environment.
+
+**Never** add `<repositories>`, `<pluginRepositories>`, mirrors or
+credentials — the fence refuses it, and it cannot fix a coordinate that does
+not exist.
+
 ## Fence failures (`FENCE:` errors)
 
 - *frozen file modified/deleted/added* — you cannot write frozen files, and
@@ -50,6 +77,9 @@ errors and their fixes.
   the original back exactly (read the file, restore the element).
 - *`jakarta.*` import added* — back to the `javax.*` import.
 - *Spring Boot introduced* — remove it.
+- *`g:a:v` does not exist* / *is a pre-release version* — apply the named
+  replacement (step 2 above) in the POM that declares it.
+- *a `<repository>` was added* — remove it.
 
 ## Output
 
