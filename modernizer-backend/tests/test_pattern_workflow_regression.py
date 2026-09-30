@@ -112,8 +112,8 @@ def test_each_pattern_reaches_its_own_code_step_and_completes(monkeypatch, tmp_p
     events, _ = _run(tmp_path, pattern, strategy)
 
     assert not [e for e in events if e["type"] == "error"], events
-    # The small test repository is one unit, so java-8-to-11 runs one unit analysis, then combines.
-    expected_re = [("re_module", pattern), ("re_synthesize", pattern)] if pattern == "java-8-to-11" else [("re", pattern)]
+    # java-8-to-11 analyses with the deterministic inventory: no model call before the planner.
+    expected_re = [] if pattern == "java-8-to-11" else [("re", pattern)]
     assert harness.steps == expected_re + [("plan", pattern)]
     assert harness.code == [expected]
     steps = [e["step"] for e in events if e["type"] == "step-change"]

@@ -6,6 +6,7 @@ import shutil
 import uuid
 import zipfile
 import tempfile
+import time
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -44,6 +45,7 @@ if not _retry_log.handlers:
 
 from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, config, session_service
 from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
+from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, diffing, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -1266,6 +1268,39 @@ def _batch_by_size(items: list[str], budget: int) -> list[list[str]]:
     return batches
 
 
+async def _run_java11_inventory(session_id: str, feedback: str | None = None) -> None:
+    """java-8-to-11 analysis without a model: the deterministic Java 11 inventory
+    (agents/java_8_to_11/inventory.py), written to state["analysis"] in the same
+    four-section format the reverse-engineering agents produce, so the review
+    screen, the planner and the code steps are unchanged. Uses no model tokens.
+
+    The inventory is a function of the code, so "Refine with AI" cannot reword
+    it: the reviewer's feedback is kept as Reviewer Notes at the top of the
+    scope section, where the planner reads it.
+    """
+    state = await _get_state(session_id)
+    workspace_dir = state.get("workspace_dir", "")
+    await _push(session_id, "progress", message="Scanning every file for the Java 11 inventory", progress=10)
+    started = time.monotonic()
+    inventory = await asyncio.to_thread(java11_inventory.build, workspace_dir)
+    document = java11_inventory.to_document(inventory, max_rows=config.INVENTORY_MAX_ROWS)
+    if feedback:
+        document = document.replace(
+            "<!-- SECTION: BRD -->\n",
+            "<!-- SECTION: BRD -->\n\n## Reviewer Notes\n\n" + feedback.strip() + "\n\n"
+            "_Carried to the planner as written. The inventory itself is regenerated from the code; "
+            "to change its content, edit the document before confirming._\n",
+            1,
+        )
+    elapsed = time.monotonic() - started
+    print(f"[inventory] {inventory.files_scanned:,} files / {inventory.lines_scanned:,} lines in {elapsed:.1f}s", flush=True)
+    await _push(session_id, "re-stream", content=(
+        f"**Java 11 inventory** — {inventory.files_scanned:,} files ({inventory.lines_scanned:,} lines) scanned "
+        f"in {elapsed:.1f}s without a language model.\n"
+    ))
+    await _update_state(session_id, {"analysis": document})
+
+
 async def _run_java11_re(session_id: str, message: str, refine: bool = False) -> None:
     """java-8-to-11 reverse engineering, chunked so that no single model request
     grows with the size of the repository.
@@ -1408,8 +1443,10 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
         elif len(bundle) > 1:
             message += f" Focus specifically on the {_label(pattern)} migration domain."
 
-        if pattern == _JAVA_8_TO_11:
+        if pattern == _JAVA_8_TO_11 and config.JAVA11_ANALYSIS == "agent":
             await _run_java11_re(session_id, message, refine=bool(feedback))
+        elif pattern == _JAVA_8_TO_11:
+            await _run_java11_inventory(session_id, feedback)
         else:
             await _run_step(session_id, "re", pattern, message=message, sse_event_type="re-stream")
         state = await _get_state(session_id)

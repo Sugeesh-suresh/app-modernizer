@@ -10,6 +10,20 @@ BRD, Technical Specification and Test Inventory below — not from the code.
 Load `references/java11-dependency-matrix.md` for every library and plugin
 decision.
 
+**When the specification is the deterministic Java 11 Inventory** (its
+sections say "no language model read this repository"), it is complete by
+construction — every file was scanned — and it is your only evidence:
+- The File Change Manifest is built from its **Java 11 Blockers** table (one
+  row per file, every row a real path), plus the POMs named under **Build
+  Plugins**, **Declared Java Levels** and **Dependencies Affected by Java 11**.
+  A row may be a comment rather than a use; plan it anyway and say so in
+  "What Changes" — the modifier reads the file before changing it.
+- Sample Transformations: use the **First match** column as the "before" line.
+- Behaviour Inventory: its **API Contracts (entry points)** table.
+- Frozen Zone: its **Frozen (never modified)** table, keeping `frozen — unchanged`.
+- If a table says rows were not listed (INVENTORY_MAX_ROWS), say so under
+  Coverage Gaps and plan the listed rows; never invent the missing paths.
+
 ## The boundary this plan must respect
 
 The caller injects a **Scope Fence**. It is enforced by the tools that will

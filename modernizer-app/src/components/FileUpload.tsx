@@ -300,7 +300,9 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
               ]
             : [
                 'A deterministic scan builds a dependency graph & migration groups',
-                'AI reverse-engineers your codebase — BRD, tech spec & test inventory',
+                pattern === 'java-8-to-11'
+                  ? 'Every file is scanned for Java 11 blockers, build facts & frozen JSP/WildFly files — no AI tokens'
+                  : 'AI reverse-engineers your codebase — BRD, tech spec & test inventory',
                 'You review, edit, or ask the planner to refine the BRD and plan',
                 'Migration agents apply the plan, then build/fix in a loop until it compiles',
               ]

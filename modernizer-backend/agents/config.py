@@ -90,6 +90,16 @@ LIST_FILES_MAX_PATHS: int = _int("LIST_FILES_MAX_PATHS", 2_000)
 # Chunked reverse engineering (java-8-to-11) — see agents/shared/re_units.py
 # ---------------------------------------------------------------------------
 
+# How java-8-to-11 analyses the repository before planning:
+#   inventory — deterministic Java 11 inventory (agents/java_8_to_11/inventory.py):
+#               every file scanned once in plain Python, no model tokens at all.
+#   agent     — the chunked reverse-engineering agents below, for a business-level
+#               BRD; costs model tokens in proportion to what the agents read.
+JAVA11_ANALYSIS: str = (os.getenv("JAVA11_ANALYSIS", "inventory") or "inventory").strip().lower()
+
+# Rows per inventory table before it says how many more exist (never silent).
+INVENTORY_MAX_ROWS: int = _int("INVENTORY_MAX_ROWS", 400)
+
 # Files per reverse-engineering unit. Each unit is analysed in its own agent
 # run, so this bounds how much one run can read (and resend on every call).
 RE_UNIT_MAX_FILES: int = _int("RE_UNIT_MAX_FILES", 300)
