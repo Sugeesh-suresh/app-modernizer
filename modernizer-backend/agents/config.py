@@ -73,6 +73,14 @@ READ_FILE_MAX_CHARS: int = _int("READ_FILE_MAX_CHARS", 20_000)
 # response of every RE run, spent before a single file has been read.
 LIST_FILES_MAX_PATHS: int = _int("LIST_FILES_MAX_PATHS", 2_000)
 
+# Matches one search_files call returns before it paginates. The total is always
+# reported, so a capped page never reads as the whole answer.
+SEARCH_MAX_RESULTS: int = _int("SEARCH_MAX_RESULTS", 200)
+
+# Files larger than this are skipped by search_files (and counted as skipped):
+# generated bundles and data dumps are not source, and regex over them is slow.
+SEARCH_MAX_FILE_BYTES: int = _int("SEARCH_MAX_FILE_BYTES", 2_000_000)
+
 # Characters of build output one run_command returns. Compiler diagnostics
 # cluster at the END of a Maven reactor build, so the window is split head/tail
 # rather than truncated head-first (see workspace_tools._clip_command_output).

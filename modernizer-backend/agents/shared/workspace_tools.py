@@ -18,7 +18,9 @@ agnostic and used as-is. `run_command` is pattern-specific (a Java pattern
 allows `mvn`/`gradle`, others allow nothing or a different toolchain) so
 it is built per pattern via `make_run_command`.
 """
+import fnmatch
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -208,6 +210,104 @@ def read_file(tool_context: ToolContext, path: str, start_line: int = 1, max_lin
     if end < total:
         header += f" (not the whole file: call read_file again with start_line={end + 1})"
     return header + "\n" + "\n".join(kept)
+
+
+_SEARCH_LINE_CHARS = 200
+
+
+def search_files(tool_context: ToolContext, pattern: str, glob: str = "*", subdir: str = ".",
+                 ignore_case: bool = False, files_only: bool = False, offset: int = 0) -> str:
+    """Search the CONTENTS of workspace files for a regular expression.
+
+    This is how to find every use of an API, import or configuration key
+    across the repository without reading each file. It is read-only and runs
+    no code. Combine related terms into one pattern with `|` rather than
+    making one call per term.
+
+    Args:
+        pattern: A Python regular expression, matched line by line
+            (e.g. `sun[.]misc[.]BASE64|javax[.]xml[.]bind`; `[.]` is a literal dot).
+        glob: Which files to search, matched against the path relative to the
+            workspace root. `*` matches across folders, so `*.java` means every
+            Java file at any depth and `*.jsp` every JSP. Several globs may be
+            separated by `,` (e.g. `*.jsp,*.jspf,*.tag`). Defaults to all files.
+        subdir: Only search under this directory. Defaults to the whole repository.
+        ignore_case: Match case-insensitively.
+        files_only: Return one line per matching file with its match count,
+            instead of every matching line — the cheap way to size a finding
+            or count files per category.
+        offset: 0-based index of the first result to return. Use the value the
+            previous page's header tells you.
+
+    Returns:
+        A header stating the total matches and files and which page this is,
+        then `path:line: text` lines (or `path: N matches` with files_only),
+        or a string starting with "ERROR:".
+    """
+    try:
+        start = resolve_within_workspace(tool_context, subdir)
+        root = workspace_root(tool_context)
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+    if not start.exists():
+        return f"ERROR: '{subdir}' does not exist in the workspace."
+    try:
+        regex = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
+    except re.error as exc:
+        return f"ERROR: invalid regular expression {pattern!r}: {exc}"
+    globs = [g.strip() for g in (glob or "*").split(",") if g.strip()] or ["*"]
+
+    hits: list[str] = []
+    per_file: list[tuple[str, int]] = []
+    scanned = skipped_large = 0
+    for path in sorted(start.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root)
+        if EXCLUDED_DIRS & set(rel.parts):
+            continue
+        rel_posix = rel.as_posix()
+        if not any(fnmatch.fnmatch(rel_posix, g) or fnmatch.fnmatch(path.name, g) for g in globs):
+            continue
+        try:
+            if path.stat().st_size > config.SEARCH_MAX_FILE_BYTES:
+                skipped_large += 1
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        scanned += 1
+        count = 0
+        for number, line in enumerate(text.splitlines(), 1):
+            if regex.search(line):
+                count += 1
+                if not files_only:
+                    line = line.strip()
+                    if len(line) > _SEARCH_LINE_CHARS:
+                        line = line[:_SEARCH_LINE_CHARS] + " …"
+                    hits.append(f"{rel_posix}:{number}: {line}")
+        if count:
+            per_file.append((rel_posix, count))
+
+    total_matches = sum(c for _, c in per_file)
+    results = [f"{p}: {c} match{'es' if c != 1 else ''}" for p, c in per_file] if files_only else hits
+    page_size = config.SEARCH_MAX_RESULTS
+    offset = max(offset, 0)
+    page = results[offset:offset + page_size]
+
+    header = (
+        f"# search {pattern!r} in {', '.join(globs)}: {total_matches} matching line(s) in "
+        f"{len(per_file)} file(s); {scanned} file(s) searched"
+    )
+    if skipped_large:
+        header += (f"; {skipped_large} file(s) over {config.SEARCH_MAX_FILE_BYTES:,} bytes NOT searched")
+    if not results:
+        return header + " — no matches."
+    end = offset + len(page)
+    header += f" — showing {offset + 1}-{end} of {len(results)}"
+    if end < len(results):
+        header += f" (not all: call search_files again with offset={end})"
+    return header + "\n" + "\n".join(page)
 
 
 def write_file(tool_context: ToolContext, path: str, content: str,

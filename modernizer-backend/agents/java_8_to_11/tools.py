@@ -25,6 +25,7 @@ from ..shared.workspace_tools import (  # noqa: F401 (re-exported)
     list_files,
     make_run_command,
     read_file,
+    search_files,
 )
 
 PATTERN = "java-8-to-11"
@@ -171,6 +172,6 @@ def signal_build_success(tool_context: ToolContext) -> str:
 
 
 __all__ = [
-    "list_files", "read_file", "replace_in_file", "write_file", "run_command",
+    "list_files", "read_file", "search_files", "replace_in_file", "write_file", "run_command",
     "signal_build_success", "check_java11_invariants",
 ]

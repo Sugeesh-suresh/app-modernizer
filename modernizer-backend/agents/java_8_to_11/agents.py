@@ -86,8 +86,18 @@ re_agent = LlmAgent(
     name="java11_re",
     model=_MODEL,
     description="Reverse-engineers a Java 8 JSP/WildFly monolith for a Java 11 upgrade and produces Analysis, BRD, Technical Specification, and an Existing Test Inventory.",
-    instruction="Load and execute the `java-8-to-11-re` skill, using the list_files and read_file tools to explore the workspace.",
-    tools=[_skill("java-8-to-11-re"), FunctionTool(fs_tools.list_files), FunctionTool(fs_tools.read_file)],
+    instruction=(
+        "Load and execute the `java-8-to-11-re` skill, using the list_files, search_files and read_file "
+        "tools to explore the workspace. Use search_files to find where an API, import or setting is "
+        "used across the repository, then read_file to understand the hits. These tools are the only "
+        "way to inspect the code: nothing in this environment executes code."
+    ),
+    tools=[
+        _skill("java-8-to-11-re"),
+        FunctionTool(fs_tools.list_files),
+        FunctionTool(fs_tools.search_files),
+        FunctionTool(fs_tools.read_file),
+    ],
     output_key="analysis",
     include_contents="none",
 )

@@ -171,6 +171,7 @@ The hard rule is that **a limit is never hit silently**:
 | Ingestion (`WORKSPACE_MAX_FILES` / `_BYTES`) | The remainder is counted and reported in the upload response, the server log, a persistent UI banner, and a warning prepended to the BRD and Technical Specification. Nothing proceeds pretending the repo was complete. |
 | `list_files` | Paginates with `offset`, and every page header states the true total. The first page of a multi-page listing carries a directory rollup so an agent can narrow by `subdir` instead of paging; `summary=True` returns the rollup alone (~125 tokens for an 8k-file monorepo, versus ~88k for a flat listing). |
 | `read_file` | Already windowed; the header says how to ask for the rest. |
+| `search_files` | Content search (Java 8 → 11 reverse engineering). Pages with `offset`; the header states total matches and files searched, and names any file skipped for size. |
 | `run_command` output | Trimmed from the **middle**, keeping head and tail. Maven puts every `[ERROR]` and the reactor summary at the end, so head-first truncation used to hand the fixer the one part with no errors in it. |
 | `run_command` timeout | Reported explicitly as a timeout, not a build failure — a reactor build that ran out of clock says nothing about whether the code compiles. |
 | Result collection | The ZIP download is built from the workspace on disk and always holds every file. Only the browsable file list is capped, and the UI says "showing N of M". |
@@ -480,6 +481,8 @@ app-modernizer/
 | `WORKSPACE_MAX_TOTAL_BYTES` | No | `2000000000` | Bytes one upload may unpack, same guarantee |
 | `LIST_FILES_MAX_PATHS` | No | `2000` | Paths per `list_files` page |
 | `READ_FILE_MAX_CHARS` | No | `20000` | Characters per `read_file` window |
+| `SEARCH_MAX_RESULTS` | No | `200` | Matches per `search_files` page (the total is always reported) |
+| `SEARCH_MAX_FILE_BYTES` | No | `2000000` | Files larger than this are skipped by `search_files`, and counted as skipped |
 | `COMMAND_OUTPUT_MAX_CHARS` | No | `40000` | Characters of build output returned (head + tail) |
 | `RESULT_PREVIEW_MAX_FILES` | No | `2000` | Files in the browsable result. The ZIP download is always complete |
 | `RESULT_PREVIEW_MAX_TOTAL_BYTES` | No | `40000000` | Bytes in the browsable result, same guarantee |

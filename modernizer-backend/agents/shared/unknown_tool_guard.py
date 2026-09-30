@@ -44,10 +44,16 @@ def unknown_tool_response(name: str, tools: list[str]) -> dict[str, Any]:
     """The tool result the model sees in place of the crash."""
     message = f"Tool '{name}' does not exist in this environment and was not run."
     if _CODE_EXECUTION.search(name):
-        message += (
-            " There is no code interpreter here: you cannot execute Python or any other code. "
-            "Inspect the repository with list_files and read_file, and reason from what they return."
-        )
+        # Stated from the tools this agent really has: a validator holds
+        # run_command, a reverse-engineering agent holds only read tools.
+        message += " There is no code interpreter here."
+        if "run_command" in tools:
+            message += " The only commands you can run are the build commands run_command accepts."
+        else:
+            message += " You cannot run code or commands."
+        inspect = [t for t in ("search_files", "list_files", "read_file") if t in tools]
+        if inspect:
+            message += " To inspect the repository use " + ", ".join(inspect) + "."
     if tools:
         message += " Call only these tools: " + ", ".join(tools) + "."
     return {"error": message}

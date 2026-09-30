@@ -26,12 +26,25 @@ the human approver will hold it to:
   Dockerfile). The packaging, the archive name and the `javax.*` Java EE
   namespace also stay exactly as they are.
 
-You do NOT have the codebase in context. Discover it with `list_files` and
+You do NOT have the codebase in context. Discover it with `list_files`, `search_files` and
 `read_file`. You are not authorized to modify anything.
 
-On a large repository, start with `list_files(subdir=".", summary=True)` to
-get the directory rollup, then narrow with `subdir` rather than paging the
-whole tree. Use `offset` when a listing says there are more paths.
+Your tools, and the only ways to inspect the repository:
+- `list_files` — file paths (no contents). On a large repository start with
+  `list_files(subdir=".", summary=True)` for the directory rollup, then narrow
+  with `subdir` rather than paging the whole tree.
+- `search_files` — searches file CONTENTS with a regular expression and
+  returns `path:line: text` hits, or per-file counts with `files_only=True`.
+  Use it for every "find all uses of X" question: it covers the whole
+  repository in one call, which reading file by file cannot.
+- `read_file` — one file, to understand what a hit actually does.
+- The skill tools (`load_skill_resource` for this skill's `references/`).
+  This skill has no scripts.
+
+Nothing in this environment executes code — there is no interpreter, shell or
+build. Never call a tool that is not listed above. All three workspace tools
+paginate and say so in their header: follow `offset` until you have the whole
+answer, or state which part you did not cover.
 
 Load `references/java11-blockers.md` before Step 3 — it is the checklist of
 what actually breaks between Java 8 and Java 11.
@@ -77,7 +90,11 @@ STEP 1 — INVENTORY
   imports, profiles; Gradle files and wrapper), source roots, test roots,
   resources, webapp roots, WildFly/JBoss descriptors and configuration, CI/CD
   files, Dockerfiles and launch scripts.
-- Count, per module: `.java` main files, `.java` test files, JSP files.
+- Count, per module: `.java` main files, `.java` test files, JSP files. The
+  `list_files` rollup counts all files per directory, not per type; for a
+  per-type count use `search_files(pattern=".", glob="*.java",
+  subdir="<module>/src/main", files_only=True)` and read "N file(s) searched"
+  from its header.
 - Identify the deployable units (WAR/EAR/JAR modules) and which modules are
   libraries packaged inside them.
 
@@ -99,8 +116,12 @@ STEP 2 — BUILD, TOOLCHAIN AND DEPENDENCY FACTS
   command a build agent should run (`mvn -q -DskipTests package`).
 
 STEP 3 — JAVA 11 BLOCKER SCAN (the core of this engagement)
-Using `references/java11-blockers.md`, search the Java sources for each
-category and record every observed hit with file and line:
+Using `references/java11-blockers.md`, find every use of each category with
+`search_files` over `*.java` — one call per category, combining its terms
+with `|` (e.g. `javax[.]xml[.]bind|javax[.]xml[.]ws|javax[.]jws`). Record every
+hit with file and line; when a category has more hits than one page, record
+the total from the header and page with `offset`. Then `read_file` the hits
+that need judgement (is it a real use or a comment? which module?):
 - Java EE modules removed from the JDK in 11 (JAXB `javax.xml.bind`, JAX-WS
   `javax.xml.ws` / `javax.jws` / `javax.xml.soap`, JAF `javax.activation`,
   Common Annotations `javax.annotation.PostConstruct`/`PreDestroy`/`Resource`/
@@ -122,7 +143,8 @@ category and record every observed hit with file and line:
 - **JSP scriptlets, read but never to be edited.** JSPs are compiled by
   WildFly's JSP engine on the server's JDK at runtime, so a scriptlet or tag
   using a removed API will fail on Java 11 even though this migration cannot
-  touch it. Search the JSP files for the same removed APIs and report each hit
+  touch it. Run the same searches with `glob="*.jsp,*.jspf,*.jspx,*.tag,*.tagx"`
+  and report each hit
   as a **frozen-zone runtime risk** with file and line — never as a planned
   change.
 
