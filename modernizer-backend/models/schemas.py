@@ -55,6 +55,9 @@ class UploadResponse(BaseModel):
     analysis_review: bool = True
     # Context files (Swagger, OpenAPI, design docs) accepted with the upload.
     context_files: int = 0
+    # True when the run starts with the environment check (JDK, Maven, the
+    # uploaded code built on the target JDK) before planning.
+    preflight: bool = False
 
 
 class ConfirmRequest(BaseModel):

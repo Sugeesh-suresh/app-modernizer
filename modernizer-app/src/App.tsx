@@ -32,6 +32,8 @@ const INITIAL_STATE: WorkflowState = {
   generatedFilesTotal: 0,
   filesTruncated: 0,
   analysisReview: true,
+  preflight: false,
+  preflightSummary: '',
   changedFiles: [],
   streamingContent: '',
   validationContent: '',
@@ -292,6 +294,12 @@ export default function App() {
         }));
         break;
 
+      // Java 8 -> 11 environment check: its one-line result stays on screen for
+      // the rest of the run (an environment failure arrives as an `error`).
+      case 'preflight-stream':
+        setState((s) => ({ ...s, preflightSummary: (event.content ?? '').replace(/\*\*/g, '').trim() }));
+        break;
+
       case 'stack-inventory-ready':
         setState((s) => ({ ...s, streamingContent: '' }));
         break;
@@ -379,12 +387,13 @@ export default function App() {
     setState((s) => ({ ...s, javaOptions: options }));
   };
 
-  const handleSessionCreated = (sessionId: string, filesTruncated = 0, analysisReview = true) => {
+  const handleSessionCreated = (sessionId: string, filesTruncated = 0, analysisReview = true, preflight = false) => {
     setState((s) => ({
       ...s,
       sessionId,
       filesTruncated,
       analysisReview,
+      preflight,
       step: 'dependency-graph',
       streamingContent: '',
       progress: 0,
@@ -466,10 +475,19 @@ export default function App() {
   // A deterministic inventory goes from the dependency mapper straight to the
   // planner: the server never enters these steps, so the rail does not show them.
   if (!state.analysisReview) skipSteps.push('reverse-engineering', 'brd-review');
+  if (!state.preflight) skipSteps.push('preflight');
 
   return (
     <div className="min-h-screen">
       <Header />
+
+      {state.preflightSummary && state.step !== 'upload' && (
+        <div className="max-w-5xl mx-auto px-6 pt-4">
+          <div className="rounded-xl border border-slate-900/10 bg-slate-900/5 px-4 py-2 text-xs text-slate-700">
+            {state.preflightSummary}
+          </div>
+        </div>
+      )}
 
       {/* Stays visible for the whole run, not just at upload: every document and
           manifest produced afterwards describes only the part of the repository
@@ -527,6 +545,7 @@ export default function App() {
         )}
 
         {(state.step === 'dependency-graph' ||
+          state.step === 'preflight' ||
           state.step === 'stack-mapping' ||
           state.step === 'reverse-engineering' ||
           state.step === 'plan-generation' ||

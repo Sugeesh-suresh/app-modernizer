@@ -234,13 +234,14 @@ modifier_agent = LlmAgent(
 validator_agent = LlmAgent(
     name="validator_agent",
     model=_MODEL,
-    description="Runs the real build (mvn/gradle package at release 11) and the deterministic scope-fence check, and reports pass/fail as JSON.",
+    description="Runs the real build and test suite on the migration JDK and the deterministic scope-fence check, and reports pass/fail as JSON.",
     instruction=(
         "Load and execute the `java-8-to-11-validate` skill to build the workspace, check the Java 11 "
         "scope-fence invariants, and report the result."
     ),
     tools=[
         _skill("java-8-to-11-validate"),
+        FunctionTool(fs_tools.run_java11_build),
         FunctionTool(fs_tools.run_command),
         FunctionTool(fs_tools.check_java11_invariants),
         FunctionTool(fs_tools.signal_build_success),
@@ -308,6 +309,7 @@ reporter_agent = LlmAgent(
         "Load and execute the `java-8-to-11-report` skill to produce the final migration report. Fold "
         "the Independent Code Review's findings into a dedicated report section rather than ignoring "
         "them.\n\n"
+        "## Build Environment (preflight, before the migration)\n{preflight_summary?}\n\n"
         "## Modify Result (one entry per plan task)\n{modify_result}\n\n"
         "## Final Build Result\n{build_result}\n\n"
         "## Independent Code Review\n{code_review}"

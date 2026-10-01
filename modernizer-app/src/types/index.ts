@@ -25,6 +25,7 @@ export type WorkflowStep =
   /** stack-discovery only: the dependency mapper working out what is in the repo. */
   | 'stack-mapping'
   | 'companion-selection'
+  | 'preflight'
   | 'reverse-engineering'
   | 'brd-review'
   | 'plan-generation'
@@ -126,6 +127,11 @@ export interface WorkflowState {
   /** False when the server passes a deterministic inventory straight to the
    * planner: no reverse-engineering or analysis-review step in this run. */
   analysisReview: boolean;
+  /** True when the run starts with the environment check (JDK, Maven, the
+   * uploaded code built on the target JDK) — Java 8 -> 11. */
+  preflight: boolean;
+  /** The environment check's one-line result, shown for the rest of the run. */
+  preflightSummary: string;
   changedFiles: ChangedFile[];
   streamingContent: string;
   /** Separate stream for validate-agent output */

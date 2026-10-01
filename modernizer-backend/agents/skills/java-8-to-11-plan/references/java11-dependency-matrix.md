@@ -1,11 +1,21 @@
 # Java 11 Dependency & Plugin Matrix
 
-For deciding what moves, to what, and why. The **minimal-change rule** holds
-throughout: move a coordinate only when Java 11 needs it, and to the smallest
-version that fixes the problem unless a row says otherwise. Versions below are
-commonly documented floors and known-good choices — mark any you did not see
-verified in the specification as inferred (`*`) in the Confidence Register;
-the build loop is the arbiter.
+For deciding what moves, to what, and why.
+
+**Compile-first: the build decides, not this table.** The run builds the
+uploaded code on JDK 11 before planning (the Technical Specification's
+*Baseline Build on JDK 11*) and builds and **tests** the result after. A
+plugin or library moves only when one of those shows the failure in its
+row's **Trigger** column — the baseline build output, a validation error, or
+a failing test naming it. An old version that builds and passes its tests on
+JDK 11 stays exactly as it is, however old: list it under Deprecated
+Libraries and Out of Scope. Real migrations of large monoliths succeed by
+changing almost nothing beyond the compiler level and the removed JDK
+modules; every speculative bump adds risk (renamed artifacts, API breaks in
+test code, versions that do not download) and proves nothing.
+
+When a trigger does fire, move to the smallest version that fixes it — the
+**Target** column, which lists released versions that exist on Maven Central.
 
 ## Compiler configuration (always)
 
@@ -27,23 +37,23 @@ Exactly 11 — never 12+.
 
 ## Build plugins
 
-| Plugin | Move when | Target |
+| Plugin | Trigger (the build must show this) | Target |
 |---|---|---|
-| maven-compiler-plugin | below 3.8.0 | 3.8.1 (or newer if the Maven version allows) |
-| maven-surefire-plugin / maven-failsafe-plugin | below 2.22.0 | 2.22.2 |
-| maven-war-plugin | 2.x | 3.4.0 — **`<version>` only**; its configuration is frozen |
-| maven-jar-plugin / maven-resources-plugin | 2.x and failing | newest 3.x |
-| maven-javadoc-plugin | below 3.0.1 and bound to the build | newest 3.x |
-| maven-shade-plugin | below 3.2.0 | newest 3.x |
-| maven-enforcer-plugin | `requireJavaVersion` excludes 11 | widen the range to admit 11 (e.g. `[11,)`) |
-| animal-sniffer-maven-plugin | a `java18` signature in a release-11 build | remove the check or its `java18` signature — `--release 11` enforces the API now |
-| jacoco-maven-plugin | below 0.8.2 | 0.8.8+ |
-| findbugs-maven-plugin | present | `com.github.spotbugs:spotbugs-maven-plugin` newest 4.x, same checks |
-| aspectj-maven-plugin (org.codehaus.mojo) | 1.11 or older | 1.14.0 with `<complianceLevel>11</complianceLevel>` |
-| jaxb2-maven-plugin (xjc) | below 2.5.0 | 2.5.0 |
-| org.codehaus.mojo:jaxws-maven-plugin (wsimport) | present | `com.sun.xml.ws:jaxws-maven-plugin` 2.3.x (brings its own wsimport) |
+| maven-compiler-plugin | `invalid flag: --release`, or `release` not recognised, once the level is set to 11 | 3.8.1 |
+| maven-surefire-plugin / maven-failsafe-plugin | `The forked VM terminated without properly saying goodbye`, or tests not run on JDK 11 | 2.22.2 |
+| maven-war-plugin | `Execution default-war of goal …maven-war-plugin:2.x:war failed` (packaging on JDK 11) | 3.4.0 — **`<version>` only**; its configuration is frozen |
+| maven-jar-plugin / maven-resources-plugin | that plugin's execution fails on JDK 11 | newest 3.x |
+| maven-javadoc-plugin | it fails during `package` on JDK 11 | newest 3.x |
+| maven-shade-plugin | `Unsupported class file major version 55` from shade | newest 3.x |
+| maven-enforcer-plugin | `RequireJavaVersion failed` | widen the range to admit 11 (e.g. `[11,)`) |
+| animal-sniffer-maven-plugin | its `java18` signature check fails | remove the check or its `java18` signature |
+| jacoco-maven-plugin | `Unsupported class file major version 55` from jacoco during tests | 0.8.8 |
+| findbugs-maven-plugin | it fails on JDK 11 classes during the build | `com.github.spotbugs:spotbugs-maven-plugin` 4.x, same checks |
+| aspectj-maven-plugin (org.codehaus.mojo) | `bad version number found … expected <= 52` / compliance errors | 1.14.0 with `<complianceLevel>11</complianceLevel>` |
+| jaxb2-maven-plugin (xjc) | xjc fails on JDK 11 | 2.5.0 |
+| org.codehaus.mojo:jaxws-maven-plugin (wsimport) | wsimport not found on JDK 11 | `com.sun.xml.ws:jaxws-maven-plugin` 2.3.x |
 | wildfly-maven-plugin / jboss-as-maven-plugin / cargo | — | **frozen, never touched** |
-| Gradle wrapper | below 5.0 | the lowest that runs on 11 and the build's plugins (5.6.4 / 6.9.4) |
+| Gradle wrapper | the wrapper cannot start on JDK 11 | the lowest that runs on 11 and the build's plugins (5.6.4 / 6.9.4) |
 
 ## Java EE modules removed from the JDK
 
@@ -74,19 +84,22 @@ Exceptions:
 
 ## Libraries (only when bundled in the WAR — never when container-provided)
 
-| Library | Move when | Target | Note |
+Every row needs its trigger in the baseline build, a validation error or a
+failing test. "Old" or "EOL" is never a trigger.
+
+| Library | Move when (trigger) | Target | Note |
 |---|---|---|---|
-| Spring Framework | 3.x, or 4.x | newest 5.3.x | 3.x cannot read Java 11 class files. 4.3 is EOL and not documented for 11. 4 → 5 is not a pure bump: `orm.hibernate3` support, Velocity, and some deprecated APIs are gone — size the call sites. Still `javax`. Spring Security moves with it (5.x). |
-| Hibernate ORM | below 5.3, and bundled | 5.4.33.Final or 5.6.15.Final (javax) | if WildFly provides Hibernate (JPA with a container persistence unit), it is the container's — do not touch |
-| ASM | below 7.0 | newest 9.x | |
-| cglib | below 3.3.0 | 3.3.0, or remove if Spring's repackaged copy is what is used | |
-| javassist | old | newest 3.x | |
-| Byte Buddy | old | newest 1.x | |
-| AspectJ (aspectjrt / aspectjweaver / aspectjtools) | below 1.9.2 | newest 1.9.x that still supports compliance 11 | |
-| Lombok | below 1.18.4 | newest 1.18.x | |
-| mockito-all 1.x / mockito-core 1.x | always | `mockito-core` **2.28.2** | the minimal hop: Java 11 support landed in 2.23, and 2.x still has `Matchers`, `anyObject()` and `org.mockito.runners` that 4.x deletes. Test code changes: runner package, `anyString()` no longer matches null, `Whitebox` removed |
-| PowerMock 1.x | always | 2.0.9 — and the Mockito module's **artifactId changes**: `powermock-api-mockito` → `powermock-api-mockito2` | `powermock-api-mockito:2.x` does not exist (it stops at 1.7.4); a build asking for it fails to download, often as 401 from a repository manager. `powermock-module-junit4` keeps its name |
-| commons-lang3 | below 3.8 and `SystemUtils`/`JavaVersion` used | 3.8.1+ | older versions misread Java 9+ version strings |
+| Spring Framework | 3.x (cannot read Java 11 class files: `ASM ClassReader failed to parse class file`), or a test/startup failure in Spring 4.x on JDK 11. Spring 4.3 that builds and passes its tests stays | newest 5.3.x | 3.x cannot read Java 11 class files. 4.3 is EOL and not documented for 11. 4 → 5 is not a pure bump: `orm.hibernate3` support, Velocity, and some deprecated APIs are gone — size the call sites. Still `javax`. Spring Security moves with it (5.x). |
+| Hibernate ORM | bundled, and a JDK 11 failure (javassist/bytecode enhancement errors, test failures) names it | 5.4.33.Final or 5.6.15.Final (javax) | if WildFly provides Hibernate (JPA with a container persistence unit), it is the container's — do not touch |
+| ASM | `Unsupported class file major version 55` from it | newest 9.x | |
+| cglib | proxy-generation failures on JDK 11 | 3.3.0, or remove if Spring's repackaged copy is what is used | |
+| javassist | `IllegalAccessError` / class-file errors from it on JDK 11 | newest 3.x | |
+| Byte Buddy | `Java 11 (55) is not supported` from it | newest 1.x | |
+| AspectJ (aspectjrt / aspectjweaver / aspectjtools) | weaving/compile errors on JDK 11 class files | newest 1.9.x that still supports compliance 11 | |
+| Lombok | `IllegalAccessError … com.sun.tools.javac` | newest 1.18.x | |
+| mockito-all 1.x / mockito-core 1.x | a test fails on JDK 11 inside Mockito/cglib (e.g. `Mockito cannot mock this class`, cglib `IllegalArgumentException`). Mockito 1 tests that pass on 11 stay on 1.x | `mockito-core` **2.28.2** | the minimal hop: Java 11 support landed in 2.23, and 2.x still has `Matchers`, `anyObject()` and `org.mockito.runners` that 4.x deletes. Test code changes: runner package, `anyString()` no longer matches null, `Whitebox` removed |
+| PowerMock 1.x | a PowerMock test fails on JDK 11, or Mockito moved to 2.x (PowerMock 1.x requires Mockito 1) | 2.0.9 — and the Mockito module's **artifactId changes**: `powermock-api-mockito` → `powermock-api-mockito2` | `powermock-api-mockito:2.x` does not exist (it stops at 1.7.4); a build asking for it fails to download, often as 401 from a repository manager. `powermock-module-junit4` keeps its name |
+| commons-lang3 | a failure from `SystemUtils`/`JavaVersion` misreading "11" | 3.8.1+ | older versions misread Java 9+ version strings |
 | JavaFX | used | OpenJFX 11 | a decision, not a bump — escalate |
 
 Versions in this table are released versions that exist on Maven Central.

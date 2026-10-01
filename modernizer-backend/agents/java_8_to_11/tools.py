@@ -17,9 +17,14 @@ agent reads why and adjusts.
 `check_java11_invariants` is the validator's deterministic half: the build
 loop exits green only when the real build passes AND this reports PASS.
 """
+import json
+from pathlib import Path
+
 from google.adk.tools import ToolContext
 
-from ..shared import scope_fence
+from .. import config
+from . import preflight
+from ..shared import java_env, scope_fence
 from ..shared import workspace_tools as _ws
 from ..shared.workspace_tools import (  # noqa: F401 (re-exported)
     list_files,
@@ -30,7 +35,10 @@ from ..shared.workspace_tools import (  # noqa: F401 (re-exported)
 
 PATTERN = "java-8-to-11"
 
-run_command = make_run_command({"mvn", "mvnw", "./mvnw", "gradle", "gradlew", "./gradlew", "javac", "java"})
+# Builds run on the migration JDK with the configured Maven settings, not on
+# whatever the server process happens to have on PATH.
+run_command = make_run_command({"mvn", "mvnw", "./mvnw", "gradle", "gradlew", "./gradlew", "javac", "java"},
+                               env_factory=java_env.build_env, extra_args=java_env.maven_settings_args)
 
 
 def _relative(tool_context: ToolContext, path: str) -> str | None:
@@ -151,6 +159,93 @@ def check_java11_invariants(tool_context: ToolContext) -> str:
     return scope_fence.to_markdown(PATTERN, problems, notes)
 
 
+def run_java11_build(tool_context: ToolContext) -> str:
+    """Build the migrated workspace on the migration JDK (MIGRATION_JAVA_HOME)
+    with the configured Maven settings: `clean package` from every Maven root,
+    running the test suite unless VALIDATE_RUN_TESTS is off. Reads the
+    compiler output and the surefire reports itself, so nothing is lost or
+    misread.
+
+    Classifies every problem:
+      COMPILE:     a compile error, `path:line — message`
+      TEST:        a test failing now that passed (or was not run) before the
+                   migration — tests that already failed on the baseline JDK are
+                   listed separately and are not errors
+      BUILD:       a plugin / packaging error
+      DEPENDENCY:  a download failure on a coordinate THIS MIGRATION introduced
+                   or changed — the coordinate is wrong, not the environment
+      ENVIRONMENT: a download failure on a coordinate exactly as uploaded —
+                   credentials, network or repository configuration; not
+                   fixable in the code
+
+    Returns:
+        A plain-text report ending in "BUILD: PASS" or "BUILD: FAIL".
+    """
+    state = tool_context.state or {}
+    workspace = Path(state.get("workspace_dir", ""))
+    if not workspace.is_dir():
+        return "ERROR: no workspace."
+    roots = preflight.maven_roots(workspace)
+    if not roots:
+        return ("No Maven build in this workspace — build it with run_command (gradle / ./gradlew build) "
+                "and read the output yourself.")
+    try:
+        before_pf = json.loads(state.get("preflight_json") or "{}")
+    except json.JSONDecodeError:
+        before_pf = {}
+    known_failing = set(before_pf.get("baseline_failing_tests") or [])
+    baseline_coords = {(g, a, v) for (_, g, a), v in
+                       scope_fence._resolved_coordinates(state.get("baseline_dir", "")).items()}
+
+    args = ["-fae", "clean", "package", "-Dmaven.test.failure.ignore=true"]
+    if not config.VALIDATE_RUN_TESTS:
+        args.append("-DskipTests")
+    lines: list[str] = []
+    errors = 0
+    pre_existing: list[str] = []
+    for root in roots:
+        rel_root = root.relative_to(workspace).as_posix()
+        java_env.clear_reports(root)
+        code, out = java_env.run_maven(root, args)
+        res = java_env.classify(out, code, root)
+        prefix = "" if rel_root in ("", ".") else f"{rel_root}/"
+        lines.append(f"## `{rel_root or '.'}` — `mvn {' '.join(args)}` exit_code={code}")
+        for e in res.compile:
+            lines.append(f"COMPILE: {prefix}{e}")
+        for e in res.other:
+            lines.append(f"BUILD: {e}")
+        for e in res.environment:
+            introduced = [c for c in res.coordinates if tuple(c.split(":")) not in baseline_coords]
+            if introduced:
+                lines.append(f"DEPENDENCY: {', '.join(introduced)} — introduced or changed by this migration and "
+                             f"cannot be downloaded: the coordinate is wrong (artifact renamed, version does not "
+                             f"exist, or pre-release). {e}")
+            else:
+                lines.append(f"ENVIRONMENT: {e} — the coordinate is as uploaded; this is credentials/network/"
+                             "repository configuration, not fixable in the code")
+        for name, detail, report in java_env.surefire_report(root):
+            if name in known_failing:
+                pre_existing.append(name)
+                continue
+            lines.append(f"TEST: {name} — {detail} (report: {Path(report).relative_to(workspace).as_posix()})")
+        if res.skipped:
+            lines.append(f"NOTE: not built because a module they depend on failed: {', '.join(res.skipped[:20])}")
+    errors = sum(1 for l in lines if l.split(":")[0] in ("COMPILE", "BUILD", "DEPENDENCY", "ENVIRONMENT", "TEST"))
+    if pre_existing:
+        lines.append(f"PRE-EXISTING (failed on the baseline JDK before the migration; not errors): "
+                     f"{', '.join(pre_existing[:30])}")
+    if not config.VALIDATE_RUN_TESTS:
+        lines.append("NOTE: tests compiled but not run (VALIDATE_RUN_TESTS=false).")
+    elif not before_pf.get("baseline_tests_run"):
+        lines.append("NOTE: no baseline test run (BASELINE_JAVA_HOME not set) — a failing test may predate the "
+                     "migration; say so in the summary rather than changing a test to make it pass.")
+    passed = errors == 0
+    tool_context.state["java11_build_passed"] = passed
+    tc = before_pf.get("toolchain") or {}
+    head = f"Toolchain: Maven {tc.get('maven_version') or '?'} on Java {tc.get('maven_java_major') or '?'}"
+    return "\n".join([head, *lines, f"BUILD: {'PASS' if passed else 'FAIL'} ({errors} error(s))"])
+
+
 def signal_build_success(tool_context: ToolContext) -> str:
     """Call this ONLY after the build command succeeded (exit code 0, no
     compiler errors) AND check_java11_invariants reported OVERALL: PASS.
@@ -159,6 +254,9 @@ def signal_build_success(tool_context: ToolContext) -> str:
     green build can never end the loop with a frozen file changed.
     """
     state = tool_context.state or {}
+    if state.get("java11_build_passed") is False:
+        return ("ERROR: build success NOT signalled — the last run_java11_build reported BUILD: FAIL. Report "
+                "its errors.")
     problems, _ = scope_fence.verify_invariants(
         PATTERN, state.get("baseline_dir", ""), state.get("workspace_dir", ""),
     )
@@ -173,5 +271,5 @@ def signal_build_success(tool_context: ToolContext) -> str:
 
 __all__ = [
     "list_files", "read_file", "search_files", "replace_in_file", "write_file", "run_command",
-    "signal_build_success", "check_java11_invariants",
+    "signal_build_success", "check_java11_invariants", "run_java11_build",
 ]

@@ -1,51 +1,46 @@
 ---
 name: java-8-to-11-validate
-description: Packages the migrated workspace with Maven/Gradle at Java release 11, runs the deterministic scope-fence check that proves JSP and the WildFly deployment are untouched, and reports the result as JSON.
+description: Builds and tests the migrated workspace on the migration JDK (Java 11) with the project's Maven settings, runs the deterministic scope-fence check that proves JSP and the WildFly deployment are untouched, and reports the result as JSON.
 ---
 
 You are a build verifier with real execution access to the workspace. You do
 not guess whether the code builds — you build it. You change nothing.
 
 A pass needs BOTH halves:
-1. the real build succeeds, and
+1. `run_java11_build` reports `BUILD: PASS` — it compiles, packages the WAR,
+   and runs the test suite on the migration JDK, and
 2. `check_java11_invariants` reports `OVERALL: PASS`.
 
-A green build with a failing fence check is a **failed** validation — the
-migration touched something it must not, or left a module off Java 11.
+A green build with a failing fence check is a **failed** validation.
 
 ## Steps
 
-1. Record the toolchain: `run_command("java -version")` and `run_command("mvn -v")`
-   (or `gradle -v`). If the JDK is older than 11, the build cannot pass for
-   environmental reasons — report that plainly as the error (never suggest
-   lowering the release to make it pass).
-2. Build. Use the `package` goal so the WAR is really assembled by the
-   maven-war-plugin on this JDK — compiling alone would miss a WAR plugin
-   that cannot run on 11:
-   - `mvn -q -DskipTests package` when a `pom.xml` is present
-   - `./mvnw -q -DskipTests package` if `mvn` is not installed
-   - `gradle assemble` / `./gradlew assemble` for Gradle
-   `-DskipTests` still compiles the test sources, which is what catches
-   Mockito/PowerMock API breaks. It runs none of them.
-3. Read `exit_code` and the output. `exit_code=0` with no `[ERROR]` /
-   `error:` lines means the build passed. Otherwise extract every distinct
-   error as `file:line — message`. A timeout is a timeout, not a compile
-   error — say so.
-4. Call `check_java11_invariants`. Every line under `PROBLEMS` is an error
-   for the report, quoted as given.
-5. Only when the build passed AND the check says `OVERALL: PASS`, call
-   `signal_build_success`. It re-checks the invariants itself and refuses
-   while they fail — if it returns `ERROR:`, the validation failed.
-6. Finish with ONLY one JSON object — no markdown, no prose:
+1. Call `run_java11_build`. It picks the JDK and Maven settings the run was
+   configured with (the same ones the preflight checked), builds every Maven
+   root with `clean package`, runs the tests, and reads the compiler output
+   and surefire reports itself. Every line it prints starting with
+   `COMPILE:`, `TEST:`, `BUILD:`, `DEPENDENCY:` or `ENVIRONMENT:` is an error
+   — copy each one into `errors` exactly as printed. `PRE-EXISTING` tests and
+   `NOTE:` lines are not errors; mention them in the summary.
+   - For a Gradle-only repository it says so: then build with
+     `run_command("gradle build")` (or `./gradlew build`) and extract every
+     distinct error as `file:line — message` yourself.
+2. Call `check_java11_invariants`. Every line under `PROBLEMS` is an error,
+   prefixed `FENCE:`.
+3. Only when the build says `BUILD: PASS` AND the check says
+   `OVERALL: PASS`, call `signal_build_success`. It re-checks both and
+   refuses otherwise — if it returns `ERROR:`, the validation failed.
+4. Finish with ONLY one JSON object — no markdown, no prose:
 
 ```
-{"passed": true, "errors": [], "summary": "Build succeeded on JDK <version>: <command>. Fence check PASS."}
+{"passed": true, "errors": [], "summary": "Built and tested on Java 11 (Maven <version>). <n> pre-existing test failures excluded. Fence check PASS."}
 ```
 
 ```
-{"passed": false, "errors": ["<file>:<line> — <error>", "FENCE: <problem>"], "summary": "<one sentence on the root cause>"}
+{"passed": false, "errors": ["COMPILE: <path>:<line> — <error>", "TEST: <Class#method> — <failure>", "FENCE: <problem>"], "summary": "<one sentence on the root cause>"}
 ```
 
-Prefix fence problems with `FENCE:` so the fixer can tell them from compiler
-errors. YOUR ENTIRE FINAL RESPONSE MUST BE ONLY THE JSON OBJECT. Never call
-`signal_build_success` when either half failed.
+`ENVIRONMENT:` errors mean the machine cannot download an artifact the
+project used before the migration — say so in the summary: the fixer cannot
+repair them in the code. YOUR ENTIRE FINAL RESPONSE MUST BE ONLY THE JSON
+OBJECT. Never call `signal_build_success` when either half failed.

@@ -143,3 +143,19 @@ COMMAND_OUTPUT_MAX_CHARS: int = _int("COMMAND_OUTPUT_MAX_CHARS", 40_000)
 # this -- it always contains every file (see main.py's _archive_workspace).
 RESULT_PREVIEW_MAX_FILES: int = _int("RESULT_PREVIEW_MAX_FILES", 2_000)
 RESULT_PREVIEW_MAX_TOTAL_BYTES: int = _int("RESULT_PREVIEW_MAX_TOTAL_BYTES", 40_000_000)
+
+# ── Java 8 -> 11 build environment (agents/shared/java_env.py) ──────────────
+# JDK the migration builds run on. Empty: whatever `java` / `mvn` on PATH use.
+MIGRATION_JAVA_HOME: str = os.getenv("MIGRATION_JAVA_HOME", "").strip()
+# Optional JDK 8: the uploaded code's tests run on it once, so test failures
+# that predate the migration are reported, not "fixed".
+BASELINE_JAVA_HOME: str = os.getenv("BASELINE_JAVA_HOME", "").strip()
+# Optional settings.xml (mirrors, repository credentials) for every Maven call.
+MAVEN_SETTINGS: str = os.getenv("MAVEN_SETTINGS", "").strip()
+# Before planning: check the JDK and Maven, and build the uploaded code on the
+# target JDK. `off` skips it (no verification is then possible).
+PREFLIGHT: str = (os.getenv("PREFLIGHT", "on") or "on").strip().lower()
+# Validation runs the test suite (failures that predate the migration excluded).
+VALIDATE_RUN_TESTS: bool = os.getenv("VALIDATE_RUN_TESTS", "true").strip().lower() not in {"0", "false", "no", "off"}
+# One Maven build (preflight or validation), tests included.
+VALIDATE_TIMEOUT_SECONDS: int = _int("VALIDATE_TIMEOUT_SECONDS", 3600)

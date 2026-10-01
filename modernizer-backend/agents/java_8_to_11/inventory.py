@@ -409,10 +409,16 @@ def to_document(inv: Inventory, max_rows: int = 400) -> str:
     out += [f"| `{p.path}` | {p.artifact} | {p.packaging} | {p.final_name or '—'} | {p.parent or '—'} |" for p in inv.modules]
     out += ["", "## Declared Java Levels", "", "| File | Setting | Level |", "|---|---|---|"]
     out += [f"| `{f}` | {s} | {l} |" for f, s, l in levels] or ["| — | none declared literally | — |"]
-    out += ["", "## Build Plugins", "", "| POM | Plugin | Version | Finding |", "|---|---|---|---|"]
+    out += ["", "## Build Plugin Candidates (move only if a build error names them)", "",
+            "_Versions known to have Java 11 problems somewhere. Not work items: a plugin moves only when the "
+            "Baseline Build or validation shows its failure._", "",
+            "| POM | Plugin | Version | Finding |", "|---|---|---|---|"]
     out += _clip([f"| `{p}` | {i} | {v} | {f} |" for p, i, v, f in inv.build_findings], max_rows, "plugin rows") \
         or ["| — | — | — | nothing Java 11 needs to change |"]
-    out += ["", "## Dependencies Affected by Java 11", "", "| POM | Coordinate | Version | Scope | Finding |", "|---|---|---|---|---|"]
+    out += ["", "## Library Candidates (move only if a build error or failing test names them)", "",
+            "_Versions known to have Java 11 problems in some code. Not work items: a library that builds and "
+            "passes its tests on JDK 11 stays as it is._", "",
+            "| POM | Coordinate | Version | Scope | Finding |", "|---|---|---|---|---|"]
     out += _clip([f"| `{p}` | {c} | {v} | {s} | {f} |" for p, c, v, s, f in inv.dependency_rows], max_rows, "dependency rows") \
         or ["| — | — | — | — | none |"]
     out += _blocker_tables(inv, change, risk, max_rows)

@@ -6,6 +6,7 @@ const ALL_STEPS: { id: WorkflowStep; label: string }[] = [
   { id: 'dependency-graph', label: 'Dependency Graph' },
   { id: 'stack-mapping', label: 'Map Stacks' },
   { id: 'companion-selection', label: 'Additional Migrations' },
+  { id: 'preflight', label: 'Environment Check' },
   { id: 'reverse-engineering', label: 'Reverse Engineer' },
   { id: 'brd-review', label: 'Analysis Review' },
   { id: 'plan-generation', label: 'Plan' },

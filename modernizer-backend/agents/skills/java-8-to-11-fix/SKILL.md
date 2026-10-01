@@ -40,6 +40,28 @@ errors and their fixes.
   error here has a different cause.
 - **Never** downgrade a library to make the build pass.
 
+## Error kinds from the build tool
+
+The validator's `run_java11_build` labels every error:
+
+- `COMPILE:` — fix the code or add the missing removed-JDK-module dependency.
+- `BUILD:` — a plugin or packaging failure. Move that plugin to the matrix
+  target **only** when the error matches its trigger.
+- `DEPENDENCY:` — a coordinate this migration introduced or changed cannot be
+  downloaded: the coordinate is wrong. Fix it (below); never touch
+  repositories.
+- `ENVIRONMENT:` — a coordinate exactly as uploaded cannot be downloaded:
+  credentials, network or repository configuration. Change nothing; report it
+  under "Errors not resolved" as environment.
+- `TEST:` — a test failing on JDK 11 that did not fail before the migration
+  (pre-existing failures are filtered out). Read the report path it gives.
+  Fix the **cause Java 11 introduced**: an inaccessible JDK internal, a
+  removed API, a library whose matrix trigger this failure is (then move that
+  library — this is the evidence the plan waited for), locale/CLDR formatting
+  differences (report those: the fix is a JVM option, an ops decision).
+  **Never** change an assertion, delete or `@Ignore` a test, or weaken what it
+  checks to make it pass. If the cause is not Java 11, report it.
+
 ## Dependencies that fail to download
 
 `Could not transfer artifact …`, `Could not resolve dependencies`,

@@ -47,6 +47,13 @@ That is enforced in code (`shared/scope_fence.py`), not asked for in a prompt:
 
 **With `JAVA11_ANALYSIS=agent`, reverse engineering is chunked, so repository size does not grow any single request.** One agent run resends every file it has read on every model call, which on a monolith exhausts the token quota (429) and eventually the context window. Instead the repository is split into units (`shared/re_units.py`) — each Maven/Gradle module, split further along its directories above `RE_UNIT_MAX_FILES` — every file in exactly one unit. Each unit gets its own run (`java-8-to-11-re-module`) writing structured Module Findings; findings too large for one request are merged in bounded batches; a final run writes the usual four-section document from them. Measured on the same 40-file, 4-module repository: largest request 635,326 → 158,909 characters, total sent 13.0M → 3.5M. "Refine with AI" rewrites from the stored findings rather than re-analysing every unit.
 
+**Compile-first, verified on the machine that runs it.** A Java 8 → 11 run starts with an **environment check**:
+- the JDK Maven runs on must be 11 (`MIGRATION_JAVA_HOME`), Maven 3.6.3+, and `MAVEN_SETTINGS` (if set) must exist;
+- the uploaded code, unchanged, is built on JDK 11 (`clean package`, tests compiled). If it cannot download its own dependencies — credentials, mirrors, network — the run stops before planning, naming the failing coordinates; nothing is changed;
+- with `BASELINE_JAVA_HOME` (a JDK 8), the uploaded tests run once, so failures that predate the migration are reported and never "fixed".
+
+The baseline build's compile and plugin errors open the Technical Specification and are the plan's work list. Libraries and plugins move **only** when a build error or a failing test names them (`java11-dependency-matrix.md` lists each row's trigger); an old version that builds and passes its tests on 11 stays. Validation (`run_java11_build`) runs `clean package` **with the test suite** on the same JDK and settings. It reads compiler output and surefire reports itself and labels each problem COMPILE / TEST / BUILD / DEPENDENCY (a coordinate the migration set) / ENVIRONMENT (a coordinate as uploaded). The loop can only end green on `BUILD: PASS`. Set `VALIDATE_RUN_TESTS=false` to compile tests without running them.
+
 **Guards from real monolith runs.** Five problems from real runs are now handled by the pipeline, not left to the model:
 - **Coordinates that do not exist are rejected.** Validation fails on a dependency this migration set to a coordinate that does not exist (`powermock-api-mockito:2.x` — PowerMock 2 ships it as `powermock-api-mockito2`; `mockito-all:2.x`) or to a pre-release/build-stamped version (`2.4.0-b180608.0325`). A repository manager often answers these with 401, which looked like an authentication problem.
 - **Repositories cannot be added to a POM.** An edit that adds `<repository>`, `<pluginRepository>`, `<mirror>` or `<server>` is refused. The fix skill checks whether the failing coordinate is one this run introduced before it calls a download failure environmental.
@@ -511,6 +518,12 @@ app-modernizer/
 | `LLM_RETRY_INITIAL_DELAY` | No | `2` | Seconds before the first retry |
 | `LLM_RETRY_MAX_DELAY` | No | `60` | Longest wait between retries, in seconds |
 | `JAVA11_ANALYSIS` | No | `inventory` | Java 8 → 11 analysis: `inventory` (deterministic, no model tokens) or `agent` (reverse-engineering agents, business-level BRD) |
+| `MIGRATION_JAVA_HOME` | No | PATH | Java 8 → 11: JDK the builds run on (Maven's `JAVA_HOME`); the preflight requires it to be 11 |
+| `BASELINE_JAVA_HOME` | No | — | Java 8 → 11: a JDK 8 to run the uploaded tests on once, so pre-existing failures are excluded |
+| `MAVEN_SETTINGS` | No | — | settings.xml (mirrors, repository credentials) passed to every Maven call |
+| `PREFLIGHT` | No | `on` | `off` skips the Java 8 → 11 environment check and baseline build |
+| `VALIDATE_RUN_TESTS` | No | `true` | Java 8 → 11 validation runs the test suite |
+| `VALIDATE_TIMEOUT_SECONDS` | No | `3600` | One Maven build, tests included |
 | `MIGRATION_ANALYSIS` | No | `inventory` | Java 8 → 25, Solr, Oracle and TIBCO analysis: `inventory` (deterministic, no model tokens) or `agent` (the pattern's reverse-engineering agent). JSP → React and stack discovery always use their agents |
 | `INVENTORY_MAX_ROWS` | No | `400` | Rows per inventory table before it states how many more exist |
 | `RE_UNIT_MAX_FILES` | No | `300` | Java 8 → 11: files per reverse-engineering unit, each analysed in its own run. `0` = one run over the whole repository |

@@ -27,6 +27,8 @@ export async function uploadRepository(
    * the planner: the run has no reverse-engineering or analysis-review step. */
   analysis_review?: boolean;
   context_files?: number;
+  /** True when the run starts with the environment check (Java 8 -> 11). */
+  preflight?: boolean;
 }> {
   const form = new FormData();
   form.append('pattern', pattern);

@@ -498,12 +498,16 @@ def _resolve_executable(arg0: str, cwd: Path) -> str:
     return shutil.which(arg0) or arg0
 
 
-def make_run_command(allowed_commands: set[str]):
+def make_run_command(allowed_commands: set[str], env_factory=None, extra_args=None):
     """Build a `run_command` tool restricted to *allowed_commands* executables.
 
     Each pattern has a different toolchain (Java: mvn/gradle; others: no
     real compiler at all, in which case the pattern simply omits this tool
     and relies solely on its deterministic `validate_*` tool instead).
+
+    env_factory() returns the process environment (e.g. JAVA_HOME for a
+    specific JDK); extra_args(args) returns arguments to add to a Maven call
+    (e.g. `-s settings.xml`). Both default to the server's own environment.
     """
     allowed = set(allowed_commands)
     allowed_list = ", ".join(sorted(allowed))
@@ -528,6 +532,8 @@ def make_run_command(allowed_commands: set[str]):
         if executable not in allowed:
             return f"ERROR: '{executable}' is not permitted. Allowed commands: {allowed_list}."
 
+        if extra_args and executable in ("mvn", "mvnw", "./mvnw"):
+            args = [args[0], *extra_args(args[1:]), *args[1:]]
         try:
             result = subprocess.run(
                 [_resolve_executable(args[0], cwd), *args[1:]],
@@ -535,6 +541,7 @@ def make_run_command(allowed_commands: set[str]):
                 capture_output=True,
                 text=True,
                 timeout=config.COMMAND_TIMEOUT_SECONDS,
+                env=env_factory() if env_factory else None,
             )
         except FileNotFoundError:
             return f"ERROR: '{executable}' is not installed in this environment."

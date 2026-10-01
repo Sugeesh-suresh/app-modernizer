@@ -47,6 +47,7 @@ from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, config, ses
 from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
+from agents.java_8_to_11 import preflight as java11_preflight
 from agents.shared import migration_inventory
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
@@ -1009,6 +1010,10 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         # JSP -> React only: manifest of the user's UX design files (see agents/shared/ux_designs.py).
         ux_designs.STATE_KEY: ux_designs_json,
         "companion_patterns_json": "[]",
+        # java-8-to-11 preflight (agents/java_8_to_11/preflight.py): toolchain and
+        # the uploaded code built on the target JDK, before planning.
+        "preflight_json": "",
+        "preflight_summary": "",
         "analysis": "",
         "brd": "",
         "technical_spec": "",
@@ -1379,6 +1384,47 @@ def _uses_inventory(pattern: str, discovery: bool) -> bool:
             and config.MIGRATION_ANALYSIS != "agent")
 
 
+class PreflightFailed(RuntimeError):
+    """The machine cannot build or verify this migration; nothing was changed."""
+
+
+def _preflight_enabled(pattern: str) -> bool:
+    return pattern == _JAVA_8_TO_11 and config.PREFLIGHT != "off"
+
+
+async def _run_java11_preflight(session_id: str) -> None:
+    """Check the toolchain and build the uploaded code on the target JDK before
+    anything is planned (agents/java_8_to_11/preflight.py). Stops the run with
+    what to fix when the environment cannot verify a migration; otherwise its
+    compile errors become the planner's primary work list."""
+    state = await _get_state(session_id)
+    await _push(session_id, "step-change", step="preflight")
+    await _push(session_id, "progress", progress=5, message=(
+        "Checking the JDK and Maven, then building the uploaded code on Java 11"
+        + (" (and running its tests on the baseline JDK)" if config.BASELINE_JAVA_HOME else "")))
+    started = time.monotonic()
+    pf = await asyncio.to_thread(java11_preflight.run, state.get("workspace_dir", ""))
+    elapsed = time.monotonic() - started
+    summary = java11_preflight.summary(pf)
+    print(f"[preflight] {elapsed:.0f}s — {summary}", flush=True)
+    await _update_state(session_id, {"preflight_json": pf.to_json(), "preflight_summary": summary})
+    await _push(session_id, "preflight-stream", content=f"**Environment check** ({elapsed:.0f}s) — {summary}\n")
+    if not pf.ok:
+        raise PreflightFailed(f"Environment check failed — nothing was changed. {pf.stop_reason}")
+
+
+def _with_preflight(tech_spec: str, preflight_json: str) -> str:
+    """The baseline build at the top of the Technical Specification (which the
+    planner reads), whichever analysis produced the rest of it."""
+    if not preflight_json or "## Baseline Build on JDK 11" in tech_spec:
+        return tech_spec
+    try:
+        pf = java11_preflight.Preflight(**json.loads(preflight_json))
+    except (TypeError, json.JSONDecodeError):
+        return tech_spec
+    return java11_preflight.to_markdown(pf) + "\n\n" + tech_spec
+
+
 def _analysis_review(pattern: str) -> bool:
     """Whether `pattern`'s analysis goes to a human before planning. An agent's
     analysis is an interpretation of the code, so a person confirms it (the
@@ -1599,6 +1645,8 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
             else json.dumps(dependency_graph.build_dependency_graph(workspace_dir, pattern))
         )
         tech_spec = _inject_dependency_graph(tech_spec, graph_json, pattern)
+        if pattern == _JAVA_8_TO_11:
+            tech_spec = _with_preflight(tech_spec, orig_state.get("preflight_json", ""))
 
         await _update_state(session_id, {
             f"brd_{pattern}": brd,
@@ -1905,6 +1953,10 @@ async def _run_workflow(session_id: str) -> None:
             state = await _get_state(session_id)
             bundle = _bundle_for(state)
 
+        # ── Step 0b: Preflight — can this machine build and verify the result? ──
+        if any(_preflight_enabled(p) for p in bundle):
+            await _run_java11_preflight(session_id)
+
         if any(_analysis_review(p) for p in bundle):
             # ── Step 1: Reverse Engineering -> Analysis + BRD + TechSpec + Tests ──
             await _push(session_id, "step-change", step="reverse-engineering")
@@ -2180,6 +2232,7 @@ async def upload_repository(
         files_truncated=extraction.truncated,
         ux_designs=len(ux_manifest),
         analysis_review=_analysis_review(pattern.value),
+        preflight=_preflight_enabled(pattern.value),
         context_files=additional_context.count("--- CONTEXT FILE: "),
     )
 

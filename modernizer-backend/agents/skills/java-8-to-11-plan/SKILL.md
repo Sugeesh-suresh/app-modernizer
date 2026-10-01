@@ -10,12 +10,39 @@ BRD, Technical Specification and Test Inventory below — not from the code.
 Load `references/java11-dependency-matrix.md` for every library and plugin
 decision.
 
+## Compile-first: plan what JDK 11 actually breaks
+
+The Technical Specification opens with **Baseline Build on JDK 11** — the
+uploaded code, unchanged, compiled and packaged on the target JDK before you
+plan. That is your primary evidence, and the plan is built from it:
+
+1. **Compiler level → 11** in every build file that declares one.
+2. **One change per baseline error**: every compile error and build error
+   listed there gets a task that fixes it (a removed-JDK-module dependency, an
+   API replacement, a plugin version that the error names).
+3. **Every Java 11 Blockers row** of the inventory (removed APIs that may only
+   fail at run time, which a compile cannot show).
+4. **Nothing else.** No library or plugin moves unless an error above — or the
+   matrix row's trigger — names it. An old Spring, Hibernate, Mockito,
+   PowerMock or plugin that builds on JDK 11 stays exactly as it is; list it
+   under Deprecated Libraries / Out of Scope ("runs on 11; not moved"). If
+   tests later fail on JDK 11 because of one, the build loop moves it then,
+   with that failure as its evidence.
+
+If the baseline says **the uploaded code already builds on JDK 11**, the plan
+is the compiler level plus the Blockers rows — usually a handful of files.
+Modules listed as "not built because a module they depend on failed" may
+show more errors once those are fixed; say so under Coverage Gaps rather than
+guessing at them. A small plan is the expected result, not a gap.
+
 **When the specification is the deterministic Java 11 Inventory** (its
 sections say "no language model read this repository"), it is complete by
 construction — every file was scanned — and it is your only evidence:
-- The File Change Manifest is built from its **Java 11 Blockers** table (one
-  row per file, every row a real path), plus the POMs named under **Build
-  Plugins**, **Declared Java Levels** and **Dependencies Affected by Java 11**.
+- The File Change Manifest is built from the **Baseline Build** errors, its
+  **Java 11 Blockers** table (one row per file, every row a real path), and
+  the POMs named under **Declared Java Levels**. The **Build Plugin
+  Candidates** and **Library Candidates** tables are not work items: move one
+  only when a baseline error names it (compile-first, above).
   A row may be a comment rather than a use; plan it anyway and say so in
   "What Changes" — the modifier reads the file before changing it.
 - Sample Transformations: use the **First match** column as the "before" line.
@@ -57,11 +84,12 @@ out. In short:
   `List.of`, new `String` methods…), and replacing libraries that are merely
   old or EOL but run on Java 11. List those under Out of Scope.
 
-**Minimal-change rule.** A dependency moves only when the Java 11 build or
-runtime needs it — a documented Java 11 incompatibility, a removed JDK module,
-or evidence in the specification — and it moves to the *smallest* version that
-fixes that, unless the matrix names a reason to go further. Each row in the
-Dependency & Version Delta says which of those it is.
+**Minimal-change rule.** A dependency moves only when there is evidence that
+Java 11 breaks it in **this** code: an error in the Baseline Build, or a
+removed JDK module the code imports. A version being old, EOL, or listed as a
+candidate is not evidence. It moves to the *smallest* version that fixes the
+error. Each row in the Dependency & Version Delta cites the baseline error
+that justifies it, verbatim.
 
 **Container-provided libraries are never bumped.** Anything `provided`, or
 supplied by a WildFly module per `jboss-deployment-structure.xml`, is owned by
@@ -222,12 +250,13 @@ Order and sizing:
 - `### Evidence Plan` — per behaviour: the test that proves it, or what must
   be written.
 - `### Coverage Gaps` — counted, stated up front.
-- `### Validation Contract` — the loop runs `mvn -DskipTests package` at
-  release 11 (compiling test sources, running none of them) and a
+- `### Validation Contract` — the loop runs `mvn clean package` **with the
+  test suite** on the migration JDK (the one the preflight checked), and a
   deterministic fence check (frozen files byte-identical, packaging/finalName
-  and WildFly plugins unchanged, no `jakarta.*`, every module on 11). It does
-  **not** run tests or deploy to WildFly — a human runs the suite on JDK 11
-  and a smoke test on a Java 11 WildFly.
+  and WildFly plugins unchanged, no `jakarta.*`, every module on 11). Tests
+  that already failed on the baseline JDK before the migration (when a
+  baseline JDK is configured) are reported, not counted. It does **not**
+  deploy to WildFly — a human smoke-tests on a Java 11 WildFly.
 
 ### 5. What Happens If It Fails
 - `### Rollback Plan` — clean: the change is source and build files only;

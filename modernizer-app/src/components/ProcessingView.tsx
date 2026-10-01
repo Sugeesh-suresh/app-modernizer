@@ -23,6 +23,13 @@ const STEP_CONFIG: Record<string, { icon: React.ReactNode; title: string; subtit
       'Reading build files, dependency declarations and deployment descriptors to work out what this repository is actually built on…',
     color: 'text-slate-600',
   },
+  preflight: {
+    icon: <Wrench size={28} />,
+    title: 'Checking the Build Environment',
+    subtitle:
+      'Checking the JDK and Maven this machine builds with, then building the uploaded code on Java 11 — its errors are what the plan will fix…',
+    color: 'text-slate-600',
+  },
   'reverse-engineering': {
     icon: <Brain size={28} />,
     title: 'Reverse Engineering',

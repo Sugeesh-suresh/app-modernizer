@@ -33,7 +33,7 @@ interface Props {
   pattern: PatternId;
   options?: JavaMigrationOptions | null;
   /** `filesTruncated` > 0 means the server could not unpack the whole archive. */
-  onSessionCreated: (sessionId: string, filesTruncated: number, analysisReview: boolean) => void;
+  onSessionCreated: (sessionId: string, filesTruncated: number, analysisReview: boolean, preflight: boolean) => void;
   onBack: () => void;
 }
 
@@ -122,11 +122,11 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
     setUploading(true);
     setError(null);
     try {
-      const { session_id, files_truncated, analysis_review } = await uploadRepository(
+      const { session_id, files_truncated, analysis_review, preflight } = await uploadRepository(
         pattern, file, options, supportsUx ? uxFiles : [], showContextPicker ? contextFiles : [],
       );
       // The server's answer for this run wins over the settings fetched above.
-      onSessionCreated(session_id, files_truncated ?? 0, analysis_review ?? true);
+      onSessionCreated(session_id, files_truncated ?? 0, analysis_review ?? true, preflight ?? false);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Upload failed. Please try again.');
       setUploading(false);
