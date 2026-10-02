@@ -168,3 +168,34 @@ VALIDATE_TIMEOUT_SECONDS: int = _int("VALIDATE_TIMEOUT_SECONDS", 3600)
 APPROVED_VERSIONS_FILE: str = os.getenv(
     "APPROVED_VERSIONS_FILE", str(Path(__file__).resolve().parent.parent / "approved-versions.txt"))
 APPROVED_VERSIONS_STRICT: bool = os.getenv("APPROVED_VERSIONS_STRICT", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+# ── Model traffic (agents/shared/llm_traffic.py, agents/shared/model_config.py) ──
+# A model per agent role. Unset roles use GEMINI_MODEL. Roles:
+#   PLAN (planners), CODE (modifiers / generators), FIX (fixers), CHECK (validators),
+#   REVIEW (code reviewer), REPORT (reporter, skill curator), ANALYSE (reverse
+#   engineering, dependency mapper, classifiers).
+MODEL_ROLES: dict[str, str] = {
+    role: (os.getenv(f"MODEL_{role.upper()}", "") or "").strip()
+    for role in ("plan", "code", "fix", "check", "review", "report", "analyse")
+}
+# Model to switch a call to when its own model is still rate-limited (429)
+# after LLM_FALLBACK_AFTER_ATTEMPTS attempts. Empty: no fallback.
+MODEL_FALLBACK: str = (os.getenv("MODEL_FALLBACK", "") or "").strip()
+LLM_FALLBACK_AFTER_ATTEMPTS: int = _int("LLM_FALLBACK_AFTER_ATTEMPTS", 3)
+
+# Pacing: input tokens / requests per minute allowed per model, set to ~80% of
+# your quota so calls wait their turn instead of hitting 429. 0 = no pacing.
+# LLM_LIMITS overrides per model: "gemini-2.5-pro=tpm:400000,rpm:50;gemini-2.5-flash=tpm:1500000".
+LLM_MAX_TPM: int = _int("LLM_MAX_TPM", 0)
+LLM_MAX_RPM: int = _int("LLM_MAX_RPM", 0)
+LLM_LIMITS: str = os.getenv("LLM_LIMITS", "")
+
+# Masking old tool output inside one agent's run (Gemini CLI's approach): the
+# newest CONTEXT_PROTECT_TOKENS of tool output stay verbatim; older output is
+# replaced by a pointer to re-read it once more than CONTEXT_MIN_PRUNABLE_TOKENS
+# of it has accumulated. 0 for CONTEXT_PROTECT_TOKENS disables masking.
+# Gemini CLI uses 50K/30K for a 1M-token window; these are tuned for per-minute
+# quotas. Measured on an agent reading 20 x 18K-char files: 12K/5K sends 72%
+# fewer characters than no masking (Gemini CLI's sizing: 28%).
+CONTEXT_PROTECT_TOKENS: int = _int("CONTEXT_PROTECT_TOKENS", 12_000)
+CONTEXT_MIN_PRUNABLE_TOKENS: int = _int("CONTEXT_MIN_PRUNABLE_TOKENS", 5_000)

@@ -236,6 +236,8 @@ class _Reader(BaseLlm):
 
 
 def test_the_largest_request_is_bounded_by_the_unit_not_the_repository(monkeypatch, tmp_path):
+    # Chunking alone: masking old reads (shared/llm_traffic.py) would shrink it further.
+    monkeypatch.setattr(main.config, "CONTEXT_PROTECT_TOKENS", 0)
     body = "\n".join(f"// line {j} of a typical source file with some code" for j in range(300))
     files = {}
     for m in range(4):

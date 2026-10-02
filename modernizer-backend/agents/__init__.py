@@ -89,13 +89,18 @@ else:
 # (e.g. `google:python_interpreter`) gets an error it can recover from instead
 # of ending the run -- see agents/shared/unknown_tool_guard.py.
 UNKNOWN_TOOL_GUARD = UnknownToolGuard()
+from .shared.llm_traffic import LLM_TRAFFIC  # noqa: E402
 
 
 def _runner(agent) -> Runner:
+    _ROOT_AGENTS.append(agent)
     return Runner(
-        app=App(name=APP_NAME, root_agent=agent, plugins=[UNKNOWN_TOOL_GUARD]),
+        app=App(name=APP_NAME, root_agent=agent, plugins=[UNKNOWN_TOOL_GUARD, LLM_TRAFFIC]),
         session_service=session_service,
     )
+
+
+_ROOT_AGENTS: list = []
 
 
 PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
@@ -177,3 +182,10 @@ TARGET_LANGS: dict[str, str] = {
     # rather than set to a placeholder: a language here would imply an output
     # tree that never gets built.
 }
+
+
+# Every agent gets its role's model (MODEL_PLAN, MODEL_CODE, …, else GEMINI_MODEL),
+# with the 429 fallback when MODEL_FALLBACK is set — see shared/model_config.py.
+from .shared.model_config import assign_role_models  # noqa: E402
+
+MODEL_ASSIGNMENT = assign_role_models(_ROOT_AGENTS)
