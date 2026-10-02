@@ -123,6 +123,7 @@ planner_agent = LlmAgent(
         "design files are attached to this request, include the skill's UX Design Mapping section.\n\n"
         + skill_manifest.planner_block(_PLAN_SKILL_ROSTER)
         + "\n\n"
+        "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_jsp_to_react_bff?}\n\n"
         "## Confirmed Business Requirements Document\n{brd}\n\n"
         "## Confirmed Technical Specification (includes the frontend/backend classification)\n{technical_spec}\n\n## Existing Test Inventory\n{test_inventory}\n\n"
         "The Test Inventory is what question 4 is answered from — its Coverage Gaps section "
@@ -146,6 +147,7 @@ backend_generator_agent = LlmAgent(
         "Load and execute the `spring-boot-bff-generate` skill to generate the BFF backend under the "
         "workspace subdirectory `backend/`, reading the original JSP source (read-only reference) via "
         "list_files/read_file and writing new files via write_file.\n\n"
+        "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_jsp_to_react_bff?}\n\n"
         "## Confirmed Migration Plan\n{plan}"
     ),
     tools=[
@@ -216,6 +218,7 @@ fixer_agent = LlmAgent(
     description="Reads the files implicated by validator_agent's report (in either tree) and fixes them in place.",
     instruction=(
         "Load and execute the `jsp-to-react-bff-fix` skill.\n\n"
+        "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_jsp_to_react_bff?}\n\n"
         "## Build Report (errors to fix, tagged by tree)\n{build_result}"
     ),
     tools=[

@@ -29,3 +29,8 @@ When every file in the manifest has been handled, output a short markdown summar
 - Notable decisions or ambiguities you resolved
 
 Do not include full file contents in this summary — the files are already on disk.
+
+
+## Approved Versions
+
+The caller gives you an **Approved Versions** list: the versions your organisation's internal repository serves. For every artifact on it, use exactly that version — in the BFF's pom.xml — overriding any version this skill or its references suggest. Never write a different or "newer compatible" version for a listed artifact; it may not exist in the internal repository. Validation fails on any contradiction.

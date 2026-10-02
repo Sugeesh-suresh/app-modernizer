@@ -116,3 +116,7 @@ Reindexing strategy, ZooKeeper ensemble upgrade if SolrCloud — call these out 
 
 ## Estimated Effort
 
+
+## Approved Versions
+
+The caller gives you an **Approved Versions** list: the versions your organisation's internal repository serves. For every artifact on it, use exactly that version — in the Dependency & Version Delta and in every task — overriding any version this skill or its references suggest. Never write a different or "newer compatible" version for a listed artifact; it may not exist in the internal repository. Validation fails on any contradiction.

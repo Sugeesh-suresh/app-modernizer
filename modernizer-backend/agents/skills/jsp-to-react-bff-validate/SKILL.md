@@ -29,6 +29,11 @@ If there are errors in either tree:
 
 YOUR ENTIRE FINAL RESPONSE MUST BE ONLY THE JSON OBJECT. Do not call `signal_build_success` unless both trees are confirmed clean.
 
+
+## Approved versions
+
+`signal_build_success` refuses to end the loop while a version this migration set contradicts the organisation's approved-versions list. If it returns `ERROR:`, validation has **failed**: put every problem it lists into `errors`, each prefixed `VERSION:`, and set `passed` to false.
+
 ---
 
 ## Learned Patterns

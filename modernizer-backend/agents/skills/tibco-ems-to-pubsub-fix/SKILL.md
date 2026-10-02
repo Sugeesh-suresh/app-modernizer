@@ -39,3 +39,8 @@ sweeping one. Keep `write_file` for files you create or genuinely rewrite end to
 larger than one read window is refused unless you have read every window and pass
 `allow_full_overwrite=True`, because a full overwrite based on a partial read deletes the rest of the file.
 If a `read_file` header says you received only part of a file, call it again with the `start_line` it gives.
+
+
+## Approved Versions
+
+For any artifact on the **Approved Versions** list you are given, use exactly the listed version. A `VERSION:` error means: set the version it names. Never pick another version for a listed artifact, and never add repositories to make a download work.

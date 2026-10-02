@@ -253,3 +253,8 @@ Per stage, per phase, and total.
 ---
 
 Use markdown with task checkboxes `- [ ]` for every actionable item. Each stage's tasks are what that stage's modifier agent will work through, one run per task — be exhaustive and precise with paths, and do not let changes bleed across stages. A file changed in one stage may need further changes in a later one (e.g. the Java 17 stage and then the Spring Boot 3.x stage); list it again in that stage's tasks rather than assuming the earlier stage finished it.
+
+
+## Approved Versions
+
+The caller gives you an **Approved Versions** list: the versions your organisation's internal repository serves. For every artifact on it, use exactly that version — in the Dependency & Version Delta and in every task — overriding any version this skill or its references suggest. Never write a different or "newer compatible" version for a listed artifact; it may not exist in the internal repository. Validation fails on any contradiction.

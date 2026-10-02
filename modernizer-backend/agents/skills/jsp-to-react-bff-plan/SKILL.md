@@ -113,3 +113,8 @@ Rules that make the tables checkable rather than decorative:
 - Name the JSP each React page replaces, so the coverage of the original app is reviewable.
 
 Use markdown with task checkboxes `- [ ]` for every actionable item elsewhere in the plan.
+
+
+## Approved Versions
+
+The caller gives you an **Approved Versions** list: the versions your organisation's internal repository serves. For every artifact on it, use exactly that version — in the Dependency & Version Delta and in every task — overriding any version this skill or its references suggest. Never write a different or "newer compatible" version for a listed artifact; it may not exist in the internal repository. Validation fails on any contradiction.

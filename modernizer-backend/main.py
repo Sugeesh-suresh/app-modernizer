@@ -522,6 +522,8 @@ async def _run_java8_incremental_code_step(
             "phase_title": stage.phase_title, "title": stage.title,
         }
         await _push(push_session_id, "stage-start", **stage_meta)
+        # The approved-versions gate holds this stage to its own section of the list.
+        await _update_state(session_id, {"approved_stage": str(idx)})
 
         # One unit per task block; one whole-section unit when a hand-edited plan has
         # none; and NO units when the plan has no section for this stage at all.
@@ -1016,7 +1018,14 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         "preflight_summary": "",
         # The organisation's approved versions (agents/shared/approved_versions.py),
         # read at upload so a run uses one list from start to finish.
-        "approved_versions": approved_versions.to_markdown(approved_versions.load()[0]),
+        "approved_versions": approved_versions.to_markdown(
+            approved_versions.effective(approved_versions.load()[0], _JAVA_8_TO_11)),
+        # Every code-changing pipeline gets its own scoped list (companions share
+        # this state), and each incremental Java 8 -> 25 stage its stage's list.
+        **approved_versions.state_values(
+            ["java-8-to-25", "solr-4-to-9", "oracle-19c-to-23ai", "tibco-ems-to-pubsub", "jsp-to-react-bff"],
+            {"java-8-to-25": [s.idx for s in INCREMENTAL_STAGES]}),
+        "approved_stage": "",
         "analysis": "",
         "brd": "",
         "technical_spec": "",

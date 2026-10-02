@@ -112,3 +112,7 @@ What the plan relies on that is not proven — each one a thing that, if false, 
 Behaviour that could not be determined from the SQL and needs a person: whether a result ordering without an `ORDER BY` is relied on, whether an optimizer hint was added for a real production problem, whether a trigger's side effects are depended on elsewhere, and whether any reporting job reads these tables directly. Ask each as a direct question naming the file it concerns, so it can be answered without re-reading the plan.
 ## Estimated Effort
 
+
+## Approved Versions
+
+The caller gives you an **Approved Versions** list: the versions your organisation's internal repository serves. For every artifact on it, use exactly that version — in the Dependency & Version Delta and in every task — overriding any version this skill or its references suggest. Never write a different or "newer compatible" version for a listed artifact; it may not exist in the internal repository. Validation fails on any contradiction.

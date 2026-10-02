@@ -70,6 +70,7 @@ planner_agent = LlmAgent(
         "Load and execute the `tibco-ems-to-pubsub-plan` skill to create the migration plan.\n\n"
         + skill_manifest.planner_block(_PLAN_SKILL_ROSTER)
         + "\n\n"
+        "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_tibco_ems_to_pubsub?}\n\n"
         "## Confirmed Business Requirements Document\n{brd}\n\n"
         "## Confirmed Technical Specification\n{technical_spec}\n\n## Existing Test Inventory\n{test_inventory}\n\n"
         "The Test Inventory is what question 4 is answered from — its Coverage Gaps section "
@@ -88,6 +89,7 @@ modifier_agent = LlmAgent(
     instruction=(
         "Load and execute the `tibco-ems-to-pubsub-modify` skill to apply the confirmed migration plan "
         "to the files in the workspace, using the list_files, read_file and write_file tools.\n\n"
+        "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_tibco_ems_to_pubsub?}\n\n"
         "## Confirmed Migration Plan\n{plan}"
     ),
     tools=[
@@ -132,6 +134,7 @@ fixer_agent = LlmAgent(
     description="Reads the files implicated by validator_agent's report and fixes them in place in the workspace.",
     instruction=(
         "Load and execute the `tibco-ems-to-pubsub-fix` skill.\n\n"
+        "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_tibco_ems_to_pubsub?}\n\n"
         "## Validation Report (errors/issues to fix)\n{build_result}"
     ),
     tools=[

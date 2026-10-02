@@ -584,8 +584,15 @@ def signal_build_success(tool_context: ToolContext) -> str:
     """Call this ONLY after the validation tool shows the build/config
     succeeded (e.g. exit code 0, no compiler errors, no config errors).
     Ends the validate/fix loop immediately instead of running the
-    remaining iterations.
+    remaining iterations. Refused while a dependency or plugin version this
+    migration set contradicts the organisation's approved-versions list.
     """
+    from .approved_versions import gate
+    violations = gate(tool_context.state or {})
+    if violations:
+        return ("ERROR: build success NOT signalled — versions this migration set contradict the approved-versions "
+                "list (they may not exist in the organisation's repository). Validation has FAILED; report each "
+                "as an error prefixed `VERSION:`:\n" + "\n".join(f"  - {v}" for v in violations))
     tool_context.actions.escalate = True
     tool_context.actions.skip_summarization = True
     return "Build success signalled — exiting the build loop."

@@ -252,6 +252,7 @@ planner_agent = LlmAgent(
         + "\n\n## Migration Strategy\n{migration_strategy}\n\n"
         "## JUnit Upgrade Requested\n{junit_upgrade}\n\n"
         "## Spring Boot Upgrade Requested\n{springboot_upgrade}\n\n"
+        "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_java_8_to_25?}\n\n"
         "## Confirmed Business Requirements Document\n{brd}\n\n"
         "## Confirmed Technical Specification\n{technical_spec}\n\n"
         "## Existing Test Inventory\n{test_inventory}\n\n"
@@ -277,6 +278,7 @@ modifier_agent = LlmAgent(
         "the newest Spring Boot 4.x as an executable JAR on an embedded Tomcat (never a WAR), with "
         "Spring Data JPA, Thymeleaf instead of JSP, and every conflicting legacy library removed. It "
         "supersedes the base skill's generic Spring Boot guidance.\n\n"
+        "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_java_8_to_25?}\n\n"
         "## Confirmed Migration Plan\n{plan}"
     ),
     tools=[
@@ -327,6 +329,7 @@ fixer_agent = LlmAgent(
         "(dependencies, Jakarta namespace, Spring Data JPA, Thymeleaf, executable JAR packaging), also "
         "load the `springboot-war-to-boot4` skill — fix within its target state, never by reverting to "
         "a WAR or re-adding a removed conflicting library.\n\n"
+        "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_java_8_to_25?}\n\n"
         "## Build Report (errors to fix)\n{build_result}"
     ),
     tools=[
@@ -429,6 +432,7 @@ def _make_stage(stage: IncrementalStage) -> SequentialAgent:
             f"toolchain) must be exactly {stage.java_release}.\n\n"
             f"Guardrail for this stage: {stage.guardrail}\n\n"
             + skills_note
+            + f"## Approved Versions (your organisation's list for this stage — use exactly these for these artifacts)\n{{approved_versions_java_8_to_25_stage{idx}?}}\n\n"
             + "## Your Task\n{current_task}"
         ),
         tools=[
@@ -485,6 +489,7 @@ def _make_stage(stage: IncrementalStage) -> SequentialAgent:
             "Load and execute the `java-8-to-25-fix` skill.\n\n"
             f"You are fixing the '{stage_label}' stage ({phase_label}) of an incremental migration. Fix the reported "
             f"errors without advancing the migration past this stage. {stage.guardrail}\n\n"
+            f"## Approved Versions (your organisation's list for this stage — use exactly these for these artifacts)\n{{approved_versions_java_8_to_25_stage{idx}?}}\n\n"
             f"## Build Report for {stage_label} (errors to fix)\n{{build_result_stage{idx}}}"
         ),
         tools=[

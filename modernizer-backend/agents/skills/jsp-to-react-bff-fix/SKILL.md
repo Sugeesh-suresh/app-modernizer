@@ -34,6 +34,11 @@ next validation confirms the error is gone. Leave out errors you did not fix, or
   no project names): e.g. "keep `javax.sql.DataSource`: `javax.sql` is Java SE and is not renamed
   by the Jakarta migration">
 
+
+## Approved Versions
+
+For any artifact on the **Approved Versions** list you are given, use exactly the listed version. A `VERSION:` error means: set the version it names. Never pick another version for a listed artifact, and never add repositories to make a download work.
+
 ---
 
 ## Learned Patterns
