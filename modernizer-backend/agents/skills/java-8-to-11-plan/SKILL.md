@@ -10,6 +10,18 @@ BRD, Technical Specification and Test Inventory below — not from the code.
 Load `references/java11-dependency-matrix.md` for every library and plugin
 decision.
 
+## Approved Versions come first
+
+The caller gives you an **Approved Versions** list: the versions your
+organisation's internal repository serves. For every artifact on it, the plan
+uses exactly that version — in the Dependency & Version Delta, in every task's
+`Change:` text, for added dependencies as much as for moved ones. It overrides
+the matrix's Target column. Never write a version for a listed artifact that
+differs from the list, and never pick a "newer compatible" one. If the list is
+strict, an artifact that would have to move but is not listed stays as
+uploaded and becomes an Open Question ("needs an approved version"). Versions
+the preflight found not downloadable are marked — do not use them.
+
 ## Compile-first: plan what JDK 11 actually breaks
 
 The Technical Specification opens with **Baseline Build on JDK 11** — the

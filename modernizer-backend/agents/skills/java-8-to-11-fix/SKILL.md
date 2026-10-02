@@ -85,6 +85,12 @@ migration introduced the coordinate:
    it) is it an environment problem (credentials, network). Then change
    nothing and report it under "Errors not resolved" as environment.
 
+For any artifact on the **Approved Versions** list you are given, the fix
+uses exactly the listed version. A FENCE error *contradicts the approved
+version* means: set that version. An ENVIRONMENT error on a listed version
+means the list or the repository access is wrong — report it; do not pick
+another version.
+
 **Never** add `<repositories>`, `<pluginRepositories>`, mirrors or
 credentials — the fence refuses it, and it cannot fix a coordinate that does
 not exist.

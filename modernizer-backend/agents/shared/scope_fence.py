@@ -539,6 +539,8 @@ def verify_invariants(pattern: str, baseline_dir: str, workspace_dir: str) -> tu
             for problem in check_edit(pattern, rel, "", _text(after[rel])):
                 problems.append(f"`{rel}` (new file) — {problem}")
     problems += coordinate_problems(baseline_dir, workspace_dir)
+    from .approved_versions import problems as approved_problems  # it imports this module
+    problems += approved_problems(baseline_dir, workspace_dir)
     return problems, notes
 
 

@@ -55,7 +55,10 @@ Load `references/java11-code-patterns.md` for the exact shapes.
   block, `<parent>` coordinates of a spec BOM, or the version of a `provided`
   dependency.
 - **Coordinates must exist.** Use exactly the groupId, artifactId and version
-  your task names (the plan takes them from the dependency matrix). Never
+  your task names. For any artifact on the **Approved Versions** list you are
+  given, the list's version is the only one allowed — even if the task text
+  says otherwise (then follow the list and say so in your summary).
+  Validation fails on any other version for a listed artifact. Never
   invent or "adjust" a version, never use a pre-release (`-b180608…`,
   `-beta`, `-RC`, `-M1`, `-SNAPSHOT`), and never add a transitive artifact
   (`txw2`, `istack-commons`, …) — the library that needs it brings it.

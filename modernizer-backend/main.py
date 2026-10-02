@@ -51,7 +51,7 @@ from agents.java_8_to_11 import preflight as java11_preflight
 from agents.shared import migration_inventory
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
-    companion_detector, dependency_graph, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
+    companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
 )
 from agents.shared.file_parser import extract_text
 from models.schemas import (
@@ -1014,6 +1014,9 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         # the uploaded code built on the target JDK, before planning.
         "preflight_json": "",
         "preflight_summary": "",
+        # The organisation's approved versions (agents/shared/approved_versions.py),
+        # read at upload so a run uses one list from start to finish.
+        "approved_versions": approved_versions.to_markdown(approved_versions.load()[0]),
         "analysis": "",
         "brd": "",
         "technical_spec": "",
@@ -1407,7 +1410,13 @@ async def _run_java11_preflight(session_id: str) -> None:
     elapsed = time.monotonic() - started
     summary = java11_preflight.summary(pf)
     print(f"[preflight] {elapsed:.0f}s — {summary}", flush=True)
-    await _update_state(session_id, {"preflight_json": pf.to_json(), "preflight_summary": summary})
+    delta = {"preflight_json": pf.to_json(), "preflight_summary": summary}
+    if pf.approved_unavailable:
+        # The agents must not rely on a listed version this machine cannot download.
+        delta["approved_versions"] = (state.get("approved_versions", "") + "\n\n**⚠ Not downloadable through the "
+                                      "configured repository — do NOT use these until the list is corrected:** "
+                                      + ", ".join(f"`{u.split(' ')[0]}`" for u in pf.approved_unavailable))
+    await _update_state(session_id, delta)
     await _push(session_id, "preflight-stream", content=f"**Environment check** ({elapsed:.0f}s) — {summary}\n")
     if not pf.ok:
         raise PreflightFailed(f"Environment check failed — nothing was changed. {pf.stop_reason}")

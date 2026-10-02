@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .. import config
-from ..shared import java_env
+from ..shared import approved_versions, java_env
 from ..shared.dependency_graph import EXCLUDED_DIRS
 
 TARGET = 11
@@ -44,6 +44,8 @@ class Preflight:
     environment_errors: list[str] = field(default_factory=list)
     skipped_modules: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    approved_checked: int = 0
+    approved_unavailable: list[str] = field(default_factory=list)   # "g:a:v — reason"
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -70,6 +72,32 @@ def _merge(pf: Preflight, res: java_env.BuildResult, root: str, coords: list[str
     coords += [c for c in res.coordinates if c not in coords]
 
 
+def check_approved(entries, java_home: str | None = None, workers: int = 4) -> list[str]:
+    """Every listed (non-wildcard) version, fetched on its own through the
+    configured Maven settings. Returns those that cannot be downloaded."""
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+    listed = [e for e in entries if e.artifact != "*"]
+    if not listed:
+        return []
+    scratch = Path(tempfile.mkdtemp(prefix="modernizer-approved-"))
+
+    def fetch(e):
+        code, out = java_env.run_maven(scratch, ["dependency:get", f"-Dartifact={e.group}:{e.artifact}:{e.version}",
+                                                 "-Dtransitive=false"], java_home=java_home, timeout=300)
+        if code == 0:
+            return None
+        res = java_env.classify(out, code)
+        reason = (res.environment or res.other or [out.strip().splitlines()[-1] if out.strip() else "failed"])[0]
+        return f"{e.group}:{e.artifact}:{e.version} (line {e.line}) — {reason[:200]}"
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return [r for r in pool.map(fetch, listed) if r]
+    finally:
+        import shutil
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def run(workspace_dir: str) -> Preflight:
     workspace = Path(workspace_dir)
     pf = Preflight()
@@ -94,6 +122,16 @@ def run(workspace_dir: str) -> Preflight:
     if tc.problems:
         pf.ok, pf.stop_reason = False, " ".join(tc.problems)
         return pf
+
+    entries, list_problems = approved_versions.load()
+    if list_problems:
+        pf.ok = False
+        pf.stop_reason = (f"The approved-versions list (`{config.APPROVED_VERSIONS_FILE}`) has errors — fix them so "
+                          "the migration uses the versions you intended: " + "; ".join(list_problems[:5]))
+        return pf
+    if entries:
+        pf.approved_checked = sum(1 for e in entries if e.artifact != "*")
+        pf.approved_unavailable = check_approved(entries)
 
     coords: list[str] = []
     if config.BASELINE_JAVA_HOME:
@@ -156,6 +194,11 @@ def to_markdown(pf: Preflight) -> str:
         out.append(f"- Baseline tests on JDK {pf.baseline_test_jdk}: {len(pf.baseline_failing_tests)} failing "
                    "before the migration (excluded from validation):")
         out += [f"  - `{t}`" for t in pf.baseline_failing_tests[:50]]
+    if pf.approved_checked:
+        out.append(f"- Approved versions: {pf.approved_checked} checked against the configured repository, "
+                   f"{len(pf.approved_unavailable)} not downloadable"
+                   + (" — **do not use these; the list needs correcting**:" if pf.approved_unavailable else "."))
+        out += [f"  - `{u.split(' ')[0]}` {u.split(' ', 1)[1] if ' ' in u else ''}" for u in pf.approved_unavailable[:20]]
     out += pf.notes and [""] + [f"- {n}" for n in pf.notes] or []
     if pf.compile_errors:
         out += ["", "### Compile errors", "", "| File:line | Error |", "|---|---|"]
@@ -179,6 +222,10 @@ def summary(pf: Preflight) -> str:
         parts.append(f"uploaded code on JDK 11: {len(pf.compile_errors)} compile / {len(pf.other_errors)} other error(s)")
     if pf.baseline_tests_run:
         parts.append(f"{len(pf.baseline_failing_tests)} test(s) already failing on JDK {pf.baseline_test_jdk}")
+    if pf.approved_checked:
+        parts.append(f"approved versions: {pf.approved_checked - len(pf.approved_unavailable)}/{pf.approved_checked} "
+                     "downloadable" + (" — NOT downloadable: " + ", ".join(u.split(" ")[0] for u in pf.approved_unavailable[:5])
+                                       if pf.approved_unavailable else ""))
     if not pf.ok:
         parts.append("STOPPED: " + pf.stop_reason)
     return "; ".join(parts)

@@ -6,6 +6,7 @@ production (cloud secret / env injection) environments can co-exist without
 code changes.
 """
 import os
+from pathlib import Path
 
 
 def _int(key: str, default: int) -> int:
@@ -159,3 +160,11 @@ PREFLIGHT: str = (os.getenv("PREFLIGHT", "on") or "on").strip().lower()
 VALIDATE_RUN_TESTS: bool = os.getenv("VALIDATE_RUN_TESTS", "true").strip().lower() not in {"0", "false", "no", "off"}
 # One Maven build (preflight or validation), tests included.
 VALIDATE_TIMEOUT_SECONDS: int = _int("VALIDATE_TIMEOUT_SECONDS", 3600)
+
+# Approved versions (agents/shared/approved_versions.py): the exact versions a
+# Java 8 -> 11 migration may use for listed artifacts — the ones your internal
+# repository serves. Listed versions are given to the agents and enforced by
+# validation. STRICT: no version may be introduced unless it is listed.
+APPROVED_VERSIONS_FILE: str = os.getenv(
+    "APPROVED_VERSIONS_FILE", str(Path(__file__).resolve().parent.parent / "approved-versions.txt"))
+APPROVED_VERSIONS_STRICT: bool = os.getenv("APPROVED_VERSIONS_STRICT", "false").strip().lower() in {"1", "true", "yes", "on"}

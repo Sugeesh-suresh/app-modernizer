@@ -198,6 +198,7 @@ planner_agent = LlmAgent(
         "Load and execute the `java-8-to-11-plan` skill to create the migration plan.\n\n"
         + skill_manifest.planner_block(_PLAN_SKILL_ROSTER)
         + "\n\n## Scope Fence (the plan must stay inside it)\n" + FENCE_RULES + "\n\n"
+        "## Approved Versions (your organisation's list — overrides the matrix)\n{approved_versions?}\n\n"
         "## Confirmed Business Requirements Document\n{brd}\n\n"
         "## Confirmed Technical Specification\n{technical_spec}\n\n"
         "## Existing Test Inventory\n{test_inventory}\n\n"
@@ -224,6 +225,7 @@ modifier_agent = LlmAgent(
         "The target is exactly Java 11: after the run the build's compiler release "
         "(`maven.compiler.release` / `<release>` / `options.release` / toolchain) is 11.\n\n"
         + FENCE_RULES
+        + "\n\n## Approved Versions (use exactly these for these artifacts)\n{approved_versions?}"
         + "\n\n## Your Task\n{current_task}"
     ),
     tools=[_skill("java-8-to-11-modify"), *_writing_tools()],
@@ -266,6 +268,7 @@ fixer_agent = LlmAgent(
     instruction=(
         "Load and execute the `java-8-to-11-fix` skill.\n\n"
         + FENCE_RULES
+        + "\n\n## Approved Versions (use exactly these for these artifacts)\n{approved_versions?}"
         + "\n\n## Build Report (errors to fix)\n{build_result}"
     ),
     tools=[_skill("java-8-to-11-fix"), *_writing_tools()],

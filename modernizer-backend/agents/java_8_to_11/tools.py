@@ -24,7 +24,7 @@ from google.adk.tools import ToolContext
 
 from .. import config
 from . import preflight
-from ..shared import java_env, scope_fence
+from ..shared import approved_versions, java_env, scope_fence
 from ..shared import workspace_tools as _ws
 from ..shared.workspace_tools import (  # noqa: F401 (re-exported)
     list_files,
@@ -197,6 +197,7 @@ def run_java11_build(tool_context: ToolContext) -> str:
     baseline_coords = {(g, a, v) for (_, g, a), v in
                        scope_fence._resolved_coordinates(state.get("baseline_dir", "")).items()}
 
+    approved, _ = approved_versions.load()
     args = ["-fae", "clean", "package", "-Dmaven.test.failure.ignore=true"]
     if not config.VALIDATE_RUN_TESTS:
         args.append("-DskipTests")
@@ -216,7 +217,13 @@ def run_java11_build(tool_context: ToolContext) -> str:
             lines.append(f"BUILD: {e}")
         for e in res.environment:
             introduced = [c for c in res.coordinates if tuple(c.split(":")) not in baseline_coords]
-            if introduced:
+            pinned = [c for c in introduced
+                      if (pin := approved_versions.lookup(approved, *c.split(":")[:2])) and pin.version == c.split(":")[2]]
+            if pinned:
+                lines.append(f"ENVIRONMENT: {', '.join(pinned)} is on the approved-versions list but cannot be "
+                             f"downloaded here — the list or the repository access needs correcting, not the "
+                             f"code. {e}")
+            elif introduced:
                 lines.append(f"DEPENDENCY: {', '.join(introduced)} — introduced or changed by this migration and "
                              f"cannot be downloaded: the coordinate is wrong (artifact renamed, version does not "
                              f"exist, or pre-release). {e}")
