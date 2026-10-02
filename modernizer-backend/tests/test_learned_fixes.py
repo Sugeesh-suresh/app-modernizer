@@ -12,6 +12,13 @@ from google.genai import types
 
 from agents.shared import learned_fixes as lf
 
+@pytest.fixture(autouse=True)
+def learning_on(monkeypatch):
+    """These tests publish only to temporary skill files (or a stub) — the
+    repository's skills stay untouched (conftest turns learning off globally)."""
+    monkeypatch.setattr(lf, "_LEARNING_ENABLED", True)
+
+
 REPORTED = ("Java 8_Spring WAR_Oracle 19 application/src/main/java/com/example/weather/dao/"
             "JdbcWeatherDao.java:8 — package jakarta.sql does not exist")
 

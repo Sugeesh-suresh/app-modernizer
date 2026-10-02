@@ -89,6 +89,9 @@ export default function App() {
 
       case 'step-change':
         if (event.step) {
+          // Moving to "complete" keeps the build outcome: the completion screen
+          // states whether validation passed, and resetting here wiped it.
+          const keepOutcome = event.step === 'complete';
           setState((s) => ({
             ...s,
             step: event.step as WorkflowStep,
@@ -98,10 +101,10 @@ export default function App() {
             progressMessage: '',
             codeSubStep: 'generating',
             validationIteration: 0,
-            validationResult: null,
+            validationResult: keepOutcome ? s.validationResult : null,
             currentStage: 0,
             stageTotal: 0,
-            stageResults: [],
+            stageResults: keepOutcome ? s.stageResults : [],
             currentTask: null,
           }));
         }
@@ -592,6 +595,41 @@ export default function App() {
             onRefine={handleRefinePlan}
           />
         )}
+
+        {/* The build/validation outcome. The run always "completes" once its build
+            loop has finished — passed or not — so the result has to be stated here,
+            or a migration that never built reads as a success. */}
+        {state.step === 'complete' && !reOnly && (() => {
+          const failedStages = state.stageResults.filter((r) => !r.passed);
+          const v = state.validationResult;
+          const failed = (v && !v.passed) || failedStages.length > 0;
+          const known = v !== null || state.stageResults.length > 0;
+          if (!known) return null;
+          const errors = v && !v.passed ? v.errors : failedStages.flatMap((r) => r.errors.map((e) => `${r.title}: ${e}`));
+          return (
+            <div className="max-w-7xl mx-auto px-6 pt-6">
+              {failed ? (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-900">
+                  <strong>The build did not pass validation</strong>
+                  {v && !v.passed ? ` after ${v.iterations} iteration${v.iterations === 1 ? '' : 's'}` : ''}
+                  {failedStages.length > 0 ? ` in ${failedStages.length} stage${failedStages.length === 1 ? '' : 's'}` : ''}.
+                  {' '}The download holds the result as it stands — the remaining errors need a human; the report
+                  below explains them.
+                  {errors.length > 0 && (
+                    <ul className="mt-2 list-disc pl-5 font-mono text-xs space-y-0.5">
+                      {errors.slice(0, 8).map((e, i) => <li key={i}>{e}</li>)}
+                      {errors.length > 8 && <li>… and {errors.length - 8} more (see the report)</li>}
+                    </ul>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-800">
+                  Build and validation passed{v ? ` (${v.iterations} iteration${v.iterations === 1 ? '' : 's'})` : ''}.
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {state.step === 'complete' && state.generatedFiles.length > 0 && (
           <CodeOutput

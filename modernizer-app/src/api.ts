@@ -2,11 +2,19 @@ import type { PatternId, JavaMigrationOptions } from './types';
 
 const BASE = 'http://localhost:8000';
 
+/** The server's own explanation (FastAPI `detail`) when it gives one — e.g. why a
+ * refine was refused or which model error stopped it — else `fallback`. */
+async function apiError(res: Response, fallback: string): Promise<Error> {
+  const body = await res.json().catch(() => null);
+  const detail = body && typeof body.detail === 'string' ? body.detail : '';
+  return new Error(detail ? `${fallback}: ${detail}` : fallback);
+}
+
 /** Which patterns show their analysis for review before planning, as this
  * server is configured (MIGRATION_ANALYSIS / JAVA11_ANALYSIS). */
 export async function fetchAnalysisReview(): Promise<Partial<Record<PatternId, boolean>>> {
   const res = await fetch(`${BASE}/api/patterns/analysis-review`);
-  if (!res.ok) throw new Error('Failed to load analysis settings');
+  if (!res.ok) throw await apiError(res, 'Failed to load analysis settings');
   return res.json();
 }
 
@@ -66,7 +74,7 @@ export async function confirmBrd(
       feedback: feedback ?? null,
     }),
   });
-  if (!res.ok) throw new Error('Failed to confirm BRD');
+  if (!res.ok) throw await apiError(res, 'Failed to confirm BRD');
 }
 
 export async function selectCompanions(sessionId: string, selected: PatternId[]): Promise<void> {
@@ -75,7 +83,7 @@ export async function selectCompanions(sessionId: string, selected: PatternId[])
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ selected }),
   });
-  if (!res.ok) throw new Error('Failed to confirm companion migrations');
+  if (!res.ok) throw await apiError(res, 'Failed to confirm companion migrations');
 }
 
 export async function refineBrd(sessionId: string, feedback: string): Promise<void> {
@@ -84,7 +92,7 @@ export async function refineBrd(sessionId: string, feedback: string): Promise<vo
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ feedback }),
   });
-  if (!res.ok) throw new Error('Failed to refine BRD');
+  if (!res.ok) throw await apiError(res, 'Failed to refine BRD');
 }
 
 export async function confirmPlan(
@@ -97,7 +105,7 @@ export async function confirmPlan(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content, feedback: feedback ?? null }),
   });
-  if (!res.ok) throw new Error('Failed to confirm Plan');
+  if (!res.ok) throw await apiError(res, 'Failed to confirm Plan');
 }
 
 export async function refinePlan(sessionId: string, feedback: string): Promise<void> {
@@ -106,7 +114,7 @@ export async function refinePlan(sessionId: string, feedback: string): Promise<v
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ feedback }),
   });
-  if (!res.ok) throw new Error('Failed to refine plan');
+  if (!res.ok) throw await apiError(res, 'Failed to refine plan');
 }
 
 export async function uploadContextFiles(
@@ -119,7 +127,7 @@ export async function uploadContextFiles(
     method: 'POST',
     body: form,
   });
-  if (!res.ok) throw new Error('Failed to upload context files');
+  if (!res.ok) throw await apiError(res, 'Failed to upload context files');
   return res.json();
 }
 

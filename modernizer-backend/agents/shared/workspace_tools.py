@@ -19,6 +19,7 @@ allows `mvn`/`gradle`, others allow nothing or a different toolchain) so
 it is built per pattern via `make_run_command`.
 """
 import fnmatch
+import json
 import os
 import re
 import shlex
@@ -593,6 +594,26 @@ def signal_build_success(tool_context: ToolContext) -> str:
         return ("ERROR: build success NOT signalled — versions this migration set contradict the approved-versions "
                 "list (they may not exist in the organisation's repository). Validation has FAILED; report each "
                 "as an error prefixed `VERSION:`:\n" + "\n".join(f"  - {v}" for v in violations))
+    # The loop ends on this call (escalate + skip_summarization), so the
+    # validator never writes its own JSON result afterwards. Without this, its
+    # output key would keep the PREVIOUS round's failure — or stay empty — and
+    # the UI, reviewer, reporter and learned-fixes check would read a passing
+    # run as failed. ADK leaves state_delta alone when the final event has no
+    # text, so this value is what the key holds after the loop.
+    key = _output_key(tool_context)
+    if key:
+        tool_context.state[key] = json.dumps({
+            "passed": True, "errors": [],
+            "summary": "Validation passed — the validator confirmed the build and signalled success.",
+        })
     tool_context.actions.escalate = True
     tool_context.actions.skip_summarization = True
     return "Build success signalled — exiting the build loop."
+
+
+def _output_key(tool_context: ToolContext) -> str:
+    """The calling agent's output key (build_result / build_result_stage<N>)."""
+    try:
+        return getattr(tool_context._invocation_context.agent, "output_key", "") or ""
+    except AttributeError:
+        return ""

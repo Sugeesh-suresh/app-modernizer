@@ -18,3 +18,12 @@ def no_preflight(monkeypatch):
     """The preflight runs real Maven builds; tests that exercise it switch it on."""
     from agents import config
     monkeypatch.setattr(config, "PREFLIGHT", "off")
+
+
+@pytest.fixture(autouse=True)
+def no_skill_learning(monkeypatch):
+    """Runs through the real agents must never write learned patterns into the
+    repository's own skill files; tests of that mechanism use temporary files."""
+    from agents.shared import callbacks, learned_fixes
+    monkeypatch.setattr(callbacks, "_LEARNING_ENABLED", False)
+    monkeypatch.setattr(learned_fixes, "_LEARNING_ENABLED", False)

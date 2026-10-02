@@ -2167,10 +2167,21 @@ async def upload_repository(
     raw = await file.read()
 
     ws_path = Path(tempfile.mkdtemp(prefix="modernizer-ws-"))
-    if file.filename and file.filename.endswith(".zip"):
-        extraction = _extract_zip_to_dir(raw, ws_path)
+    if file.filename and file.filename.lower().endswith(".zip"):
+        try:
+            extraction = _extract_zip_to_dir(raw, ws_path)
+        except zipfile.BadZipFile:
+            shutil.rmtree(ws_path, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=(
+                "The uploaded file is not a valid .zip archive (empty, truncated or another format). "
+                "Re-create the archive and upload again."))
     else:
-        (ws_path / (file.filename or "uploaded-source")).write_bytes(raw)
+        # The client names the file: keep only its last component, so a name like
+        # "../../x.java" cannot write outside the workspace.
+        name = Path((file.filename or "").replace("\\", "/")).name
+        if name in ("", ".", ".."):
+            name = "uploaded-source"
+        (ws_path / name).write_bytes(raw)
         extraction = ExtractionResult(files=1, total_bytes=len(raw), truncated=0, unsafe=0)
 
     files_found = extraction.files
@@ -2307,6 +2318,10 @@ async def select_companions(session_id: str, body: SelectCompanionsRequest = Sel
 async def confirm_brd(session_id: str, body: ConfirmRequest = ConfirmRequest()):
     if session_id not in _brd_gates:
         raise HTTPException(status_code=404, detail="Session not found.")
+    if body.content is None:
+        _require(await _get_state(session_id), "brd", "analysis")
+    if session_id in _refining:
+        raise HTTPException(status_code=409, detail="The analysis is being refined — wait for the new version.")
 
     delta: dict = {}
     if body.content is not None:
@@ -2336,10 +2351,9 @@ async def refine_brd(session_id: str, body: RefineRequest):
         raise HTTPException(status_code=400, detail="BRD already confirmed.")
 
     state = await _get_state(session_id)
+    _require(state, "brd", "analysis")
     bundle = _bundle_for(state)
-
-    await _run_bundle_re(session_id, bundle, feedback=body.feedback)
-    return {"ok": True}
+    return await _refine(session_id, _run_bundle_re(session_id, bundle, feedback=body.feedback))
 
 
 @app.get("/api/sessions/{session_id}/download/brd")
@@ -2419,6 +2433,34 @@ async def upload_context_files(
     return {"ok": True, "files_added": len(added), "filenames": added}
 
 
+_refining: set[str] = set()
+
+
+def _require(state: dict, key: str, what: str) -> None:
+    """A review action is only valid once there is something to review: an
+    early confirm would release the gate before the document exists, and the
+    run would then pass that review unseen."""
+    if not (state.get(key) or "").strip():
+        raise HTTPException(status_code=409, detail=f"There is no {what} to review yet — wait for it to be generated.")
+
+
+async def _refine(session_id: str, run) -> dict:
+    """One refine at a time per session; a model failure is a 502 with the reason."""
+    if session_id in _refining:
+        raise HTTPException(status_code=409, detail="A refine is already running for this session.")
+    _refining.add(session_id)
+    try:
+        await run
+    except HTTPException:
+        raise
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=502, detail=f"Refine failed: {_describe_error(exc)}")
+    finally:
+        _refining.discard(session_id)
+    return {"ok": True}
+
+
 @app.post("/api/sessions/{session_id}/confirm-plan")
 async def confirm_plan(session_id: str, body: ConfirmRequest = ConfirmRequest()):
     if session_id not in _plan_gates:
@@ -2426,6 +2468,10 @@ async def confirm_plan(session_id: str, body: ConfirmRequest = ConfirmRequest())
 
     state = await _get_state(session_id)
     _reject_if_discovery(state, "confirm a plan")
+    if body.content is None:
+        _require(state, "plan", "plan")
+    if session_id in _refining:
+        raise HTTPException(status_code=409, detail="The plan is being refined — wait for the new version.")
     delta: dict = {}
     plan_text = body.content if body.content is not None else state.get("plan", "")
     if body.content is not None:
@@ -2465,10 +2511,9 @@ async def refine_plan(session_id: str, body: RefineRequest):
 
     state = await _get_state(session_id)
     _reject_if_discovery(state, "refine a plan")
+    _require(state, "plan", "plan")
     bundle = _bundle_for(state)
-
-    await _run_bundle_plan(session_id, bundle, feedback=body.feedback)
-    return {"ok": True}
+    return await _refine(session_id, _run_bundle_plan(session_id, bundle, feedback=body.feedback))
 
 
 @app.get("/api/sessions/{session_id}/download/plan")
