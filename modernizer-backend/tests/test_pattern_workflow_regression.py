@@ -254,13 +254,12 @@ def test_stack_discovery_still_runs_the_reverse_engineering_agents(monkeypatch, 
     state = main._initial_state("stack-discovery", str(tmp_path), str(tmp_path), "[]", "bigbang", False, False)
     sid = asyncio.run(session_service.create_session(app_name=APP_NAME, user_id=USER_ID, state=state)).id
     main._sse_queues[sid] = asyncio.Queue()
-    stacks = ["java-8-to-25", "oracle-19c-to-23ai", "solr-4-to-9", "tibco-ems-to-pubsub", "wildfly"]
+    stacks = ["java", "oracle", "solr", "tibco-ems", "backbone", "wildfly"]
     asyncio.run(main._run_bundle_re(sid, stacks))
-    # Migration-neutral discovery agents, not the migrations' own RE runners;
-    # wildfly has no migration, so its own `re` runner is already neutral.
-    assert harness.steps == [(f"discover_{p}", "stack-discovery") for p in stacks[:-1]] + [("re", "wildfly")]
-    for p in stacks[:-1]:
-        assert f"discover_{p}" in PATTERN_RUNNERS["stack-discovery"]
+    # One migration-neutral discovery agent for every stack, not the migrations'
+    # own RE runners; wildfly keeps its own runner, which has no target either.
+    assert harness.steps == [("discover", "stack-discovery")] * 5 + [("re", "wildfly")]
+    assert "discover" in PATTERN_RUNNERS["stack-discovery"]
 
 
 @pytest.mark.parametrize("pattern, review", [

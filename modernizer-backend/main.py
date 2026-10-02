@@ -48,7 +48,7 @@ from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11 import preflight as java11_preflight
-from agents.shared import current_state, migration_inventory
+from agents.shared import current_state, migration_inventory, repo_fingerprint
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -87,11 +87,10 @@ _STACK_DISCOVERY = "stack-discovery"
 # fence that freezes the JSP tier and the WildFly deployment.
 _JAVA_8_TO_11 = "java-8-to-11"
 
-# Every pattern whose `re` runner a stack-discovery fan-out can invoke — used to
-# pre-initialize the namespaced per-stack state keys. Wider than _CORE_PATTERNS
-# because discovery can reverse-engineer the JSP tier and WildFly too, neither of
-# which can be a companion of a chosen primary.
-_STACK_PATTERNS = stack_detector.STACK_ORDER
+
+# stack id -> the dependency_graph extractor that understands it (discovery only).
+_DISCOVERY_GRAPHS = {"java": "java-8-to-25", "jsp": "jsp-to-react-bff", "oracle": "oracle-19c-to-23ai",
+                     "solr": "solr-4-to-9", "tibco-ems": "tibco-ems-to-pubsub"}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1005,6 +1004,7 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         # and `stack_known` are rendered into the mapper agent's instruction, so
         # they must exist before it runs; `stack_inventory` is its raw output and
         # `stack_inventory_markdown` the reconciled section that opens the document.
+        "stack_fingerprint": "",
         "stack_prescan": "",
         "stack_known": "",
         "stack_inventory": "",
@@ -1065,10 +1065,10 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         state[f"build_result_stage{stage.idx}"] = ""
         state[f"fix_result_stage{stage.idx}"] = ""
     # Namespaced per-pattern placeholders for a companion bundle run — see
-    # _run_bundle_re / _run_bundle_plan / _run_bundle_code_generation. The
-    # stack-discovery fan-out reaches patterns a companion bundle cannot (the JSP
-    # tier, wildfly), so its keys are seeded here too.
-    for p in dict.fromkeys(_CORE_PATTERNS + _STACK_PATTERNS):
+    # _run_bundle_re / _run_bundle_plan / _run_bundle_code_generation. Stack
+    # discovery's per-stack keys are written as each stack is documented: its
+    # stacks come from the repository, so there is no fixed list to seed.
+    for p in _CORE_PATTERNS:
         for key in (
             "brd", "technical_spec", "test_inventory", "plan", "modify_result",
             "build_result", "code_review", "final_report", "skill_curator_summary",
@@ -1086,7 +1086,7 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
 # to running that single pattern exactly as before.
 # ---------------------------------------------------------------------------
 
-def _label(pattern: str, discovery: bool = False) -> str:
+def _label(pattern: str, discovery: bool = False, labels: dict | None = None) -> str:
     """The `## <label>` heading a pattern's slice gets in a combined document.
 
     Falls through to the stack labels so the two stack-discovery-only legs
@@ -1098,7 +1098,9 @@ def _label(pattern: str, discovery: bool = False) -> str:
     if discovery:
         # A discovery document names stacks, never the migrations that share
         # their pattern ids ("Oracle Database", not "Oracle 19c → 23ai").
-        return stack_detector.STACK_LABELS.get(pattern) or current_state.neutral_ids(pattern)
+        # Stacks are found in the repository, so their labels travel with them (`labels`).
+        return ((labels or {}).get(pattern) or stack_detector.STACK_LABELS.get(pattern)
+                or current_state.neutral_ids(pattern))
     return (
         companion_detector.COMPANION_LABELS.get(pattern)
         or stack_detector.STACK_LABELS.get(pattern)
@@ -1131,15 +1133,16 @@ def _bundle_for(state: dict) -> list[str]:
     primary pattern last. Degenerates to [primary] when no companions were
     detected or the reviewer unchecked them all.
 
-    stack-discovery is the exception. There is no primary to run last — the
-    pattern itself has no `re` runner, only the stacks found in the repo do — so
-    the bundle is exactly the confirmed stacks, in stack_detector.STACK_ORDER.
+    stack-discovery is the exception. There is no primary to run last, so the
+    bundle is exactly the confirmed stacks, in the order the reconciled stack
+    list gives them (stack_detector.order: by kind).
     Appending the pattern here would send the fan-out looking for
     PATTERN_RUNNERS["stack-discovery"]["re"], which does not exist.
     """
     selected = json.loads(state.get("companion_patterns_json", "[]"))
     if state.get("pattern") == _STACK_DISCOVERY:
-        return [p for p in _STACK_PATTERNS if p in selected]
+        stacks = json.loads(state.get("companion_recommendations_json", "[]"))
+        return [s["pattern"] for s in stacks if s.get("pattern") in selected]
     return [p for p in _COMPANION_PRIORITY if p in selected] + [state["pattern"]]
 
 
@@ -1214,7 +1217,33 @@ def _parse_mapper_json(raw: str) -> dict:
     return {}
 
 
-def _merge_mapper_result(prescan: list[dict], raw: str) -> tuple[list[dict], list[str]]:
+def _cited_paths_exist(evidence: list[str], workspace_dir: str) -> bool:
+    """Whether at least one evidence line cites a file that is in the workspace.
+    Without a workspace to check against (unit tests), the citation is taken as given."""
+    if not workspace_dir or not Path(workspace_dir).is_dir():
+        return True
+    root = Path(workspace_dir).resolve()
+    for line in evidence:
+        path = _re.split(r":(?:\d+)?\s|:\d+$|\s—\s|\s-\s|\s\(", line.strip().strip("`"), maxsplit=1)[0]
+        path = path.strip().strip("`").lstrip("./")
+        if path and ".." not in Path(path).parts and (root / path).exists():
+            return True
+    return False
+
+
+def _without_result_block(raw: str) -> str:
+    """The mapper's prose without its trailing machine-readable block (and that
+    block's heading). Only a block that ends the reply is cut."""
+    text = (raw or "").strip()
+    start = max(text.rfind("```json"), -1)
+    if start < 0 or not text.endswith("```") or start >= len(text) - 3:
+        return text
+    head = text[:start].rstrip()
+    head = _re.sub(r"\n#+\s*Machine-Readable Result\s*$", "", head).rstrip()
+    return head
+
+
+def _merge_mapper_result(prescan: list[dict], raw: str, workspace_dir: str = "") -> tuple[list[dict], list[str]]:
     """Reconcile the LLM mapper's JSON block against the deterministic pre-scan.
 
     Returns `(stacks, notes)` — the stacks to reverse-engineer, and any notes to
@@ -1226,14 +1255,25 @@ def _merge_mapper_result(prescan: list[dict], raw: str) -> tuple[list[dict], lis
 
     - **A stack with no evidence is dropped.** Uncited is indistinguishable from
       invented, and this document is downloaded and relied on.
-    - **An added stack must be a pattern we can actually run.** An unknown
-      identifier is recorded as a note for the reviewer, not silently turned into
-      a fan-out leg that would KeyError on PATTERN_RUNNERS.
+    - **An added stack must cite a file that exists.** Any identifier is
+      accepted — every stack is documented by the same discovery agent — but a
+      stack none of whose cited paths is in the workspace is dropped with a note.
     - **A rejection needs a reason.** Rejecting a deterministic finding is the one
       move here that removes evidence from the document, so it has to be argued;
       a bare rejection leaves the pre-scan's finding standing.
     """
-    by_pattern: dict[str, dict] = {s["pattern"]: dict(s) for s in prescan}
+    by_pattern: dict[str, dict] = {}
+    for s in prescan:
+        stack = dict(s)
+        # Ids and labels are the stack's, never a migration's (an older pre-scan
+        # used the migration pattern ids, e.g. `java-8-to-25`).
+        stack["pattern"] = current_state.neutral_ids(stack["pattern"])
+        stack["label"] = stack_detector.STACK_LABELS.get(stack["pattern"]) or stack.get("label") or stack["pattern"]
+        stack.setdefault("kind", next((c.kind for c in stack_detector.CATALOG if c.pattern == stack["pattern"]),
+                                      "other"))
+        stack.setdefault("reference", stack_detector.reference_for(stack["pattern"], stack["kind"]))
+        stack.pop("extraction_only", None)
+        by_pattern[stack["pattern"]] = stack
     notes: list[str] = []
 
     parsed = _parse_mapper_json(raw)
@@ -1245,9 +1285,7 @@ def _merge_mapper_result(prescan: list[dict], raw: str) -> tuple[list[dict], lis
             "deterministic scan's findings are used as-is. Its written inventory is still in the "
             "document."
         )
-        return list(by_pattern.values()), notes
-
-    known = set(stack_detector.STACK_ORDER)
+        return stack_detector.order(list(by_pattern.values())), notes
 
     for entry in parsed.get("stacks") or []:
         if not isinstance(entry, dict):
@@ -1259,11 +1297,13 @@ def _merge_mapper_result(prescan: list[dict], raw: str) -> tuple[list[dict], lis
                 f"Dropped a stack the mapper reported without evidence: `{pattern or 'unnamed'}`."
             )
             continue
-        if pattern not in known:
+        pattern = current_state.neutral_ids(pattern)
+        if pattern not in by_pattern:
+            pattern = stack_detector.slug(pattern)
+        if pattern not in by_pattern and not _cited_paths_exist(evidence, workspace_dir):
             notes.append(
-                f"The mapper reported `{pattern}` ({entry.get('label') or pattern}), which has no "
-                f"RE skill in this pipeline — recorded here but not reverse engineered. "
-                f"Evidence: {'; '.join(evidence[:3])}"
+                f"Dropped `{pattern}`: none of the files the mapper cited for it exist in the "
+                f"repository ({'; '.join(evidence[:3])})."
             )
             continue
         if pattern in by_pattern:
@@ -1273,17 +1313,21 @@ def _merge_mapper_result(prescan: list[dict], raw: str) -> tuple[list[dict], lis
             merged = evidence + [e for e in existing if e not in evidence]
             by_pattern[pattern]["evidence"] = merged[:6]
         else:
+            kind = str(entry.get("kind") or "").strip().lower()
+            spec_kind = next((s.kind for s in stack_detector.CATALOG if s.pattern == pattern), "")
+            kind = spec_kind or (kind if kind in stack_detector.KIND_ORDER else "other")
             by_pattern[pattern] = {
                 "pattern": pattern,
-                "label": str(entry.get("label") or stack_detector.STACK_LABELS.get(pattern, pattern)),
+                "label": str(stack_detector.STACK_LABELS.get(pattern) or entry.get("label") or pattern)[:80],
+                "kind": kind,
+                "reference": stack_detector.reference_for(pattern, kind),
                 "evidence": evidence[:6],
-                "extraction_only": pattern in stack_detector.EXTRACTION_ONLY_PATTERNS,
             }
 
     for entry in parsed.get("rejected") or []:
         if not isinstance(entry, dict):
             continue
-        pattern = str(entry.get("pattern") or "").strip()
+        pattern = current_state.neutral_ids(str(entry.get("pattern") or "").strip())
         reason = str(entry.get("reason") or "").strip()
         if pattern not in by_pattern:
             continue
@@ -1296,8 +1340,7 @@ def _merge_mapper_result(prescan: list[dict], raw: str) -> tuple[list[dict], lis
         del by_pattern[pattern]
         notes.append(f"`{pattern}` was detected by the scan but rejected by the mapper: {reason}")
 
-    ordered = [by_pattern[p] for p in stack_detector.STACK_ORDER if p in by_pattern]
-    return ordered, notes
+    return stack_detector.order(list(by_pattern.values())), notes
 
 
 async def _run_stack_mapping(session_id: str) -> list[dict]:
@@ -1309,12 +1352,14 @@ async def _run_stack_mapping(session_id: str) -> list[dict]:
     """
     state = await _get_state(session_id)
     prescan = json.loads(state.get("companion_recommendations_json", "[]"))
+    workspace_dir = state.get("workspace_dir", "")
+    fingerprint = repo_fingerprint.fingerprint(workspace_dir)
 
     await _update_state(session_id, {
+        "stack_fingerprint": repo_fingerprint.to_prompt(fingerprint)[:20000],
         "stack_prescan": stack_detector.to_markdown(prescan) or "No stacks detected by the pre-scan.",
         "stack_known": "\n".join(
-            f"- `{p}` — {stack_detector.STACK_LABELS.get(p, p)}"
-            for p in stack_detector.STACK_ORDER
+            f"- `{s.pattern}` — {s.label} ({s.kind})" for s in stack_detector.CATALOG
         ),
     })
 
@@ -1330,16 +1375,18 @@ async def _run_stack_mapping(session_id: str) -> list[dict]:
 
     state = await _get_state(session_id)
     raw = state.get("stack_inventory", "")
-    stacks, notes = _merge_mapper_result(prescan, raw)
+    stacks, notes = _merge_mapper_result(prescan, raw, workspace_dir)
 
     # The prose inventory is the mapper's own; the table is regenerated from the
     # reconciled list so the document's inventory matches what actually ran.
     inventory = stack_detector.to_markdown(stacks, source="deterministic scan + dependency mapper")
-    prose = raw.strip()
+    # The trailing JSON block is for the pipeline; the table above already says it.
+    prose = _without_result_block(raw)
     if prose:
         inventory += "\n\n" + prose
     if notes:
         inventory += "\n\n### Mapper Reconciliation Notes\n\n" + "\n".join(f"- {n}" for n in notes)
+    inventory += "\n\n" + repo_fingerprint.to_markdown(fingerprint)
 
     await _update_state(session_id, {
         "stack_inventory_markdown": inventory,
@@ -1625,6 +1672,9 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
     primary = orig_state.get("pattern")
     primary_graph_json = orig_state.get("dependency_graph_json", "")
     discovery = primary == _STACK_DISCOVERY
+    stack_info = ({s["pattern"]: s for s in json.loads(orig_state.get("companion_recommendations_json", "[]"))}
+                  if discovery else {})
+    labels = {p: s.get("label", "") for p, s in stack_info.items()}
 
     sections: dict[str, tuple[str, str, str]] = {}  # pattern -> (brd, tech_spec, test_inventory)
     for pattern in bundle:
@@ -1649,22 +1699,29 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
         if discovery:
             # "migration domain" would be a lie here: nothing is being migrated,
             # and one of these legs (wildfly) has no target platform at all.
+            info = stack_info.get(pattern, {})
+            reference = info.get("reference") or stack_detector.reference_for(pattern, info.get("kind", ""))
+            evidence = "\n".join(f"- {e}" for e in info.get("evidence", [])) or "- (none recorded)"
             message += (
-                f" Confine yourself to the {_label(pattern, True)} stack — other stacks in this "
-                "repository are documented separately, so do not describe them. Describe the "
-                "repository exactly as it is: no migration, upgrade, modernisation, target-version "
+                f"\n\n## Stack\n{_label(pattern, True, labels)} (id `{pattern}`, kind "
+                f"{info.get('kind') or 'unspecified'})\n\n## Checklist\n`references/{reference}`\n\n"
+                f"## Evidence that identified it\n{evidence}\n\n"
+                "Confine yourself to this stack — other stacks in this repository are documented "
+                "separately, so do not describe them beyond where this one connects to them. Describe "
+                "the repository exactly as it is: no migration, upgrade, modernisation, target-version "
                 "or other change suggestions of any kind."
             )
         elif len(bundle) > 1:
             message += f" Focus specifically on the {_label(pattern)} migration domain."
 
-        if discovery and f"discover_{pattern}" in PATTERN_RUNNERS[_STACK_DISCOVERY]:
-            # Migration-neutral agents (skills/stack-discovery-re), not the
-            # migrations' own RE skills, which are written towards a target.
-            await _run_step(session_id, f"discover_{pattern}", _STACK_DISCOVERY, message=message,
-                            sse_event_type="re-stream")
+        if discovery and pattern in stack_detector.DEDICATED_RUNNERS:
+            runner_pattern, step = stack_detector.DEDICATED_RUNNERS[pattern]
+            await _run_step(session_id, step, runner_pattern, message=message, sse_event_type="re-stream")
         elif discovery:
-            await _run_step(session_id, "re", pattern, message=message, sse_event_type="re-stream")
+            # Every other stack, known or not: the migration-neutral discovery
+            # agent (skills/stack-discovery-re) with the stack's checklist.
+            await _run_step(session_id, "discover", _STACK_DISCOVERY, message=message,
+                            sse_event_type="re-stream")
         elif pattern == _JAVA_8_TO_11 and config.JAVA11_ANALYSIS == "agent":
             await _run_java11_re(session_id, message, refine=bool(feedback))
         elif pattern == _JAVA_8_TO_11:
@@ -1679,10 +1736,16 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
 
         # The primary's graph was computed at upload time; companions' are
         # computed here, once each, the same deterministic way.
-        graph_json = (
-            primary_graph_json if pattern == primary
-            else json.dumps(dependency_graph.build_dependency_graph(workspace_dir, pattern))
-        )
+        if discovery:
+            # A structural graph only where an extractor understands the stack.
+            graph_pattern = _DISCOVERY_GRAPHS.get(pattern)
+            graph_json = (json.dumps(dependency_graph.build_dependency_graph(workspace_dir, graph_pattern))
+                          if graph_pattern else "")
+        else:
+            graph_json = (
+                primary_graph_json if pattern == primary
+                else json.dumps(dependency_graph.build_dependency_graph(workspace_dir, pattern))
+            )
         if discovery:
             brd, tech_spec, test_inventory = (_current_state_only(s, pattern)
                                               for s in (brd, tech_spec, test_inventory))
@@ -1706,7 +1769,7 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
         ordered = sorted(bundle, key=lambda p: 0 if p == primary else 1)
 
         def _combine(idx: int) -> str:
-            parts = [f"## {_label(p, discovery)}\n\n{sections[p][idx]}" for p in ordered if sections[p][idx]]
+            parts = [f"## {_label(p, discovery, labels)}\n\n{sections[p][idx]}" for p in ordered if sections[p][idx]]
             return "\n\n---\n\n".join(parts)
 
         brd, tech_spec, test_inventory = _combine(0), _combine(1), _combine(2)

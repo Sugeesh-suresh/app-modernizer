@@ -129,7 +129,7 @@ export const PATTERNS: PatternConfig[] = [
     benefits: [
       'No need to pick a migration first — the repo is scanned, then read',
       'Deterministic library scan, then an agent that reads the build files',
-      'Java, JSP, WildFly/JBoss, Oracle, Solr and TIBCO EMS detected',
+      'Stacks derived from manifests, imports and script includes — any language or framework',
       'Every stack reported carries the file evidence that found it',
       'Read-only: no plan, no code generation, nothing written to the repo',
     ],

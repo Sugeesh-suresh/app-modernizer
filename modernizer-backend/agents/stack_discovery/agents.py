@@ -9,26 +9,20 @@ build loop — the reverse-engineering document is the deliverable.
     dependency_mapper_agent  (tool-driven: list_files/read_file) -> stack_inventory
         ^ seeded with stack_detector's deterministic pre-scan findings
     [HITL] the reviewer confirms/unchecks the detected stacks
-    then, once per confirmed stack, a discovery agent (defined below):
-        java-8-to-25        -> stack-discovery-re + references/java.md
-        jsp-to-react-bff    -> stack-discovery-re + references/jsp.md
-        oracle-19c-to-23ai  -> stack-discovery-re + references/oracle.md
-        solr-4-to-9         -> stack-discovery-re + references/solr.md
-        tibco-ems-to-pubsub -> stack-discovery-re + references/tibco-ems.md
-        wildfly             -> wildfly-re
+    then, once per confirmed stack, discovery_agent (defined below) with the
+    stack's checklist — or wildfly-re for WildFly
     -> one combined document, one `## <stack>` section each
        (main.py's _run_bundle_re does the fan-out and the combining)
 
-The pattern ids above are only keys for the stacks the detector knows; nothing
-here migrates anything. The migrations' own RE skills are deliberately NOT used:
-they are written towards a target (the Oracle one assesses 23ai readiness, the
-Java one Java 25 blockers), and this document must describe the repository as it
-is and nothing else. main.py also scrubs any migration language that slips
-through (agents/shared/current_state.py).
+Stacks are whatever the repository turns out to contain: stack_detector derives
+them from repo_fingerprint (manifests, imports, script includes, languages), and
+the mapper may add any stack it can cite. The migrations' own RE skills are
+deliberately NOT used: they are written towards a target, and this document must
+describe the repository as it is. main.py also scrubs any migration language
+that slips through (agents/shared/current_state.py).
 
-`wildfly` is the one stack that exists only here. It has an RE skill and no
-target platform, so it is registered with an `re` runner and nothing else — see
-stack_detector.EXTRACTION_ONLY_PATTERNS.
+`wildfly` keeps its own RE skill (wildfly-re) and runner — see
+stack_detector.DEDICATED_RUNNERS.
 """
 import pathlib
 
@@ -65,13 +59,14 @@ dependency_mapper_agent = LlmAgent(
     instruction=(
         "Load and execute the `dependency-mapper` skill, using the list_files and read_file tools "
         "to explore the workspace.\n\n"
-        "## Pre-scan Findings (deterministic regex scan, already run)\n{stack_prescan}\n\n"
-        "## Known Stacks\n"
-        "These are the stack identifiers this pipeline can reverse-engineer. Use these exact "
-        "`pattern` values in your JSON block wherever one of them fits. A stack you report under "
-        "any other identifier is still recorded and shown to the reviewer, but no reverse "
-        "engineering will run for it — so do not invent an identifier for something that is "
-        "already in this list.\n{stack_known}"
+        "## Repository Fingerprint (parsed manifests, imports, script includes, languages)\n"
+        "{stack_fingerprint?}\n\n"
+        "## Pre-scan Findings (stacks derived from the fingerprint, already run)\n{stack_prescan}\n\n"
+        "## Stack Identifiers\n"
+        "Use one of these exact `pattern` values in your JSON block wherever it fits. Any other "
+        "stack you find gets a short kebab-case identifier of your own and is documented the same "
+        "way, so report every stack the application is built on — do not squeeze one into an "
+        "identifier that does not fit.\n{stack_known}"
     ),
     tools=[
         _skill("dependency-mapper"),
@@ -111,42 +106,28 @@ wildfly_re_agent = LlmAgent(
 )
 
 
-# ── Per-stack discovery agents ────────────────────────────────────────────────
-# One neutral skill, one reference checklist per stack. Keyed by the detector's
-# pattern ids; registered as PATTERN_RUNNERS["stack-discovery"]["discover_<id>"].
-DISCOVERY_STACKS: dict[str, tuple[str, str]] = {   # pattern -> (stack name, reference file)
-    "java-8-to-25": ("Java application", "java.md"),
-    "jsp-to-react-bff": ("JSP / Servlet web tier", "jsp.md"),
-    "oracle-19c-to-23ai": ("Oracle Database", "oracle.md"),
-    "solr-4-to-9": ("Apache Solr", "solr.md"),
-    "tibco-ems-to-pubsub": ("TIBCO EMS messaging", "tibco-ems.md"),
-}
-
-
-def _discovery_agent(pattern: str, stack: str, reference: str) -> LlmAgent:
-    return LlmAgent(
-        name="discover_" + pattern.replace("-", "_"),
-        model=_MODEL,
-        description=f"Documents the {stack} part of an existing repository exactly as it is, via list_files/read_file.",
-        instruction=(
-            f"Load and execute the `stack-discovery-re` skill for the {stack} stack, and load its "
-            f"`references/{reference}` resource as your checklist. Use the list_files and read_file "
-            "tools to explore the workspace. Produce the Analysis, BRD, Technical Specification and "
-            "Existing Test Inventory sections with the exact SECTION markers the skill specifies. "
-            "Describe only what the repository contains — no migration, upgrade or other change "
-            "suggestions of any kind."
-        ),
-        tools=[
-            _skill("stack-discovery-re"),
-            FunctionTool(fs_tools.list_files),
-            FunctionTool(fs_tools.read_file),
-        ],
-        output_key="analysis",
-        include_contents="none",
-    )
-
-
-discovery_agents: dict[str, LlmAgent] = {
-    pattern: _discovery_agent(pattern, stack, reference)
-    for pattern, (stack, reference) in DISCOVERY_STACKS.items()
-}
+# ── Discovery agent ───────────────────────────────────────────────────────────
+# One agent for every stack, whatever it is. main.py's _run_bundle_re sends it one
+# request per confirmed stack naming the stack, the evidence that identified it,
+# and the checklist (skills/stack-discovery-re/references/*.md) to document it with
+# — a dedicated one where it exists, general.md for anything else.
+discovery_agent = LlmAgent(
+    name="discover_stack",
+    model=_MODEL,
+    description="Documents one technology stack of an existing repository exactly as it is, via list_files/read_file.",
+    instruction=(
+        "Load and execute the `stack-discovery-re` skill for the stack named in the request, and load "
+        "the reference checklist the request names with load_skill_resource. Use the list_files and "
+        "read_file tools to explore the workspace, starting from the evidence paths in the request. "
+        "Produce the Analysis, BRD, Technical Specification and Existing Test Inventory sections with "
+        "the exact SECTION markers the skill specifies. Describe only what the repository contains — "
+        "no migration, upgrade or other change suggestions of any kind."
+    ),
+    tools=[
+        _skill("stack-discovery-re"),
+        FunctionTool(fs_tools.list_files),
+        FunctionTool(fs_tools.read_file),
+    ],
+    output_key="analysis",
+    include_contents="none",
+)

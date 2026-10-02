@@ -53,12 +53,14 @@ export interface JavaMigrationOptions {
  * confirmation screen, same endpoint — from the reviewer's side it is the same
  * decision about which detected things to work on. */
 export interface CompanionRecommendation {
-  pattern: PatternId;
+  /** A PatternId for a companion migration; for stack-discovery, a stack id found
+   * in the repository (`java`, `backbone`, `python`, or any id the mapper chose). */
+  pattern: string;
   label: string;
   evidence: string[];
-  /** stack-discovery only: detected and reverse engineered, but no migration
-   * exists for it (WildFly). Shown so the reviewer is not led to expect one. */
-  extraction_only?: boolean;
+  /** stack-discovery only: server, database, search, messaging, web-tier,
+   * frontend, service, application, language or other. */
+  kind?: string;
 }
 
 export interface PatternConfig {

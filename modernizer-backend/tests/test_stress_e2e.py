@@ -283,7 +283,7 @@ def test_a_companion_bundle_runs_both_pipelines(scripted, tmp_path):
 
 
 def test_stack_discovery_runs_end_to_end(scripted, tmp_path):
-    events, state = _run(tmp_path, "stack-discovery", stacks=["tibco-ems-to-pubsub", "wildfly"])
+    events, state = _run(tmp_path, "stack-discovery", stacks=["tibco-ems", "wildfly"])
     assert not [e for e in events if e["type"] == "error"], events
     assert any(e["type"] == "brd-ready" for e in events)
     skills = {s for s, _ in scripted.calls}
@@ -506,3 +506,43 @@ def test_a_run_that_fails_then_passes_is_reported_as_passed(monkeypatch, tmp_pat
     assert done["passed"] is True and done["errors"] == [], done          # not round 1's stale failure
     assert json.loads(state["build_result_solr-4-to-9"] if "build_result_solr-4-to-9" in state
                       else state["build_result"])["passed"] is True
+
+
+def test_stack_discovery_documents_each_stack_the_repository_contains(scripted, tmp_path, monkeypatch):
+    """JSP + Backbone + Java: the stacks come from the repository (script
+    includes, AMD imports, sources), each is documented by the discovery agent
+    with its own checklist, and the fingerprint is part of the document."""
+    extra = {
+        "src/main/webapp/index.jsp": '<%@ page %>\n<script src="js/lib/backbone-min.js"></script>\n',
+        "src/main/webapp/js/lib/backbone-min.js": "/* lib */",
+        "src/main/webapp/js/app.js": "define(['backbone'], function (Backbone) { return Backbone.Router.extend({}); });",
+        "src/main/java/a/OrderController.java": "package a;\nimport org.springframework.stereotype.Controller;\nclass O {}\n",
+    }
+    requests: list[str] = []
+    real_run_step = main._run_step
+
+    async def recording(session_id, step_key, pattern, message, sse_event_type):
+        if step_key == "discover":
+            requests.append(message)
+        await real_run_step(session_id, step_key, pattern, message, sse_event_type)
+
+    monkeypatch.setattr(main, "_run_step", recording)
+    ws = tmp_path / "probe"
+    _write(ws, {**_fixture("stack-discovery"), **extra})
+    found = [s["pattern"] for s in main.stack_detector.detect_stacks(str(ws))]
+    assert {"jsp", "backbone", "java"} <= set(found)
+
+    events, state = _run(tmp_path, "stack-discovery", stacks=found, extra=extra)
+
+    assert not [e for e in events if e["type"] == "error"], events
+    documented = [re.search(r"\(id `([^`]+)`", m).group(1) for m in requests]
+    assert documented == [p for p in found if p != "wildfly"]
+    checklist = {re.search(r"\(id `([^`]+)`", m).group(1): re.search(r"`references/([\w.-]+)`", m).group(1)
+                 for m in requests}
+    assert (checklist["jsp"], checklist["backbone"], checklist["java"]) == ("jsp.md", "spa-frontend.md", "java.md")
+    assert "src/main/webapp/js/app.js: imports `backbone`" in next(m for m in requests if "(id `backbone`" in m)
+    brd = state["brd"]
+    for heading in ("## Detected Technology Stacks", "## Repository Fingerprint", "## JSP / Servlet web tier",
+                    "## Backbone.js front end", "## Java application"):
+        assert heading in brd, heading
+    assert brd.index("## JSP / Servlet web tier") < brd.index("## Backbone.js front end") < brd.index("## Java application")

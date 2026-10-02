@@ -5,6 +5,8 @@ stack-discovery pattern's dependency mapper.
 """
 from pathlib import Path
 
+import pytest
+
 from agents.shared import stack_detector
 from agents.shared.stack_detector import detect_stacks, to_markdown
 
@@ -47,10 +49,7 @@ class TestDetectStacks:
 
         stacks = detect_stacks(str(tmp_path))
 
-        assert {s["pattern"] for s in stacks} == {
-            "wildfly", "oracle-19c-to-23ai", "solr-4-to-9",
-            "tibco-ems-to-pubsub", "jsp-to-react-bff", "java-8-to-25",
-        }
+        assert {s["pattern"] for s in stacks} == {"wildfly", "oracle", "solr", "tibco-ems", "jsp", "java"}
 
     def test_every_stack_carries_evidence_and_a_label(self, tmp_path):
         _legacy_repo(tmp_path)
@@ -63,20 +62,21 @@ class TestDetectStacks:
             for line in stack["evidence"]:
                 assert ":" in line
 
-    def test_results_follow_stack_order(self, tmp_path):
+    def test_results_follow_kind_then_catalog_order(self, tmp_path):
         _legacy_repo(tmp_path)
 
         found = [s["pattern"] for s in detect_stacks(str(tmp_path))]
 
         assert found == [p for p in stack_detector.STACK_ORDER if p in found]
 
-    def test_wildfly_is_flagged_extraction_only(self, tmp_path):
+    def test_each_stack_names_its_kind_and_checklist(self, tmp_path):
         _legacy_repo(tmp_path)
 
         stacks = {s["pattern"]: s for s in detect_stacks(str(tmp_path))}
 
-        assert stacks["wildfly"]["extraction_only"] is True
-        assert stacks["java-8-to-25"]["extraction_only"] is False
+        assert (stacks["oracle"]["kind"], stacks["oracle"]["reference"]) == ("database", "oracle.md")
+        assert (stacks["java"]["kind"], stacks["java"]["reference"]) == ("application", "java.md")
+        assert stacks["wildfly"]["reference"] == ""        # documented by its own runner
 
     def test_detects_wildfly_from_server_config_alone(self, tmp_path):
         _write(tmp_path, "config/standalone.xml", '<server xmlns="urn:jboss:domain:14.0"/>')
@@ -86,7 +86,7 @@ class TestDetectStacks:
     def test_detects_jsp_from_tag_files_with_no_pom(self, tmp_path):
         _write(tmp_path, "web/WEB-INF/tags/panel.tag", "<%@ attribute name='title' %>")
 
-        assert "jsp-to-react-bff" in {s["pattern"] for s in detect_stacks(str(tmp_path))}
+        assert "jsp" in {s["pattern"] for s in detect_stacks(str(tmp_path))}
 
     def test_bare_jboss_mentions_do_not_trigger_wildfly(self, tmp_path):
         """org.jboss.logging arrives transitively in plenty of applications that
@@ -139,8 +139,8 @@ class TestToMarkdown:
 
     def test_pipes_in_evidence_are_escaped(self):
         stacks = [{
-            "pattern": "java-8-to-25", "label": "Java",
-            "evidence": ["build.gradle: matched `a|b`"], "extraction_only": False,
+            "pattern": "java", "label": "Java", "kind": "application",
+            "evidence": ["build.gradle: matched `a|b`"],
         }]
 
         assert r"a\|b" in to_markdown(stacks)
@@ -148,5 +148,102 @@ class TestToMarkdown:
     def test_empty_inventory_says_so_without_claiming_an_empty_repo(self):
         text = to_markdown([])
 
-        assert "No known stack was detected" in text
+        assert "No stack was detected" in text
         assert "repository is empty" in text  # explicitly disclaimed
+
+
+class TestStacksComeFromTheRepository:
+    """Stacks are derived from manifests, imports, script includes and languages,
+    not limited to a fixed list."""
+
+    def _mixed(self, root: Path) -> None:
+        _write(root, "pom.xml", "<project><packaging>war</packaging><dependencies>"
+               "<dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId>"
+               "<version>42.2.5</version></dependency></dependencies></project>")
+        _write(root, "src/main/java/a/OrderController.java",
+               "package a;\nimport org.springframework.stereotype.Controller;\n// import com.mongodb.X;\nclass O {}")
+        _write(root, "src/main/webapp/index.jsp",
+               '<%@ page %>\n<script src="js/lib/backbone-min.js"></script>\n<script src="js/lib/jquery-1.11.3.min.js"></script>')
+        _write(root, "src/main/webapp/js/lib/backbone-min.js", "/* lib */")
+        _write(root, "src/main/webapp/js/main.js",
+               "define(['backbone', 'underscore', './views/a'], function (Backbone) { return 1; });")
+        _write(root, "src/main/webapp/js/views/a.js", "define(['backbone'], function (B) {});")
+        _write(root, "scripts/sync.py", "import os\nimport requests\n")
+        _write(root, "scripts/report.py", "from requests import get\n")
+
+    def test_jsp_backbone_java_postgres_and_python_are_each_a_stack(self, tmp_path):
+        self._mixed(tmp_path)
+
+        stacks = {s["pattern"]: s for s in detect_stacks(str(tmp_path))}
+
+        assert list(stacks) == ["postgresql", "jsp", "backbone", "java", "python"]
+        assert stacks["backbone"]["reference"] == "spa-frontend.md"
+        evidence = " ".join(stacks["backbone"]["evidence"])
+        assert "imports `backbone` (2 files)" in evidence          # RequireJS define([...])
+        assert "loads `backbone` script" in evidence and "commits `backbone` library" in evidence
+        assert stacks["python"]["label"] == "Python code" and stacks["python"]["reference"] == "general.md"
+        assert "jquery" not in stacks          # inside the JSP/Backbone front end, not a stack of its own
+        assert "mongodb" not in stacks         # only in a comment
+
+    def test_react_and_a_node_service_from_package_json(self, tmp_path):
+        _write(tmp_path, "web/package.json", '{"dependencies": {"react": "^18.2.0", "react-dom": "^18.2.0"}}')
+        _write(tmp_path, "web/src/App.tsx", "import React from 'react';\nexport const App = () => null;")
+        _write(tmp_path, "api/package.json", '{"dependencies": {"express": "4.18.2", "kafkajs": "2.2.4"}}')
+        _write(tmp_path, "api/index.js", "const express = require('express');")
+
+        stacks = {s["pattern"]: s for s in detect_stacks(str(tmp_path))}
+
+        assert {"react", "nodejs", "kafka"} <= set(stacks)
+        assert "web/package.json: declares `react` ^18.2.0" in stacks["react"]["evidence"]
+        assert "typescript" not in stacks and "javascript" not in stacks    # accounted for
+
+    def test_an_uncatalogued_language_still_becomes_a_stack(self, tmp_path):
+        _write(tmp_path, "svc/main.go", "package main")
+        _write(tmp_path, "svc/handler.go", "package main")
+        _write(tmp_path, "go.mod", "module x\nrequire (\n  github.com/gin-gonic/gin v1.9.1\n)\n")
+
+        stacks = {s["pattern"]: s for s in detect_stacks(str(tmp_path))}
+
+        assert stacks["go"]["label"] == "Go code" and stacks["go"]["kind"] == "language"
+
+
+class TestFingerprint:
+    def test_manifests_imports_scripts_and_languages(self, tmp_path):
+        from agents.shared import repo_fingerprint as rf
+        TestStacksComeFromTheRepository()._mixed(tmp_path)
+
+        fp = rf.fingerprint(str(tmp_path))
+
+        assert fp["languages"]["JavaScript"]["files"] == 3 and fp["languages"]["Python"]["files"] == 2
+        assert fp["manifests"][0]["dependencies"] == [
+            {"name": "org.postgresql:postgresql", "version": "42.2.5", "scope": ""}]
+        assert set(fp["imports"]["python"]) == {"requests"}                      # stdlib dropped (AST)
+        assert set(fp["imports"]["java"]) == {"org.springframework.stereotype"}  # comment ignored
+        assert set(fp["imports"]["javascript"]) == {"backbone", "underscore"}    # relative paths dropped
+        assert set(fp["scripts"]) == {"backbone", "jquery"}
+        assert fp["vendored"] == {"backbone": ["src/main/webapp/js/lib/backbone-min.js"]}
+        md = rf.to_markdown(fp)
+        assert "## Repository Fingerprint" in md and "`org.postgresql:postgresql` | 42.2.5" in md
+
+    def test_python_strings_are_not_imports(self, tmp_path):
+        from agents.shared import repo_fingerprint as rf
+        _write(tmp_path, "a.py", 'DOC = "import django"\nimport flask\n')
+
+        assert set(rf.fingerprint(str(tmp_path))["imports"]["python"]) == {"flask"}
+
+    @pytest.mark.parametrize("name, manifest, expected", [
+        ("requirements.txt", "Django==3.2  # web\nrequests>=2\n-r other.txt\n", ["django", "requests"]),
+        ("pyproject.toml", '[project]\ndependencies = ["fastapi>=0.1"]\n', ["fastapi"]),
+        ("build.gradle", "dependencies { implementation 'org.hibernate:hibernate-core:5.4.0' }", ["org.hibernate:hibernate-core"]),
+        ("go.mod", "module m\nrequire github.com/gin-gonic/gin v1.9.1\n", ["github.com/gin-gonic/gin"]),
+        ("App.csproj", '<Project><ItemGroup><PackageReference Include="Dapper" Version="2.0" /></ItemGroup></Project>', ["Dapper"]),
+        ("Gemfile", "gem 'rails', '7.0'\n", ["rails"]),
+        ("bower.json", '{"dependencies": {"backbone": "1.1.2"}}', ["backbone"]),
+    ])
+    def test_each_manifest_kind_is_parsed(self, tmp_path, name, manifest, expected):
+        from agents.shared import repo_fingerprint as rf
+        _write(tmp_path, name, manifest)
+
+        deps = rf.fingerprint(str(tmp_path))["manifests"][0]["dependencies"]
+
+        assert [d["name"] for d in deps] == expected

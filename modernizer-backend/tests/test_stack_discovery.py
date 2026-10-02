@@ -15,12 +15,12 @@ from agents.shared import stack_detector
 
 
 PRESCAN = [
-    {"pattern": "oracle-19c-to-23ai", "label": "Oracle 19c → 23ai",
-     "evidence": ["pom.xml: matched `ojdbc8`"], "extraction_only": False},
-    {"pattern": "solr-4-to-9", "label": "Solr 4x → Solr 9x",
-     "evidence": ["pom.xml: matched `org.apache.solr`"], "extraction_only": False},
-    {"pattern": "java-8-to-25", "label": "Java 8 → Java 25",
-     "evidence": ["src/A.java: present"], "extraction_only": False},
+    {"pattern": "oracle", "label": "Oracle Database", "kind": "database", "reference": "oracle.md",
+     "evidence": ["pom.xml: matched `ojdbc8`"]},
+    {"pattern": "solr", "label": "Apache Solr", "kind": "search", "reference": "solr.md",
+     "evidence": ["pom.xml: matched `org.apache.solr`"]},
+    {"pattern": "java", "label": "Java application", "kind": "application", "reference": "java.md",
+     "evidence": ["src/A.java: present"]},
 ]
 
 
@@ -68,26 +68,64 @@ def _patterns(parsed: dict) -> list[str]:
 class TestMergeMapperResult:
     def test_confirmed_stack_keeps_both_citations_mapper_first(self):
         raw = _mapper_reply([{
-            "pattern": "oracle-19c-to-23ai", "label": "Oracle Database",
+            "pattern": "oracle", "label": "Oracle Database",
             "evidence": ["pom.xml:41 ojdbc8 19.3.0.0 (compile scope)"],
         }])
 
         stacks, _ = main._merge_mapper_result(PRESCAN, raw)
 
-        oracle = next(s for s in stacks if s["pattern"] == "oracle-19c-to-23ai")
+        oracle = next(s for s in stacks if s["pattern"] == "oracle")
         assert oracle["evidence"][0].startswith("pom.xml:41")
         assert "pom.xml: matched `ojdbc8`" in oracle["evidence"]
 
-    def test_added_known_stack_is_reverse_engineered_and_flagged(self):
-        raw = _mapper_reply([{
-            "pattern": "wildfly", "label": "WildFly",
-            "evidence": ["standalone.xml: urn:jboss:domain:14.0"],
-        }])
+    def test_a_migration_pattern_id_is_read_as_its_stack(self):
+        raw = _mapper_reply([{"pattern": "oracle-19c-to-23ai", "label": "Oracle 19c → 23ai",
+                              "evidence": ["pom.xml:41 ojdbc8"]}])
 
         stacks, _ = main._merge_mapper_result(PRESCAN, raw)
 
-        wildfly = next(s for s in stacks if s["pattern"] == "wildfly")
-        assert wildfly["extraction_only"] is True
+        assert [s["pattern"] for s in stacks].count("oracle") == 1
+        assert all("23ai" not in s["label"] for s in stacks)
+
+    def test_an_older_prescan_with_migration_ids_gets_stack_ids_and_labels(self):
+        old = [{"pattern": "java-8-to-25", "label": "Java 8 → Java 25", "evidence": ["src/A.java: present"],
+                "extraction_only": False}]
+
+        stacks, _ = main._merge_mapper_result(old, "no json")
+
+        assert stacks == [{"pattern": "java", "label": "Java application", "kind": "application",
+                           "reference": "java.md", "evidence": ["src/A.java: present"]}]
+
+    def test_any_stack_the_mapper_cites_is_documented(self):
+        """Stacks come from the repository, not a fixed list: an id nothing in the
+        catalog knows is still a stack, with the mapper's label and kind and the
+        general checklist."""
+        raw = _mapper_reply([
+            {"pattern": "Spring Batch", "label": "Spring Batch jobs", "kind": "service",
+             "evidence": ["pom.xml: spring-batch-core"]},
+            {"pattern": "kafka", "label": "Kafka", "kind": "messaging", "evidence": ["pom.xml: kafka-clients"]},
+        ])
+
+        stacks, _ = main._merge_mapper_result(PRESCAN, raw)
+
+        by_id = {s["pattern"]: s for s in stacks}
+        assert by_id["spring-batch"] == {"pattern": "spring-batch", "label": "Spring Batch jobs",
+                                         "kind": "service", "reference": "general.md",
+                                         "evidence": ["pom.xml: spring-batch-core"]}
+        assert by_id["kafka"]["label"] == "Apache Kafka" and by_id["kafka"]["reference"] == "messaging.md"
+
+    def test_a_stack_citing_only_files_that_do_not_exist_is_dropped(self, tmp_path):
+        (tmp_path / "pom.xml").write_text("<project/>")
+        raw = _mapper_reply([
+            {"pattern": "struts", "label": "Struts", "kind": "web-tier", "evidence": ["src/struts.xml: <struts>"]},
+            {"pattern": "maven", "label": "Maven build", "kind": "other", "evidence": ["pom.xml:1 <project>"]},
+        ])
+
+        stacks, notes = main._merge_mapper_result(PRESCAN, raw, str(tmp_path))
+
+        assert "struts" not in {s["pattern"] for s in stacks}
+        assert "maven" in {s["pattern"] for s in stacks}
+        assert any("struts" in n and "exist" in n for n in notes)
 
     def test_stack_without_evidence_is_dropped(self):
         raw = _mapper_reply([{"pattern": "wildfly", "label": "WildFly", "evidence": []}])
@@ -97,20 +135,6 @@ class TestMergeMapperResult:
         assert "wildfly" not in {s["pattern"] for s in stacks}
         assert any("without evidence" in n for n in notes)
 
-    def test_unknown_stack_is_reported_but_not_run(self):
-        """An identifier with no RE skill must not become a fan-out leg — that
-        would KeyError on PATTERN_RUNNERS mid-run."""
-        raw = _mapper_reply([{
-            "pattern": "kafka", "label": "Apache Kafka",
-            "evidence": ["pom.xml: kafka-clients"],
-        }])
-
-        stacks, notes = main._merge_mapper_result(PRESCAN, raw)
-
-        assert "kafka" not in {s["pattern"] for s in stacks}
-        assert any("kafka" in n and "no RE skill" in n for n in notes)
-        assert all(s["pattern"] in stack_detector.STACK_ORDER for s in stacks)
-
     def test_rejection_with_a_reason_removes_the_stack(self):
         raw = _mapper_reply([], [
             {"pattern": "solr-4-to-9", "reason": "only match is commented out at pom.xml:88"},
@@ -118,15 +142,15 @@ class TestMergeMapperResult:
 
         stacks, notes = main._merge_mapper_result(PRESCAN, raw)
 
-        assert "solr-4-to-9" not in {s["pattern"] for s in stacks}
+        assert "solr" not in {s["pattern"] for s in stacks}
         assert any("commented out" in n for n in notes)
 
     def test_rejection_without_a_reason_leaves_the_prescan_standing(self):
-        raw = _mapper_reply([], [{"pattern": "java-8-to-25", "reason": ""}])
+        raw = _mapper_reply([], [{"pattern": "java", "reason": ""}])
 
         stacks, notes = main._merge_mapper_result(PRESCAN, raw)
 
-        assert "java-8-to-25" in {s["pattern"] for s in stacks}
+        assert "java" in {s["pattern"] for s in stacks}
         assert any("without a reason" in n for n in notes)
 
     def test_unparseable_reply_preserves_every_prescan_finding(self):
@@ -137,15 +161,15 @@ class TestMergeMapperResult:
         assert {s["pattern"] for s in stacks} == {s["pattern"] for s in PRESCAN}
         assert any("could not be parsed" in n for n in notes)
 
-    def test_result_is_ordered_by_stack_order(self):
+    def test_result_is_ordered_by_kind(self):
         raw = _mapper_reply([
             {"pattern": "wildfly", "label": "WildFly", "evidence": ["standalone.xml: found"]},
+            {"pattern": "backbone", "label": "Backbone", "evidence": ["js/app.js: define(['backbone'])"]},
         ])
 
         stacks, _ = main._merge_mapper_result(PRESCAN, raw)
 
-        found = [s["pattern"] for s in stacks]
-        assert found == [p for p in stack_detector.STACK_ORDER if p in found]
+        assert [s["pattern"] for s in stacks] == ["wildfly", "oracle", "solr", "backbone", "java"]
 
     def test_malformed_entries_are_skipped_not_fatal(self):
         raw = (
@@ -160,20 +184,21 @@ class TestMergeMapperResult:
 
 
 class TestBundleFor:
-    def test_discovery_bundle_is_the_confirmed_stacks_in_stack_order(self):
+    def test_discovery_bundle_is_the_confirmed_stacks_in_document_order(self):
+        recs = [{"pattern": p} for p in ("wildfly", "oracle", "backbone", "java", "python")]
         state = {
             "pattern": "stack-discovery",
-            "companion_patterns_json": json.dumps(["java-8-to-25", "wildfly", "oracle-19c-to-23ai"]),
+            "companion_recommendations_json": json.dumps(recs),
+            "companion_patterns_json": json.dumps(["python", "java", "wildfly", "backbone"]),
         }
 
-        assert main._bundle_for(state) == ["wildfly", "oracle-19c-to-23ai", "java-8-to-25"]
+        assert main._bundle_for(state) == ["wildfly", "backbone", "java", "python"]
 
     def test_discovery_never_appends_its_own_pattern(self):
-        """stack-discovery has a `mapper` runner and no `re` runner, so putting it
-        in the bundle would send the fan-out looking for one that isn't there."""
-        state = {"pattern": "stack-discovery", "companion_patterns_json": json.dumps(["java-8-to-25"])}
+        state = {"pattern": "stack-discovery", "companion_recommendations_json": json.dumps([{"pattern": "java"}]),
+                 "companion_patterns_json": json.dumps(["java"])}
 
-        assert "stack-discovery" not in main._bundle_for(state)
+        assert main._bundle_for(state) == ["java"]
 
     def test_discovery_with_nothing_confirmed_is_empty(self):
         state = {"pattern": "stack-discovery", "companion_patterns_json": "[]"}
@@ -190,30 +215,38 @@ class TestBundleFor:
 
 
 class TestRunnerWiring:
-    def test_every_detectable_stack_has_an_re_runner(self):
-        """The fan-out indexes PATTERN_RUNNERS[stack]["re"] directly, so a
-        detectable stack with no runner is a mid-run KeyError."""
+    def test_stack_discovery_has_a_mapper_and_one_discovery_agent(self):
         from agents import PATTERN_RUNNERS
 
-        for pattern in stack_detector.STACK_ORDER:
-            assert "re" in PATTERN_RUNNERS[pattern], f"{pattern} has no RE runner"
+        assert set(PATTERN_RUNNERS["stack-discovery"]) == {"mapper", "discover"}
 
-    def test_stack_discovery_has_a_mapper_and_no_plan_or_code(self):
+    def test_dedicated_runners_exist(self):
         from agents import PATTERN_RUNNERS
 
-        assert set(PATTERN_RUNNERS["stack-discovery"]) == {"mapper"} | {
-            f"discover_{p}" for p in stack_detector.STACK_ORDER if p not in stack_detector.EXTRACTION_ONLY_PATTERNS}
-        assert not {k for k in PATTERN_RUNNERS["stack-discovery"] if k.startswith(("plan", "code"))}
+        for runner_pattern, step in stack_detector.DEDICATED_RUNNERS.values():
+            assert step in PATTERN_RUNNERS[runner_pattern]
 
-    def test_extraction_only_stacks_have_no_plan_or_code_runner(self):
-        from agents import PATTERN_RUNNERS
-
-        for pattern in stack_detector.EXTRACTION_ONLY_PATTERNS:
-            assert set(PATTERN_RUNNERS[pattern]) == {"re"}
+    def test_every_catalog_checklist_exists(self):
+        from pathlib import Path
+        refs = Path(main.__file__).parent / "agents" / "skills" / "stack-discovery-re" / "references"
+        for spec in stack_detector.CATALOG:
+            if spec.pattern not in stack_detector.DEDICATED_RUNNERS:
+                assert (refs / spec.reference).is_file(), spec
+        for kind in stack_detector.KIND_ORDER + ("other",):
+            assert (refs / stack_detector.reference_for("unknown-id", kind)).is_file(), kind
 
     def test_every_stack_has_a_label_for_its_document_heading(self):
-        """_split_combined_sections locates a reviewer's edits by searching for
-        the `## <label>` heading, so a stack falling back to its raw pattern id
-        would still work but read badly in the document."""
         for pattern in stack_detector.STACK_ORDER:
-            assert main._label(pattern) != pattern, f"{pattern} has no readable label"
+            assert main._label(pattern, True) != pattern, f"{pattern} has no readable label"
+        assert main._label("struts", True, {"struts": "Apache Struts"}) == "Apache Struts"
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("# Inv\n- a\n\n## Machine-Readable Result\n\n```json\n{\"stacks\": []}\n```", "# Inv\n- a"),
+    ("Example:\n```json\n{\"x\": 1}\n```\nMore prose.\n```json\n{\"stacks\": []}\n```",
+     "Example:\n```json\n{\"x\": 1}\n```\nMore prose."),
+    ("Only prose, no block.", "Only prose, no block."),
+    ("```json\n{\"stacks\": []}\n```\nprose after the block", "```json\n{\"stacks\": []}\n```\nprose after the block"),
+])
+def test_only_the_trailing_result_block_is_cut_from_the_prose(raw, expected):
+    assert main._without_result_block(raw) == expected

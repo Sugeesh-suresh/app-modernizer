@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { ArrowRight, CheckCircle2, Loader2, Sparkles, FileSearch } from 'lucide-react';
-import type { CompanionRecommendation, PatternId } from '../types';
+import type { CompanionRecommendation } from '../types';
 
 interface Props {
   primaryLabel: string;
   recommendations: CompanionRecommendation[];
-  onConfirm: (selected: PatternId[]) => Promise<void>;
+  onConfirm: (selected: string[]) => Promise<void>;
   /** stack-discovery: there is no primary migration these sit alongside, and
    * nothing is being migrated at all — only reverse engineered. The copy has to
    * say that, or the screen promises migrations this run will never perform. */
@@ -18,12 +18,12 @@ export function CompanionSelection({
   onConfirm,
   discovery = false,
 }: Props) {
-  const [selected, setSelected] = useState<Set<PatternId>>(
+  const [selected, setSelected] = useState<Set<string>>(
     () => new Set(recommendations.map((r) => r.pattern)),
   );
   const [confirming, setConfirming] = useState(false);
 
-  const toggle = (pattern: PatternId) => {
+  const toggle = (pattern: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(pattern)) next.delete(pattern);
@@ -95,6 +95,11 @@ export function CompanionSelection({
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <FileSearch size={14} className="text-slate-500" />
                   <span className="text-sm font-semibold text-slate-900">{rec.label}</span>
+                  {discovery && rec.kind && (
+                    <span className="text-[10px] uppercase tracking-wide font-semibold text-slate-600 bg-slate-900/5 border border-slate-900/10 rounded px-1.5 py-0.5">
+                      {rec.kind}
+                    </span>
+                  )}
                 </div>
                 <ul className="mt-1.5 space-y-0.5">
                   {rec.evidence.map((e, i) => (

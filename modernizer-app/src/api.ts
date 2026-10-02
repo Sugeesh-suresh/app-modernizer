@@ -77,7 +77,7 @@ export async function confirmBrd(
   if (!res.ok) throw await apiError(res, 'Failed to confirm BRD');
 }
 
-export async function selectCompanions(sessionId: string, selected: PatternId[]): Promise<void> {
+export async function selectCompanions(sessionId: string, selected: string[]): Promise<void> {
   const res = await fetch(`${BASE}/api/sessions/${sessionId}/select-companions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

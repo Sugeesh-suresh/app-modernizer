@@ -82,9 +82,10 @@ def test_pattern_ids_become_stack_ids():
 def test_stack_labels_and_inventory_name_stacks_not_migrations():
     for label in stack_detector.STACK_LABELS.values():
         assert not cs.is_migration_language(label), label
-    table = stack_detector.to_markdown([{"pattern": "solr-4-to-9", "label": "Apache Solr", "evidence": ["a: b"],
-                                         "extraction_only": False}])
-    assert "solr-4-to-9" not in table and "`solr`" in table and "migration" not in table.lower()
+    table = stack_detector.to_markdown([{"pattern": "solr", "label": "Apache Solr", "kind": "search",
+                                         "evidence": ["a: b"]}])
+    assert "`solr`" in table and "migration" not in table.lower()
+    assert all(not s.pattern[0].isdigit() and "-to-" not in s.pattern for s in stack_detector.CATALOG)
 
 
 def test_discovery_dependency_graph_is_a_build_order():

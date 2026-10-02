@@ -404,7 +404,7 @@ export default function App() {
     connectSSE(sessionId);
   };
 
-  const handleSelectCompanions = async (selected: PatternId[]) => {
+  const handleSelectCompanions = async (selected: string[]) => {
     if (!state.sessionId) return;
     // The backend's next step-change (reverse-engineering) advances the view,
     // same as the BRD/plan confirm flows.

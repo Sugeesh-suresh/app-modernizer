@@ -10,6 +10,7 @@ generation.
 """
 import asyncio
 import json
+import re
 
 from fastapi.testclient import TestClient
 
@@ -17,12 +18,12 @@ import main
 from agents import APP_NAME, USER_ID, session_service
 
 PRESCAN = [
-    {"pattern": "wildfly", "label": "WildFly / JBoss (app server)",
-     "evidence": ["standalone.xml: present"], "extraction_only": True},
-    {"pattern": "oracle-19c-to-23ai", "label": "Oracle 19c → 23ai",
-     "evidence": ["pom.xml: matched `ojdbc8`"], "extraction_only": False},
-    {"pattern": "java-8-to-25", "label": "Java 8 → Java 25",
-     "evidence": ["src/A.java: present"], "extraction_only": False},
+    {"pattern": "wildfly", "label": "WildFly / JBoss (app server)", "kind": "server",
+     "evidence": ["standalone.xml: present"]},
+    {"pattern": "oracle", "label": "Oracle Database", "kind": "database",
+     "evidence": ["pom.xml: matched `ojdbc8`"]},
+    {"pattern": "java", "label": "Java application", "kind": "application",
+     "evidence": ["src/A.java: present"]},
 ]
 
 MAPPER_REPLY = (
@@ -57,11 +58,15 @@ class _Harness:
 
     def __init__(self, monkeypatch, mapper_reply: str = MAPPER_REPLY):
         self.calls: list[tuple[str, str]] = []  # (step_key, pattern)
+        self.stacks: list[tuple[str, str]] = []  # (step_key, stack documented)
 
         async def fake_run_step(session_id, step_key, pattern, message, sse_event_type):
             self.calls.append((step_key, pattern))
-            stack = step_key.removeprefix("discover_") if step_key.startswith("discover_") else pattern
+            # The discovery agent is told which stack in its request.
+            named = re.search(r"\(id `([^`]+)`", message)
+            stack = named.group(1) if step_key == "discover" and named else pattern
             key = "stack_inventory" if step_key == "mapper" else "analysis"
+            self.stacks.append((step_key, stack))
             value = mapper_reply if step_key == "mapper" else _re_output(stack)
             await main._update_state(session_id, {key: value})
 
@@ -76,9 +81,8 @@ class _Harness:
     @property
     def re_patterns(self) -> list[str]:
         """The stacks documented, in order: wildfly by its own `re` runner, every
-        other stack by its migration-neutral `discover_<stack>` agent."""
-        return [step.removeprefix("discover_") if step.startswith("discover_") else p
-                for step, p in self.calls if step == "re" or step.startswith("discover_")]
+        other stack by the one discovery agent."""
+        return [s for step, s in self.stacks if step in ("re", "discover")]
 
 
 def _session(prescan: list[dict]) -> str:
@@ -156,25 +160,25 @@ class TestStackDiscoveryWorkflow:
         harness = _Harness(monkeypatch)
         sid = _session(PRESCAN)
 
-        _run(sid, ["java-8-to-25", "oracle-19c-to-23ai", "wildfly"])
+        _run(sid, ["java", "oracle", "wildfly"])
 
         assert harness.calls[0] == ("mapper", "stack-discovery")
         # STACK_ORDER: infrastructure first, application language last.
-        assert harness.re_patterns == ["wildfly", "oracle-19c-to-23ai", "java-8-to-25"]
+        assert harness.re_patterns == ["wildfly", "oracle", "java"]
 
     def test_unchecked_stacks_are_not_reverse_engineered(self, monkeypatch):
         harness = _Harness(monkeypatch)
         sid = _session(PRESCAN)
 
-        _run(sid, ["java-8-to-25"])
+        _run(sid, ["java"])
 
-        assert harness.re_patterns == ["java-8-to-25"]
+        assert harness.re_patterns == ["java"]
 
     def test_document_combines_each_stack_under_its_own_heading(self, monkeypatch):
         _Harness(monkeypatch)
         sid = _session(PRESCAN)
 
-        _run(sid, ["java-8-to-25", "wildfly"])
+        _run(sid, ["java", "wildfly"])
 
         brd = _state(sid)["brd"]
         assert "## WildFly / JBoss (app server)" in brd
@@ -186,7 +190,7 @@ class TestStackDiscoveryWorkflow:
         _Harness(monkeypatch)
         sid = _session(PRESCAN)
 
-        _run(sid, ["java-8-to-25"])
+        _run(sid, ["java"])
 
         brd = _state(sid)["brd"]
         assert brd.lstrip().startswith("## Detected Technology Stacks")
@@ -199,7 +203,7 @@ class TestStackDiscoveryWorkflow:
         _Harness(monkeypatch)
         sid = _session(PRESCAN)
 
-        _run(sid, ["oracle-19c-to-23ai"])
+        _run(sid, ["oracle"])
 
         assert "## Oracle Database" in _state(sid)["brd"]
 
@@ -207,11 +211,11 @@ class TestStackDiscoveryWorkflow:
         _Harness(monkeypatch)
         sid = _session(PRESCAN)
 
-        _run(sid, ["java-8-to-25", "wildfly"])
+        _run(sid, ["java", "wildfly"])
 
         state = _state(sid)
         assert state["brd_wildfly"] == "wildfly brd"
-        assert state["technical_spec_java-8-to-25"].endswith("java techspec")
+        assert state["technical_spec_java"].endswith("java techspec")
 
     def test_nothing_confirmed_says_so_instead_of_producing_an_empty_document(self, monkeypatch):
         harness = _Harness(monkeypatch)
@@ -240,7 +244,7 @@ class TestStackDiscoveryWorkflow:
         _Harness(monkeypatch)
         sid = _session(PRESCAN)
 
-        _run(sid, ["java-8-to-25"])
+        _run(sid, ["java"])
 
         steps = [e.get("step") for e in _events(sid) if e.get("type") == "step-change"]
         assert steps == ["stack-mapping", "companion-selection", "reverse-engineering",

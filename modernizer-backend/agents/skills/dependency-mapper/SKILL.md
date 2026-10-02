@@ -11,10 +11,16 @@ read.
 You do NOT have the repository in your context. Discover it with `list_files` and
 `read_file`.
 
-A deterministic regex pre-scan has already run, and its findings are given to you
-below as **Pre-scan Findings**. That scan is cheap and literal: it is good at
-finding a coordinate in a `pom.xml` and blind to anything expressed indirectly.
-Your job is the part it cannot do.
+A deterministic extraction has already run. You are given its **Repository
+Fingerprint** — every parsed build manifest with its declared dependencies, the
+libraries the code imports (Python from its syntax tree; Java, JavaScript and
+TypeScript from their import declarations, including AMD `define`/`require`),
+the libraries pages load with `<script src>`, committed library files, and source
+files per language — and the **Pre-scan Findings**, the stacks derived from it.
+That extraction is literal: it is good at a coordinate in a `pom.xml` or an
+`import` line and blind to anything expressed indirectly. Your job is the part it
+cannot do. Use the fingerprint to decide where to read; it is not a substitute
+for reading.
 
 ## What you decide, and what you do not
 
@@ -39,7 +45,7 @@ run whose whole purpose is to establish the facts first.
    - **Confirm** when you found the stack in a file you read. Add the better evidence if you have it — the actual dependency declaration beats a stray import.
    - **Reject** only with a stated reason, and only for something the scan genuinely got wrong: a coordinate inside a commented-out block, a string in a test fixture or sample file that the application never uses, a name that matched something unrelated. A stack you merely did not happen to look at is **not** a rejection; leave it confirmed.
 
-6. Add any stack the pre-scan missed. Each addition needs a file path and the text that establishes it.
+6. Add any stack the pre-scan missed — a language, a front-end or back-end framework, a data store, a message broker, a server, a scheduler, a build-time code generator, anything the application is built on or depends on at run time. A stack is an architectural part someone would need a section of documentation for; a utility library used inside one (a logging or JSON library) belongs to that stack's section, not a stack of its own. Each addition needs a file path and the text that establishes it.
 
 ## Evidence rules
 
@@ -83,28 +89,33 @@ treating your inventory as exhaustive.
 
 Then, as the last thing in your output, one fenced `json` block. Use the exact
 `pattern` identifiers given in the Pre-scan Findings for stacks that appear
-there. For a stack you are adding, use the identifier from the caller's list of
-known stacks if it is one of those; otherwise use a short kebab-case name and
-expect that it will be reported but not reverse engineered.
+there. For a stack you are adding, use an identifier from the caller's list if
+one fits; otherwise a short kebab-case name of your own (`backbone`, `struts`,
+`python-batch`). Every reported stack is documented, so give each one a clear
+`label` and a `kind`: one of `server`, `database`, `search`, `messaging`,
+`web-tier`, `frontend`, `service`, `application`, `language`, or `other`.
 
 ```json
 {
   "stacks": [
     {
-      "pattern": "oracle-19c-to-23ai",
+      "pattern": "oracle",
       "label": "Oracle Database",
+      "kind": "database",
       "evidence": ["pom.xml: com.oracle.database.jdbc:ojdbc8 (compile scope)"],
       "used": true,
       "declared_version": "ojdbc8 19.3.0.0 (pom.xml)"
     }
   ],
   "rejected": [
-    { "pattern": "solr-4-to-9", "reason": "only match is a commented-out dependency in pom.xml:88" }
+    { "pattern": "solr", "reason": "only match is a commented-out dependency in pom.xml:88" }
   ]
 }
 ```
 
 Rules for the block: `pattern`, `label` and `evidence` are required on every
-entry, and `evidence` must be non-empty. `used` and `declared_version` are
+entry, and `evidence` must be non-empty. Every evidence line starts with the
+repository-relative path of a file you read — the caller checks that the file
+exists and drops a stack none of whose cited files do. `used` and `declared_version` are
 optional; omit `declared_version` rather than guessing it. Emit the block even if
 it only repeats the pre-scan, and put nothing after it.
