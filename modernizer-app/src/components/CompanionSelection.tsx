@@ -64,8 +64,8 @@ export function CompanionSelection({
             <>
               Found by a deterministic scan of the repository's build files, descriptors and source,
               then confirmed by an agent that read them — every stack below lists the evidence that
-              put it there. Uncheck anything you don't want documented. Nothing here is migrated or
-              modified; this run only produces the reverse-engineering document.
+              put it there. Uncheck anything you don't want documented. The repository is only read;
+              this run produces a description of what it contains.
             </>
           ) : (
             <>
@@ -95,11 +95,6 @@ export function CompanionSelection({
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <FileSearch size={14} className="text-slate-500" />
                   <span className="text-sm font-semibold text-slate-900">{rec.label}</span>
-                  {rec.extraction_only && (
-                    <span className="text-[10px] uppercase tracking-wide font-semibold text-slate-600 bg-slate-900/5 border border-slate-900/10 rounded px-1.5 py-0.5">
-                      Documented only — no migration exists
-                    </span>
-                  )}
                 </div>
                 <ul className="mt-1.5 space-y-0.5">
                   {rec.evidence.map((e, i) => (

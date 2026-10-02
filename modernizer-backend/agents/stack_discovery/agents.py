@@ -9,22 +9,22 @@ build loop — the reverse-engineering document is the deliverable.
     dependency_mapper_agent  (tool-driven: list_files/read_file) -> stack_inventory
         ^ seeded with stack_detector's deterministic pre-scan findings
     [HITL] the reviewer confirms/unchecks the detected stacks
-    then, once per confirmed stack, that stack's OWN existing `re` runner:
-        java-8-to-25        -> java-8-to-25-re
-        jsp-to-react-bff    -> jsp-re + jsp-logic-classifier
-        oracle-19c-to-23ai  -> oracle-19c-to-23ai-re
-        solr-4-to-9         -> solr-4-to-9-re
-        tibco-ems-to-pubsub -> tibco-ems-to-pubsub-re
-        wildfly             -> wildfly-re          (defined below)
+    then, once per confirmed stack, a discovery agent (defined below):
+        java-8-to-25        -> stack-discovery-re + references/java.md
+        jsp-to-react-bff    -> stack-discovery-re + references/jsp.md
+        oracle-19c-to-23ai  -> stack-discovery-re + references/oracle.md
+        solr-4-to-9         -> stack-discovery-re + references/solr.md
+        tibco-ems-to-pubsub -> stack-discovery-re + references/tibco-ems.md
+        wildfly             -> wildfly-re
     -> one combined document, one `## <stack>` section each
-       (main.py's _run_bundle_re already does the fan-out and the combining)
+       (main.py's _run_bundle_re does the fan-out and the combining)
 
-Reusing each stack's existing RE skill rather than writing a discovery-specific
-one is the point: those skills are the maintained extraction logic for their
-stack, and a second set written for this pipeline would drift from them. The
-consequence is that the sections read with their migration framing intact (the
-Oracle section is written towards 23ai), which is honest about where the analysis
-comes from.
+The pattern ids above are only keys for the stacks the detector knows; nothing
+here migrates anything. The migrations' own RE skills are deliberately NOT used:
+they are written towards a target (the Oracle one assesses 23ai readiness, the
+Java one Java 25 blockers), and this document must describe the repository as it
+is and nothing else. main.py also scrubs any migration language that slips
+through (agents/shared/current_state.py).
 
 `wildfly` is the one stack that exists only here. It has an RE skill and no
 target platform, so it is registered with an `re` runner and nothing else — see
@@ -109,3 +109,44 @@ wildfly_re_agent = LlmAgent(
     output_key="analysis",
     include_contents="none",
 )
+
+
+# ── Per-stack discovery agents ────────────────────────────────────────────────
+# One neutral skill, one reference checklist per stack. Keyed by the detector's
+# pattern ids; registered as PATTERN_RUNNERS["stack-discovery"]["discover_<id>"].
+DISCOVERY_STACKS: dict[str, tuple[str, str]] = {   # pattern -> (stack name, reference file)
+    "java-8-to-25": ("Java application", "java.md"),
+    "jsp-to-react-bff": ("JSP / Servlet web tier", "jsp.md"),
+    "oracle-19c-to-23ai": ("Oracle Database", "oracle.md"),
+    "solr-4-to-9": ("Apache Solr", "solr.md"),
+    "tibco-ems-to-pubsub": ("TIBCO EMS messaging", "tibco-ems.md"),
+}
+
+
+def _discovery_agent(pattern: str, stack: str, reference: str) -> LlmAgent:
+    return LlmAgent(
+        name="discover_" + pattern.replace("-", "_"),
+        model=_MODEL,
+        description=f"Documents the {stack} part of an existing repository exactly as it is, via list_files/read_file.",
+        instruction=(
+            f"Load and execute the `stack-discovery-re` skill for the {stack} stack, and load its "
+            f"`references/{reference}` resource as your checklist. Use the list_files and read_file "
+            "tools to explore the workspace. Produce the Analysis, BRD, Technical Specification and "
+            "Existing Test Inventory sections with the exact SECTION markers the skill specifies. "
+            "Describe only what the repository contains — no migration, upgrade or other change "
+            "suggestions of any kind."
+        ),
+        tools=[
+            _skill("stack-discovery-re"),
+            FunctionTool(fs_tools.list_files),
+            FunctionTool(fs_tools.read_file),
+        ],
+        output_key="analysis",
+        include_contents="none",
+    )
+
+
+discovery_agents: dict[str, LlmAgent] = {
+    pattern: _discovery_agent(pattern, stack, reference)
+    for pattern, (stack, reference) in DISCOVERY_STACKS.items()
+}

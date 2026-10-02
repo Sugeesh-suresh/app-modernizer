@@ -201,7 +201,9 @@ class TestRunnerWiring:
     def test_stack_discovery_has_a_mapper_and_no_plan_or_code(self):
         from agents import PATTERN_RUNNERS
 
-        assert set(PATTERN_RUNNERS["stack-discovery"]) == {"mapper"}
+        assert set(PATTERN_RUNNERS["stack-discovery"]) == {"mapper"} | {
+            f"discover_{p}" for p in stack_detector.STACK_ORDER if p not in stack_detector.EXTRACTION_ONLY_PATTERNS}
+        assert not {k for k in PATTERN_RUNNERS["stack-discovery"] if k.startswith(("plan", "code"))}
 
     def test_extraction_only_stacks_have_no_plan_or_code_runner(self):
         from agents import PATTERN_RUNNERS

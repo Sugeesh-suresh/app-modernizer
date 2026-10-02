@@ -48,7 +48,7 @@ from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11 import preflight as java11_preflight
-from agents.shared import migration_inventory
+from agents.shared import current_state, migration_inventory
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -959,7 +959,7 @@ def _parse_re_sections(combined: str) -> tuple[str, str, str, str]:
     return analysis, brd or combined, tech_spec, test_inventory
 
 
-def _inject_dependency_graph(tech_spec: str, graph_json: str, pattern: str) -> str:
+def _inject_dependency_graph(tech_spec: str, graph_json: str, pattern: str, discovery: bool = False) -> str:
     """Prepend the deterministically-computed dependency graph + migration
     groups (rendered as a plain-text tree) to the top of the Technical
     Specification, so the MarkdownWithDiagrams renderer in BRDReview.tsx
@@ -976,7 +976,7 @@ def _inject_dependency_graph(tech_spec: str, graph_json: str, pattern: str) -> s
         graph = {}
     if not graph.get("nodes"):
         return tech_spec
-    section = dependency_graph.to_markdown_section(graph, pattern)
+    section = dependency_graph.to_markdown_section(graph, pattern, discovery=discovery)
     return f"{section}\n\n{tech_spec}"
 
 
@@ -1086,7 +1086,7 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
 # to running that single pattern exactly as before.
 # ---------------------------------------------------------------------------
 
-def _label(pattern: str) -> str:
+def _label(pattern: str, discovery: bool = False) -> str:
     """The `## <label>` heading a pattern's slice gets in a combined document.
 
     Falls through to the stack labels so the two stack-discovery-only legs
@@ -1095,6 +1095,10 @@ def _label(pattern: str) -> str:
     single source of these headings: _split_combined_sections finds a reviewer's
     edits by searching for exactly this string.
     """
+    if discovery:
+        # A discovery document names stacks, never the migrations that share
+        # their pattern ids ("Oracle Database", not "Oracle 19c → 23ai").
+        return stack_detector.STACK_LABELS.get(pattern) or current_state.neutral_ids(pattern)
     return (
         companion_detector.COMPANION_LABELS.get(pattern)
         or stack_detector.STACK_LABELS.get(pattern)
@@ -1310,7 +1314,6 @@ async def _run_stack_mapping(session_id: str) -> list[dict]:
         "stack_prescan": stack_detector.to_markdown(prescan) or "No stacks detected by the pre-scan.",
         "stack_known": "\n".join(
             f"- `{p}` — {stack_detector.STACK_LABELS.get(p, p)}"
-            + ("  (extraction only, no migration target)" if p in stack_detector.EXTRACTION_ONLY_PATTERNS else "")
             for p in stack_detector.STACK_ORDER
         ),
     })
@@ -1385,6 +1388,17 @@ def _with_reviewer_notes(document: str, feedback: str | None) -> str:
         "to change its content, edit the document before confirming._\n",
         1,
     )
+
+
+def _current_state_only(text: str, where: str) -> str:
+    """A discovery section with any migration or advisory language removed and
+    the detector's migration-named pattern ids replaced by stack ids — the
+    deterministic backstop to the stack-discovery-re skill's instructions."""
+    cleaned, removed = current_state.scrub(current_state.neutral_ids(text or ""))
+    if removed:
+        print(f"[discovery] {where}: removed {len(removed)} migration/advisory fragment(s): "
+              + " | ".join(r[:80] for r in removed[:5]), flush=True)
+    return cleaned
 
 
 def _uses_inventory(pattern: str, discovery: bool) -> bool:
@@ -1636,15 +1650,22 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
             # "migration domain" would be a lie here: nothing is being migrated,
             # and one of these legs (wildfly) has no target platform at all.
             message += (
-                f" Confine yourself to the {_label(pattern)} stack — other stacks in this "
-                "repository are being reverse-engineered separately, so do not describe them. "
-                "This is a discovery run with no migration attached: report what exists and do "
-                "not recommend, sequence or estimate any migration work."
+                f" Confine yourself to the {_label(pattern, True)} stack — other stacks in this "
+                "repository are documented separately, so do not describe them. Describe the "
+                "repository exactly as it is: no migration, upgrade, modernisation, target-version "
+                "or other change suggestions of any kind."
             )
         elif len(bundle) > 1:
             message += f" Focus specifically on the {_label(pattern)} migration domain."
 
-        if pattern == _JAVA_8_TO_11 and config.JAVA11_ANALYSIS == "agent":
+        if discovery and f"discover_{pattern}" in PATTERN_RUNNERS[_STACK_DISCOVERY]:
+            # Migration-neutral agents (skills/stack-discovery-re), not the
+            # migrations' own RE skills, which are written towards a target.
+            await _run_step(session_id, f"discover_{pattern}", _STACK_DISCOVERY, message=message,
+                            sse_event_type="re-stream")
+        elif discovery:
+            await _run_step(session_id, "re", pattern, message=message, sse_event_type="re-stream")
+        elif pattern == _JAVA_8_TO_11 and config.JAVA11_ANALYSIS == "agent":
             await _run_java11_re(session_id, message, refine=bool(feedback))
         elif pattern == _JAVA_8_TO_11:
             await _run_java11_inventory(session_id, feedback)
@@ -1662,8 +1683,11 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
             primary_graph_json if pattern == primary
             else json.dumps(dependency_graph.build_dependency_graph(workspace_dir, pattern))
         )
-        tech_spec = _inject_dependency_graph(tech_spec, graph_json, pattern)
-        if pattern == _JAVA_8_TO_11:
+        if discovery:
+            brd, tech_spec, test_inventory = (_current_state_only(s, pattern)
+                                              for s in (brd, tech_spec, test_inventory))
+        tech_spec = _inject_dependency_graph(tech_spec, graph_json, pattern, discovery)
+        if pattern == _JAVA_8_TO_11 and not discovery:
             tech_spec = _with_preflight(tech_spec, orig_state.get("preflight_json", ""))
 
         await _update_state(session_id, {
@@ -1682,7 +1706,7 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
         ordered = sorted(bundle, key=lambda p: 0 if p == primary else 1)
 
         def _combine(idx: int) -> str:
-            parts = [f"## {_label(p)}\n\n{sections[p][idx]}" for p in ordered if sections[p][idx]]
+            parts = [f"## {_label(p, discovery)}\n\n{sections[p][idx]}" for p in ordered if sections[p][idx]]
             return "\n\n---\n\n".join(parts)
 
         brd, tech_spec, test_inventory = _combine(0), _combine(1), _combine(2)
@@ -1693,15 +1717,15 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
         # above the per-stack headings so _split_combined_sections still finds
         # them (it searches for `## <label>` lines, and the inventory's own
         # heading is not one of those).
-        inventory = orig_state.get("stack_inventory_markdown", "")
+        inventory = _current_state_only(orig_state.get("stack_inventory_markdown", ""), "inventory")
         if inventory:
             brd = f"{inventory}\n\n---\n\n{brd}" if brd else inventory
         if not bundle:
             brd = (brd + "\n\n") if brd else ""
             brd += (
-                "> **No stacks were reverse engineered.** Either nothing was detected, or every "
+                "> **No stacks were documented.** Either nothing was detected, or every "
                 "detected stack was unchecked at the confirmation step. The inventory above, if "
-                "present, is the deterministic scan's finding only — no RE skill ran."
+                "present, is the deterministic scan's finding only."
             )
 
     # A partial workspace invalidates every inventory and coverage claim below it,
@@ -2389,7 +2413,9 @@ async def download_reverse_engineering(session_id: str):
     if not any((brd, tech_spec, test_inventory)):
         raise HTTPException(status_code=404, detail="Reverse engineering has not produced a document yet.")
 
-    parts = [f"# Reverse Engineering — {_label(state.get('pattern', ''))}", ""]
+    pattern = state.get("pattern", "")
+    title = "Technology Stack Discovery" if pattern == _STACK_DISCOVERY else _label(pattern)
+    parts = [f"# Reverse Engineering — {title}", ""]
     for heading, body in (
         ("Business Requirements", brd),
         ("Technical Specification", tech_spec),

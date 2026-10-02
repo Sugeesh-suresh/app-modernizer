@@ -126,8 +126,8 @@ SECTION 3 — TECHNICAL SPECIFICATION
 5. **Repo Facts for the Reader** — version markers observed, packaging, build plugins and their versions, and the deployment mechanism
 
 Note: a deterministic dependency graph (computed by static analysis, not by you)
-is automatically prepended to this section under a "Dependency Graph & Migration
-Groups" heading — do not attempt to build your own.
+is automatically prepended to this section under a "Dependency Graph & Build
+Order" heading — do not attempt to build your own.
 
 ─────────────────────────────────────────────────────────────
 SECTION 4 — EXISTING TEST INVENTORY

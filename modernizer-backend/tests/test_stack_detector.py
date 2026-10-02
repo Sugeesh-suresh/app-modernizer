@@ -126,7 +126,7 @@ class TestToMarkdown:
         assert "## Detected Technology Stacks" in table
         for stack in stacks:
             assert stack["label"] in table
-        assert "extraction only" in table  # wildfly's caveat reaches the document
+        assert "`wildfly`" in table and "migration" not in table.lower()
 
     def test_evidence_backticks_are_not_nested(self, tmp_path):
         """detect_stacks already puts the matched text in backticks; wrapping the

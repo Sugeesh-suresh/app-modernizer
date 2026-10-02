@@ -60,8 +60,9 @@ class _Harness:
 
         async def fake_run_step(session_id, step_key, pattern, message, sse_event_type):
             self.calls.append((step_key, pattern))
+            stack = step_key.removeprefix("discover_") if step_key.startswith("discover_") else pattern
             key = "stack_inventory" if step_key == "mapper" else "analysis"
-            value = mapper_reply if step_key == "mapper" else _re_output(pattern)
+            value = mapper_reply if step_key == "mapper" else _re_output(stack)
             await main._update_state(session_id, {key: value})
 
         monkeypatch.setattr(main, "_run_step", fake_run_step)
@@ -74,7 +75,10 @@ class _Harness:
 
     @property
     def re_patterns(self) -> list[str]:
-        return [p for step, p in self.calls if step == "re"]
+        """The stacks documented, in order: wildfly by its own `re` runner, every
+        other stack by its migration-neutral `discover_<stack>` agent."""
+        return [step.removeprefix("discover_") if step.startswith("discover_") else p
+                for step, p in self.calls if step == "re" or step.startswith("discover_")]
 
 
 def _session(prescan: list[dict]) -> str:
@@ -148,7 +152,7 @@ def _events(sid: str) -> list[dict]:
 
 
 class TestStackDiscoveryWorkflow:
-    def test_runs_the_mapper_then_each_confirmed_stacks_own_re_runner(self, monkeypatch):
+    def test_runs_the_mapper_then_a_discovery_agent_per_confirmed_stack(self, monkeypatch):
         harness = _Harness(monkeypatch)
         sid = _session(PRESCAN)
 
@@ -174,8 +178,9 @@ class TestStackDiscoveryWorkflow:
 
         brd = _state(sid)["brd"]
         assert "## WildFly / JBoss (app server)" in brd
-        assert "## Java 8 → Java 25" in brd
-        assert "wildfly brd" in brd and "java-8-to-25 brd" in brd
+        assert "## Java application" in brd
+        # Pattern ids name migrations; the document names stacks.
+        assert "wildfly brd" in brd and "java brd" in brd and "java-8-to-25" not in brd
 
     def test_inventory_leads_the_document(self, monkeypatch):
         _Harness(monkeypatch)
@@ -185,7 +190,7 @@ class TestStackDiscoveryWorkflow:
 
         brd = _state(sid)["brd"]
         assert brd.lstrip().startswith("## Detected Technology Stacks")
-        assert brd.index("Detected Technology Stacks") < brd.index("java-8-to-25 brd")
+        assert brd.index("Detected Technology Stacks") < brd.index("java brd")
 
     def test_single_stack_still_gets_a_heading_so_edits_can_be_split_back(self, monkeypatch):
         """A migration run with one pattern skips the headings, but discovery
@@ -196,7 +201,7 @@ class TestStackDiscoveryWorkflow:
 
         _run(sid, ["oracle-19c-to-23ai"])
 
-        assert "## Oracle 19c → 23ai" in _state(sid)["brd"]
+        assert "## Oracle Database" in _state(sid)["brd"]
 
     def test_per_stack_slices_are_stored_namespaced(self, monkeypatch):
         _Harness(monkeypatch)
@@ -206,7 +211,7 @@ class TestStackDiscoveryWorkflow:
 
         state = _state(sid)
         assert state["brd_wildfly"] == "wildfly brd"
-        assert state["technical_spec_java-8-to-25"].endswith("java-8-to-25 techspec")
+        assert state["technical_spec_java-8-to-25"].endswith("java techspec")
 
     def test_nothing_confirmed_says_so_instead_of_producing_an_empty_document(self, monkeypatch):
         harness = _Harness(monkeypatch)
@@ -215,7 +220,7 @@ class TestStackDiscoveryWorkflow:
         _run(sid, [])
 
         assert harness.re_patterns == []
-        assert "No stacks were reverse engineered" in _state(sid)["brd"]
+        assert "No stacks were documented" in _state(sid)["brd"]
 
     def test_no_stacks_detected_skips_the_confirmation_gate(self, monkeypatch):
         """With nothing to choose between, gating would park the run on an empty

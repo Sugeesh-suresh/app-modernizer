@@ -72,6 +72,7 @@ from .jsp_to_react_bff.agents import (
 )
 from .stack_discovery.agents import (
     dependency_mapper_agent as stack_mapper, wildfly_re_agent as wildfly_re,
+    discovery_agents as stack_discovery_agents,
 )
 
 APP_NAME = "modernizer"
@@ -160,9 +161,11 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
     },
     # Reverse-engineering only -- no plan, no code. `mapper` is pass 2 of the
     # dependency mapper (pass 1 is agents/shared/stack_detector.py, no model);
-    # the RE fan-out then reuses each detected stack's own `re` runner above.
+    # the RE fan-out then runs `discover_<stack>` for each confirmed stack —
+    # migration-neutral agents, not the migrations' own `re` runners above.
     "stack-discovery": {
         "mapper": _runner(stack_mapper),
+        **{f"discover_{p}": _runner(a) for p, a in stack_discovery_agents.items()},
     },
     # A stack, not a migration: reachable only as one leg of a stack-discovery
     # fan-out, which is why it has an `re` runner and nothing else.

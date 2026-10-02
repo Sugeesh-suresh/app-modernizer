@@ -89,15 +89,19 @@ upload → RE (Java 11 blockers + frozen-zone inventory) → HUMAN: review → p
 |---|---|---|---|---|
 | **Discover & Reverse Engineer My Stack** | An unknown or mixed-stack repo | One combined reverse-engineering document | None — nothing is generated or modified | Single pass, RE only |
 
-`stack-discovery` is the one pattern that is not a migration, for the case where you do not know what is in a repository or it is several things at once. You upload it without choosing a migration; a dependency mapper works out which stacks are actually present, you confirm them, and each one's existing RE skill runs. The run **ends at the analysis review** — no plan, no code generation, nothing written to the workspace.
+`stack-discovery` is the one pattern that is not a migration, for the case where you do not know what is in a repository or it is several things at once. You upload it without choosing a migration; a dependency mapper works out which stacks are actually present, you confirm them, and each one is documented as it is. The run **ends at the analysis review** — no plan, no code generation, nothing written to the workspace.
 
 ```
 upload → dependency mapper → HUMAN: confirm stacks → RE per stack → combined document → HUMAN: review → done
 ```
 
-Reusing each stack's own RE skill is deliberate: those are the maintained extraction logic for their stack, and a second set written for this pipeline would drift from them. The consequence is that each section keeps its migration framing (the Oracle section is written towards 23ai), which is honest about where the analysis came from.
+The document describes **only what the repository contains** — no migration, upgrade, target-version or other change suggestions. Three things keep it that way:
 
-**WildFly/JBoss** is detected here and reverse engineered by `skills/wildfly-re`, which has no target platform — it documents the deployment contract (subsystems, datasources, JNDI bindings, module dependencies and class loading, container-supplied behaviour), the part of a legacy system that lives nowhere in the application source. It is marked *extraction only* wherever it is shown, so nobody is led to expect a migration that does not exist.
+- **Neutral agents.** Each stack is documented by `skills/stack-discovery-re` with a per-stack checklist (`references/java.md`, `oracle.md`, `solr.md`, `tibco-ems.md`, `jsp.md`), not by the migrations' RE skills, which are written towards a target (Java 25, 23ai, Solr 9, Pub/Sub, React).
+- **Neutral names.** Stacks are headed *Java application*, *Oracle Database*, *Apache Solr*, *TIBCO EMS messaging*, *JSP / Servlet web tier*; the internal pattern ids are shown as `java`, `oracle`, `solr`, `tibco-ems`, `jsp`; the dependency graph is presented as a *Build Order*.
+- **A deterministic backstop** (`agents/shared/current_state.py`). Before a section is stored or shown, any heading about migration, recommendations or next steps is removed with its body, and any list item, table row or sentence with migration or advisory language is removed. Code, file paths and identifiers are never touched, and schema-change tooling (Flyway/Liquibase migration scripts) is treated as the repository artifact it is. What was removed is logged as `[discovery] … removed N fragment(s)`.
+
+**WildFly/JBoss** is detected here and reverse engineered by `skills/wildfly-re`, which has no target platform — it documents the deployment contract (subsystems, datasources, JNDI bindings, module dependencies and class loading, container-supplied behaviour), the part of a system that lives nowhere in the application source.
 
 ### Stack and companion detection
 
@@ -484,7 +488,7 @@ app-modernizer/
     │   ├── oracle_19c_to_23ai/
     │   ├── tibco_ems_to_pubsub/
     │   ├── jsp_to_react_bff/              # Dual-tree: backend/ + frontend/
-    │   ├── stack_discovery/               # RE-only: dependency mapper + wildfly RE
+    │   ├── stack_discovery/               # RE-only: dependency mapper + per-stack discovery agents + wildfly RE
     │   ├── skills/                        # SKILL.md + references/*.md per agent
     │   └── shared/
     │       ├── workspace_tools.py         # list/read/write/replace/run_command

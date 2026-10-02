@@ -29,8 +29,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .current_state import NEUTRAL_IDS
 from .companion_detector import (
-    COMPANION_LABELS,
     ORACLE_PATTERNS,
     SOLR_PATTERNS,
     TIBCO_EMS_PATTERNS,
@@ -108,18 +108,18 @@ STACK_SPECS: tuple[StackSpec, ...] = (
     ),
     StackSpec(
         pattern="oracle-19c-to-23ai",
-        label=COMPANION_LABELS["oracle-19c-to-23ai"],
+        label="Oracle Database",
         content=tuple(ORACLE_PATTERNS),
     ),
     StackSpec(
         pattern="solr-4-to-9",
-        label=COMPANION_LABELS["solr-4-to-9"],
+        label="Apache Solr",
         filenames=("solrconfig.xml", "managed-schema"),
         content=tuple(SOLR_PATTERNS),
     ),
     StackSpec(
         pattern="tibco-ems-to-pubsub",
-        label=COMPANION_LABELS["tibco-ems-to-pubsub"],
+        label="TIBCO EMS messaging",
         content=tuple(TIBCO_EMS_PATTERNS),
     ),
     StackSpec(
@@ -130,7 +130,7 @@ STACK_SPECS: tuple[StackSpec, ...] = (
     ),
     StackSpec(
         pattern="java-8-to-25",
-        label=COMPANION_LABELS["java-8-to-25"],
+        label="Java application",
         suffixes=(".java",),
         content=_JAVA_PATTERNS,
     ),
@@ -227,16 +227,14 @@ def to_markdown(stacks: list[dict], source: str = "deterministic scan") -> str:
     lines = ["## Detected Technology Stacks", ""]
     lines.append(f"Detected by {source}. Every row carries the evidence that produced it.")
     lines.append("")
-    lines.append("| Stack | Reverse engineered by | Evidence |")
+    lines.append("| Stack | Id | Evidence |")
     lines.append("|---|---|---|")
     for stack in stacks:
         cited = "<br>".join(
             _format_evidence(e) for e in stack["evidence"][:_MAX_EVIDENCE_PER_STACK]
         )
-        skill = f"`{stack['pattern']}` RE stage"
-        if stack.get("extraction_only"):
-            skill += " (extraction only — no migration target)"
-        lines.append(f"| {stack['label']} | {skill} | {cited or '—'} |")
+        stack_id = NEUTRAL_IDS.get(stack["pattern"], stack["pattern"])
+        lines.append(f"| {stack['label']} | `{stack_id}` | {cited or '—'} |")
     return "\n".join(lines)
 
 

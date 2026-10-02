@@ -28,6 +28,19 @@ from agents.shared import java_env
 RE_DOC = ("<!-- SECTION: ANALYSIS -->\nanalysis\n<!-- SECTION: BRD -->\n# BRD\nscope\n"
           "<!-- SECTION: TECHNICAL_SPECIFICATION -->\n# Spec\nfacts\n<!-- SECTION: TEST_INVENTORY -->\n"
           "# Tests\nnone\n<!-- SECTION: END -->\n")
+# What a discovery agent might write despite its instructions: the facts must
+# survive, the migration talk must not.
+DISCOVERY_DOC = (
+    "<!-- SECTION: ANALYSIS -->\nanalysis\n<!-- SECTION: BRD -->\n# BRD\nPublishes each confirmed order.\n"
+    "## Overview\nOrders are published to the `orders.q` queue by "
+    "`OrderPublisher`. This should be migrated to Google Cloud Pub/Sub.\n"
+    "- Uses `com.tibco.tibjms.TibjmsConnectionFactory`\n- Java 8 → 25 upgrade needed for this client\n"
+    "## Migration Considerations\n- EMS 8 is end of life\n"
+    "<!-- SECTION: TECHNICAL_SPECIFICATION -->\n# Spec\n| Queue | Producer | Target |\n|---|---|---|\n"
+    "| orders.q | OrderPublisher | Pub/Sub topic |\n"
+    "<!-- SECTION: TEST_INVENTORY -->\n# Tests\nNone found.\n## Recommendations\n- Add tests\n"
+    "<!-- SECTION: END -->\n"
+)
 _SKILL = re.compile(r"Load and execute the `([a-z0-9-]+)` skill")
 _COMMENT = {".java": "// migrated", ".sql": "-- migrated", ".xml": "<!-- migrated -->",
             ".properties": "# migrated", ".pkb": "-- migrated"}
@@ -77,6 +90,8 @@ class Scripted(BaseLlm):
             yield self._reply(_six_sections(self.plan_files, self.stages))
         elif skill in ("dependency-mapper",):
             yield self._reply("Inventory.\n```json\n{\"confirmed\": [], \"added\": [], \"rejected\": []}\n```")
+        elif skill == "stack-discovery-re":
+            yield self._reply(DISCOVERY_DOC)
         elif skill == "jsp-re":
             yield self._reply("JSP facts: index.jsp uses JSTL.")
         elif skill.endswith("-re") or skill == "jsp-logic-classifier":
@@ -271,7 +286,20 @@ def test_stack_discovery_runs_end_to_end(scripted, tmp_path):
     events, state = _run(tmp_path, "stack-discovery", stacks=["tibco-ems-to-pubsub", "wildfly"])
     assert not [e for e in events if e["type"] == "error"], events
     assert any(e["type"] == "brd-ready" for e in events)
-    assert {"dependency-mapper", "tibco-ems-to-pubsub-re", "wildfly-re"} <= {s for s, _ in scripted.calls}
+    skills = {s for s, _ in scripted.calls}
+    assert {"dependency-mapper", "stack-discovery-re", "wildfly-re"} <= skills
+    # The migrations' own RE skills are written towards a target; discovery never uses them.
+    assert not [s for s in skills if s.endswith("-re") and s not in ("stack-discovery-re", "wildfly-re")]
+    document = "\n".join(state[k] for k in ("brd", "technical_spec", "test_inventory"))
+    assert "`orders.q` queue" in document and "TibjmsConnectionFactory" in document
+    assert "Publishes each confirmed order." in document
+    assert "## TIBCO EMS messaging" in document and "## WildFly / JBoss (app server)" in document
+    assert "## Dependency Graph & Migration Groups" not in document
+    for banned in ("migrat", "Pub/Sub", "Google Cloud", "upgrade", "end of life", "Recommendations",
+                   "tibco-ems-to-pubsub", "→ 25", "Target"):
+        assert banned.lower() not in document.lower(), banned
+    brd = next(e for e in events if e["type"] == "brd-ready")["brd"]
+    assert "migrat" not in brd.lower() and "pubsub" not in brd.lower()
 
 
 def test_concurrent_runs_stay_isolated(scripted, tmp_path):
