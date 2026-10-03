@@ -3,10 +3,11 @@ Integration tests for the stack-discovery workflow end to end, with the agent
 calls stubbed out.
 
 Verifies the wiring no unit test can reach: that the mapper's result gates on the
-reviewer's confirmation, that each confirmed stack's own RE runner is invoked,
-that the sections come back combined under per-stack headings with the inventory
-on top, and that the run stops at brd-review instead of falling through to plan
-generation.
+reviewer's confirmation, that each confirmed stack's evidence specialist runs once,
+that the Product Owner and Enterprise Architect writers both work from that
+evidence, that the inventory leads the BRD, that a refine re-runs only the writer
+of the refined document, and that the run stops at brd-review instead of falling
+through to plan generation.
 """
 import asyncio
 import json
@@ -37,14 +38,10 @@ MAPPER_REPLY = (
 )
 
 
-def _re_output(stack: str) -> str:
-    return (
-        f"<!-- SECTION: ANALYSIS -->\n{stack} analysis\n"
-        f"<!-- SECTION: BRD -->\n{stack} brd\n"
-        f"<!-- SECTION: TECHNICAL_SPECIFICATION -->\n{stack} techspec\n"
-        f"<!-- SECTION: TEST_INVENTORY -->\n{stack} tests\n"
-        f"<!-- SECTION: END -->\n"
-    )
+def _evidence(stack: str) -> str:
+    return (f"### Components\n- `{stack}/Main` — the {stack} component\n"
+            f"### Business Behaviour\n- {stack} behaviour: orders are checked\n"
+            "### Tests\nNone found.\n")
 
 
 EMPTY_MAPPER_REPLY = (
@@ -54,23 +51,38 @@ EMPTY_MAPPER_REPLY = (
 
 
 class _Harness:
-    """Stubs _run_step so no model is called, and records every invocation."""
+    """Stubs the agents so no model is called, and records every invocation:
+    evidence specialists through _run_step, writers through _run_isolated."""
 
-    def __init__(self, monkeypatch, mapper_reply: str = MAPPER_REPLY):
-        self.calls: list[tuple[str, str]] = []  # (step_key, pattern)
-        self.stacks: list[tuple[str, str]] = []  # (step_key, stack documented)
+    def __init__(self, monkeypatch, mapper_reply: str = MAPPER_REPLY, cite: str = ""):
+        self.calls: list[tuple[str, str]] = []   # (step_key, pattern)
+        self.stacks: list[tuple[str, str]] = []  # (step_key, stack whose evidence was gathered)
+        self.writers: list[tuple[str, str]] = []  # (writer, request)
 
         async def fake_run_step(session_id, step_key, pattern, message, sse_event_type):
             self.calls.append((step_key, pattern))
-            # The discovery agent is told which stack in its request.
             named = re.search(r"\(id `([^`]+)`", message)
-            stack = named.group(1) if step_key == "discover" and named else pattern
-            key = "stack_inventory" if step_key == "mapper" else "analysis"
-            self.stacks.append((step_key, stack))
-            value = mapper_reply if step_key == "mapper" else _re_output(stack)
-            await main._update_state(session_id, {key: value})
+            stack = named.group(1) if named else pattern
+            if step_key == "mapper":
+                await main._update_state(session_id, {"stack_inventory": mapper_reply})
+            else:
+                self.stacks.append((step_key, stack))
+                await main._update_state(session_id, {"analysis": _evidence(stack)})
+
+        async def fake_isolated(step, pattern, state, message, output_key):
+            request = state.get("writer_request", "")
+            self.writers.append((step, request))
+            labels = re.findall(r"^- (.+?) \(id `", request, re.M)
+            first_ev = (re.findall(r"\[(EV-[^\]]+)\]", request) or [""])[0]
+            if step == "po_brd":
+                return (f"## Executive Summary\nThe system serves orders ({first_ev}{cite}).\n"
+                        "## Business Journeys\n" + "".join(f"- journey through {label}\n" for label in labels))
+            return ("<!-- SECTION: TECHNICAL_SPECIFICATION -->\n## Architecture Overview\noverview "
+                    f"({first_ev})\n## Per-Stack Detail\n" + "".join(f"### {label}\ncomponents\n" for label in labels)
+                    + "<!-- SECTION: TEST_INVENTORY -->\nNo tests found.\n<!-- SECTION: END -->")
 
         monkeypatch.setattr(main, "_run_step", fake_run_step)
+        monkeypatch.setattr(main, "_run_isolated", fake_isolated)
         # The real one shells out to build a per-stack graph over a workspace
         # that does not exist here.
         monkeypatch.setattr(
@@ -80,9 +92,12 @@ class _Harness:
 
     @property
     def re_patterns(self) -> list[str]:
-        """The stacks documented, in order: wildfly by its own `re` runner, every
-        other stack by the one discovery agent."""
+        """The stacks whose evidence was gathered, in order: wildfly by its own
+        `re` runner, every other stack by the one discovery agent."""
         return [s for step, s in self.stacks if step in ("re", "discover")]
+
+    def request(self, writer: str) -> str:
+        return next(r for w, r in self.writers if w == writer)
 
 
 def _session(prescan: list[dict]) -> str:
@@ -174,19 +189,35 @@ class TestStackDiscoveryWorkflow:
 
         assert harness.re_patterns == ["java"]
 
-    def test_document_combines_each_stack_under_its_own_heading(self, monkeypatch):
+    def test_both_writers_work_from_every_confirmed_stacks_evidence(self, monkeypatch):
+        harness = _Harness(monkeypatch)
+        sid = _session(PRESCAN)
+
+        _run(sid, ["java", "wildfly"])
+
+        assert [w for w, _ in harness.writers] == ["po_brd", "ea_spec"]
+        for writer in ("po_brd", "ea_spec"):
+            request = harness.request(writer)
+            assert "WildFly / JBoss (app server) (id `wildfly`" in request and "Java application (id `java`" in request
+        po, ea = harness.request("po_brd"), harness.request("ea_spec")
+        assert "[EV-java-0002] java behaviour" in po and "[EV-java-0001]" not in po     # PO view: behaviour, not components
+        assert "[EV-java-0001] `java/Main`" in ea and "java behaviour" not in ea           # EA view: components
+        assert "## Business-Rules Catalog (brief)" in po and "## Repository Facts" in ea
+
+    def test_the_brd_is_the_product_owners_and_the_specification_the_architects(self, monkeypatch):
         _Harness(monkeypatch)
         sid = _session(PRESCAN)
 
         _run(sid, ["java", "wildfly"])
 
-        brd = _state(sid)["brd"]
-        assert "## WildFly / JBoss (app server)" in brd
-        assert "## Java application" in brd
-        # Pattern ids name migrations; the document names stacks.
-        assert "wildfly brd" in brd and "java brd" in brd and "java-8-to-25" not in brd
+        state = _state(sid)
+        assert "## Executive Summary" in state["brd"] and "journey through Java application" in state["brd"]
+        assert "## Architecture Overview" in state["technical_spec"] and "Executive Summary" not in state["technical_spec"]
+        assert "### WildFly / JBoss (app server)" in state["technical_spec"]
+        assert state["test_inventory"] == "No tests found."
+        assert "java-8-to-25" not in state["brd"]
 
-    def test_inventory_leads_the_document(self, monkeypatch):
+    def test_inventory_leads_and_the_evidence_check_closes_the_brd(self, monkeypatch):
         _Harness(monkeypatch)
         sid = _session(PRESCAN)
 
@@ -194,28 +225,29 @@ class TestStackDiscoveryWorkflow:
 
         brd = _state(sid)["brd"]
         assert brd.lstrip().startswith("## Detected Technology Stacks")
-        assert brd.index("Detected Technology Stacks") < brd.index("java brd")
+        assert brd.index("Detected Technology Stacks") < brd.index("## Executive Summary") < brd.index("## Evidence Check")
+        assert "Every evidence and rule id cited by either document exists." in brd
 
-    def test_single_stack_still_gets_a_heading_so_edits_can_be_split_back(self, monkeypatch):
-        """A migration run with one pattern skips the headings, but discovery
-        always adds them — the inventory sits above them and _split_combined_sections
-        needs a heading per stack to find the reviewer's edits."""
-        _Harness(monkeypatch)
+    def test_a_citation_that_matches_no_evidence_is_reported(self, monkeypatch):
+        _Harness(monkeypatch, cite=", EV-java-0999, BR-0007")
         sid = _session(PRESCAN)
 
-        _run(sid, ["oracle"])
+        _run(sid, ["java"])
 
-        assert "## Oracle Database" in _state(sid)["brd"]
+        brd = _state(sid)["brd"]
+        assert "BRD: `EV-java-0999`" in brd and "BRD: `BR-0007`" in brd
 
-    def test_per_stack_slices_are_stored_namespaced(self, monkeypatch):
+    def test_evidence_packs_are_numbered_and_kept_on_disk(self, monkeypatch):
         _Harness(monkeypatch)
         sid = _session(PRESCAN)
 
         _run(sid, ["java", "wildfly"])
 
         state = _state(sid)
-        assert state["brd_wildfly"] == "wildfly brd"
-        assert state["technical_spec_java"].endswith("java techspec")
+        pack = (main.Path(state["evidence_dir"]) / "java.md").read_text()
+        assert "- [EV-java-0001] `java/Main`" in pack and "- [EV-java-0002] java behaviour" in pack
+        assert state["evidence_count"] == "4"
+        assert not any(k.startswith("brd_") for k in state if k.endswith(("java", "wildfly")) and state[k])
 
     def test_nothing_confirmed_says_so_instead_of_producing_an_empty_document(self, monkeypatch):
         harness = _Harness(monkeypatch)
@@ -291,3 +323,43 @@ class TestPlanEndpointsRejected:
             res = client.get(f"/api/sessions/{sid}/download/reverse-engineering")
 
         assert res.status_code == 404
+
+
+class TestRefineTargetsOneWriter:
+    def _reviewed(self, monkeypatch):
+        harness = _Harness(monkeypatch)
+        sid = _session(PRESCAN)
+        main._brd_gates[sid] = asyncio.Event()             # stays open: the review is in progress
+        asyncio.run(main._update_state(sid, {"companion_patterns_json": json.dumps(["java"])}))
+        asyncio.run(main._run_discovery_documents(sid, ["java"]))
+        harness.calls.clear(), harness.writers.clear(), harness.stacks.clear()
+        return harness, sid
+
+    def test_refining_the_brd_reruns_only_the_product_owner_from_stored_evidence(self, monkeypatch):
+        harness, sid = self._reviewed(monkeypatch)
+        before = _state(sid)["technical_spec"]
+
+        with TestClient(main.app) as client:
+            res = client.post(f"/api/sessions/{sid}/refine-brd", json={"feedback": "more on refunds", "target": "brd"})
+
+        assert res.status_code == 200, res.text
+        assert harness.stacks == [] and [w for w, _ in harness.writers] == ["po_brd"]
+        assert "## Reviewer Feedback\nmore on refunds" in harness.request("po_brd")
+        assert "## Your Previous Document (revise it)" in harness.request("po_brd")
+        assert _state(sid)["technical_spec"] == before
+
+    def test_refining_the_technical_documents_reruns_only_the_architect(self, monkeypatch):
+        harness, sid = self._reviewed(monkeypatch)
+
+        with TestClient(main.app) as client:
+            client.post(f"/api/sessions/{sid}/refine-brd", json={"feedback": "x", "target": "technical_spec"})
+
+        assert [w for w, _ in harness.writers] == ["ea_spec"]
+
+    def test_a_refine_without_a_target_reruns_both_writers(self, monkeypatch):
+        harness, sid = self._reviewed(monkeypatch)
+
+        with TestClient(main.app) as client:
+            client.post(f"/api/sessions/{sid}/refine-brd", json={"feedback": "x"})
+
+        assert sorted(w for w, _ in harness.writers) == ["ea_spec", "po_brd"] and harness.stacks == []

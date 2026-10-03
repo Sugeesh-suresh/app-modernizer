@@ -28,19 +28,34 @@ from agents.shared import java_env
 RE_DOC = ("<!-- SECTION: ANALYSIS -->\nanalysis\n<!-- SECTION: BRD -->\n# BRD\nscope\n"
           "<!-- SECTION: TECHNICAL_SPECIFICATION -->\n# Spec\nfacts\n<!-- SECTION: TEST_INVENTORY -->\n"
           "# Tests\nnone\n<!-- SECTION: END -->\n")
-# What a discovery agent might write despite its instructions: the facts must
-# survive, the migration talk must not.
-DISCOVERY_DOC = (
-    "<!-- SECTION: ANALYSIS -->\nanalysis\n<!-- SECTION: BRD -->\n# BRD\nPublishes each confirmed order.\n"
-    "## Overview\nOrders are published to the `orders.q` queue by "
-    "`OrderPublisher`. This should be migrated to Google Cloud Pub/Sub.\n"
-    "- Uses `com.tibco.tibjms.TibjmsConnectionFactory`\n- Java 8 → 25 upgrade needed for this client\n"
-    "## Migration Considerations\n- EMS 8 is end of life\n"
-    "<!-- SECTION: TECHNICAL_SPECIFICATION -->\n# Spec\n| Queue | Producer | Target |\n|---|---|---|\n"
-    "| orders.q | OrderPublisher | Pub/Sub topic |\n"
-    "<!-- SECTION: TEST_INVENTORY -->\n# Tests\nNone found.\n## Recommendations\n- Add tests\n"
-    "<!-- SECTION: END -->\n"
+# What an evidence specialist returns for the TIBCO fixture.
+DISCOVERY_EVIDENCE = (
+    "### Components\n- `OrderPublisher` publishes each confirmed order to the `orders.q` queue\n"
+    "### Business Behaviour\n- Publishes each confirmed order.\n"
+    "### Integrations & Configuration\n- Uses `com.tibco.tibjms.TibjmsConnectionFactory`\n"
+    "### Tests\nNone found.\n"
 )
+
+
+def _writer_reply(skill: str, system: str) -> str:
+    """What the writers might produce despite their instructions: the evidence's
+    facts (cited) must survive, the migration talk must not."""
+    ev = re.findall(r"\[(EV-[^\]]+)\]", system)
+    cite = f" ({ev[0]})" if ev else ""
+    labels = re.findall(r"^- (.+?) \(id `", system, re.M)
+    if skill == "as-is-brd":
+        return ("## Executive Summary\nPublishes each confirmed order. Orders are published to the `orders.q` queue "
+                f"by `OrderPublisher`{cite}. This should be migrated to Google Cloud Pub/Sub.\n"
+                "## Migration Considerations\n- EMS 8 is end of life\n## Business Journeys\n"
+                + "".join(f"- A journey through {label}{cite}\n" for label in labels)
+                + "## Recommendations\n- Add tests\n")
+    return ("<!-- SECTION: TECHNICAL_SPECIFICATION -->\n## Architecture Overview\n"
+            f"- Uses `com.tibco.tibjms.TibjmsConnectionFactory`{cite}\n- Java 8 → 25 upgrade needed for this client\n"
+            "| Queue | Producer | Target |\n|---|---|---|\n| orders.q | OrderPublisher | Pub/Sub topic |\n"
+            "## Per-Stack Detail\n" + "".join(f"### {label}\ncomponents{cite}\n" for label in labels)
+            + "<!-- SECTION: TEST_INVENTORY -->\nNone found.\n## Recommendations\n- Add tests\n<!-- SECTION: END -->")
+
+
 _SKILL = re.compile(r"Load and execute the `([a-z0-9-]+)` skill")
 _COMMENT = {".java": "// migrated", ".sql": "-- migrated", ".xml": "<!-- migrated -->",
             ".properties": "# migrated", ".pkb": "-- migrated"}
@@ -71,6 +86,7 @@ class Scripted(BaseLlm):
     stages: list = []
     rule_batches: list = []
     units: list = []
+    writers: list = []
 
     def _reply(self, text=None, call=None):
         part = types.Part(text=text) if text is not None else types.Part(function_call=types.FunctionCall(
@@ -103,12 +119,16 @@ class Scripted(BaseLlm):
             listed = re.findall(r"- `([^`]+)`", system)
             self.units.append(listed)
             yield self._reply("## Unit\n### Components\n" + "\n".join(f"- `{f}`: component" for f in listed))
-        elif "Unit Findings below are your only evidence" in system:
-            yield self._reply(DISCOVERY_DOC)
-        elif system.startswith("Merge the Unit Findings") or "Merge the Unit Findings below" in system:
-            yield self._reply("## Units merged\n" + system[-2000:])
-        elif skill == "stack-discovery-re":
-            yield self._reply(DISCOVERY_DOC)
+        elif "running the `as-is-brd` skill" in system:
+            self.writers.append("po_brd")
+            yield self._reply(_writer_reply("as-is-brd", system))
+        elif "running the `current-state-architecture` skill" in system:
+            self.writers.append("ea_spec")
+            yield self._reply(_writer_reply("current-state-architecture", system))
+        elif "Merge the evidence below" in system:
+            yield self._reply("\n".join(re.findall(r"^- \[EV-[^\n]+", system, re.M)))
+        elif skill in ("stack-discovery-re", "wildfly-re"):
+            yield self._reply(DISCOVERY_EVIDENCE)
         elif skill == "jsp-re":
             yield self._reply("JSP facts: index.jsp uses JSTL.")
         elif skill.endswith("-re") or skill == "jsp-logic-classifier":
@@ -206,7 +226,7 @@ def _fixture(pattern: str) -> dict[str, str]:
 def scripted(monkeypatch):
     model = Scripted(model="scripted")
     model.calls, model.plan_files, model.stages = [], [], []
-    model.rule_batches, model.units = [], []
+    model.rule_batches, model.units, model.writers = [], [], []
     seen = set()
 
     def walk(agent):
@@ -311,7 +331,9 @@ def test_stack_discovery_runs_end_to_end(scripted, tmp_path):
     document = "\n".join(state[k] for k in ("brd", "technical_spec", "test_inventory"))
     assert "`orders.q` queue" in document and "TibjmsConnectionFactory" in document
     assert "Publishes each confirmed order." in document
-    assert "## TIBCO EMS messaging" in document and "## WildFly / JBoss (app server)" in document
+    assert "### TIBCO EMS messaging" in state["technical_spec"] and "### WildFly / JBoss (app server)" in state["technical_spec"]
+    assert sorted(scripted.writers) == ["ea_spec", "po_brd"]                 # each writer once, for both stacks
+    assert "Every evidence and rule id cited by either document exists." in state["brd"]
     assert "## Dependency Graph & Migration Groups" not in document
     for banned in ("migrat", "Pub/Sub", "Google Cloud", "upgrade", "end of life", "Recommendations",
                    "tibco-ems-to-pubsub", "→ 25", "Target"):
@@ -559,11 +581,13 @@ def test_stack_discovery_documents_each_stack_the_repository_contains(scripted, 
                  for m in requests}
     assert (checklist["jsp"], checklist["backbone"], checklist["java"]) == ("jsp.md", "spa-frontend.md", "java.md")
     assert "src/main/webapp/js/app.js: imports `backbone`" in next(m for m in requests if "(id `backbone`" in m)
-    brd = state["brd"]
-    for heading in ("## Detected Technology Stacks", "## Repository Fingerprint", "## JSP / Servlet web tier",
-                    "## Backbone.js front end", "## Java application"):
+    brd, spec = state["brd"], state["technical_spec"]
+    for heading in ("## Detected Technology Stacks", "## Repository Fingerprint", "## Executive Summary"):
         assert heading in brd, heading
-    assert brd.index("## JSP / Servlet web tier") < brd.index("## Backbone.js front end") < brd.index("## Java application")
+    for label in ("JSP / Servlet web tier", "Backbone.js front end", "Java application"):
+        assert f"A journey through {label}" in brd                          # the PO saw every stack
+    assert spec.index("### JSP / Servlet web tier") < spec.index("### Backbone.js front end") \
+        < spec.index("### Java application")                                 # the EA's per-stack detail
 
 
 
@@ -591,5 +615,5 @@ def test_large_repository_discovery_with_the_business_rules_ledger(scripted, tmp
     assert all(len(u) <= 2 for u in scripted.units)
     brd = state["brd"]
     assert "## Business Rules Catalog" in brd and "## Business Rules Coverage" in brd
-    assert brd.index("## Java application") < brd.index("## Business Rules Catalog")
+    assert brd.index("## Executive Summary") < brd.index("## Business Rules Catalog") < brd.index("## Evidence Check")
     assert "Rule found in" in brd

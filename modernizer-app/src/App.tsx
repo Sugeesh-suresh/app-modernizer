@@ -417,11 +417,11 @@ export default function App() {
     setState((s) => ({ ...s, step: 'plan-generation', streamingContent: '', progress: 0 }));
   };
 
-  const handleRefineBrd = async (feedback: string) => {
+  const handleRefineBrd = async (feedback: string, target?: 'brd' | 'technical_spec') => {
     if (!state.sessionId) return;
     setState((s) => ({ ...s, refining: true, streamingContent: '' }));
     try {
-      await refineBrd(state.sessionId, feedback);
+      await refineBrd(state.sessionId, feedback, target);
     } catch (err) {
       setState((s) => ({
         ...s,

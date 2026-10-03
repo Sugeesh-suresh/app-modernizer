@@ -48,7 +48,7 @@ from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11 import preflight as java11_preflight
-from agents.shared import current_state, migration_inventory, repo_fingerprint, rule_candidates, rules_ledger
+from agents.shared import current_state, evidence_pack, migration_inventory, repo_fingerprint, rule_candidates, rules_ledger
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -1009,6 +1009,13 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         "rules_markdown": "",
         "rules_ledger_path": "",
         "rules_coverage_json": "",
+        # stack-discovery documents: evidence packs on disk, and each writer's
+        # latest output (so a refine can re-run one writer and keep the other's).
+        "evidence_dir": "",
+        "evidence_count": "",
+        "po_brd": "",
+        "ea_spec": "",
+        "ea_tests": "",
         "stack_prescan": "",
         "stack_known": "",
         "stack_inventory": "",
@@ -1672,19 +1679,16 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
     keeps a refine on a bundled multi-pattern BRD from silently dropping
     the other patterns' sections.
 
-    Serves stack-discovery too, where `bundle` is the confirmed stacks rather
-    than a primary plus companions. The differences are that the per-stack
-    instruction says stack rather than migration domain, and that the combined
-    document opens with the stack inventory — see `discovery` below.
+    Stack discovery has its own flow — evidence first, then two writers — in
+    _run_discovery_documents.
     """
     orig_state = await _get_state(session_id)
+    if orig_state.get("pattern") == _STACK_DISCOVERY:
+        await _run_discovery_documents(session_id, bundle, feedback=feedback, announce=announce)
+        return
     workspace_dir = orig_state.get("workspace_dir", "")
     primary = orig_state.get("pattern")
     primary_graph_json = orig_state.get("dependency_graph_json", "")
-    discovery = primary == _STACK_DISCOVERY
-    stack_info = ({s["pattern"]: s for s in json.loads(orig_state.get("companion_recommendations_json", "[]"))}
-                  if discovery else {})
-    labels = {p: s.get("label", "") for p, s in stack_info.items()}
 
     sections: dict[str, tuple[str, str, str]] = {}  # pattern -> (brd, tech_spec, test_inventory)
     for pattern in bundle:
@@ -1706,48 +1710,14 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
                 "Technical Specification, and Existing Test Inventory sections. Do not assume "
                 "any file contents you have not actually read."
             )
-        if discovery:
-            # "migration domain" would be a lie here: nothing is being migrated,
-            # and one of these legs (wildfly) has no target platform at all.
-            info = stack_info.get(pattern, {})
-            reference = info.get("reference") or stack_detector.reference_for(pattern, info.get("kind", ""))
-            evidence = "\n".join(f"- {e}" for e in info.get("evidence", [])) or "- (none recorded)"
-            message += (
-                f"\n\n## Stack\n{_label(pattern, True, labels)} (id `{pattern}`, kind "
-                f"{info.get('kind') or 'unspecified'})\n\n## Checklist\n`references/{reference}`\n\n"
-                f"## Evidence that identified it\n{evidence}\n\n"
-                "Confine yourself to this stack — other stacks in this repository are documented "
-                "separately, so do not describe them beyond where this one connects to them. Describe "
-                "the repository exactly as it is: no migration, upgrade, modernisation, target-version "
-                "or other change suggestions of any kind."
-            )
-        elif len(bundle) > 1:
+        if len(bundle) > 1:
             message += f" Focus specifically on the {_label(pattern)} migration domain."
 
-        if discovery and pattern in stack_detector.DEDICATED_RUNNERS:
-            runner_pattern, step = stack_detector.DEDICATED_RUNNERS[pattern]
-            await _run_step(session_id, step, runner_pattern, message=message, sse_event_type="re-stream")
-        elif discovery:
-            # Every other stack, known or not: the migration-neutral discovery
-            # agent (skills/stack-discovery-re) with the stack's checklist — in
-            # units when the stack is too large for one run to read.
-            info = stack_info.get(pattern, {"pattern": pattern})
-            files = _stack_files(workspace_dir, info)
-            if files and len(files) > config.DISCOVERY_CHUNK_MIN_FILES:
-                previous = (orig_state.get(f"brd_{pattern}", "") + "\n\n"
-                            + orig_state.get(f"technical_spec_{pattern}", "")) if feedback else ""
-                await _run_chunked_discovery(
-                    session_id, info, _label(pattern, True, labels),
-                    info.get("reference") or stack_detector.reference_for(pattern, info.get("kind", "")),
-                    files, feedback, previous)
-            else:
-                await _run_step(session_id, "discover", _STACK_DISCOVERY, message=message,
-                                sse_event_type="re-stream")
-        elif pattern == _JAVA_8_TO_11 and config.JAVA11_ANALYSIS == "agent":
+        if pattern == _JAVA_8_TO_11 and config.JAVA11_ANALYSIS == "agent":
             await _run_java11_re(session_id, message, refine=bool(feedback))
         elif pattern == _JAVA_8_TO_11:
             await _run_java11_inventory(session_id, feedback)
-        elif _uses_inventory(pattern, discovery):
+        elif _uses_inventory(pattern, False):
             await _run_migration_inventory(session_id, pattern, feedback)
         else:
             await _run_step(session_id, "re", pattern, message=message, sse_event_type="re-stream")
@@ -1757,21 +1727,12 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
 
         # The primary's graph was computed at upload time; companions' are
         # computed here, once each, the same deterministic way.
-        if discovery:
-            # A structural graph only where an extractor understands the stack.
-            graph_pattern = _DISCOVERY_GRAPHS.get(pattern)
-            graph_json = (json.dumps(dependency_graph.build_dependency_graph(workspace_dir, graph_pattern))
-                          if graph_pattern else "")
-        else:
-            graph_json = (
-                primary_graph_json if pattern == primary
-                else json.dumps(dependency_graph.build_dependency_graph(workspace_dir, pattern))
-            )
-        if discovery:
-            brd, tech_spec, test_inventory = (_current_state_only(s, pattern)
-                                              for s in (brd, tech_spec, test_inventory))
-        tech_spec = _inject_dependency_graph(tech_spec, graph_json, pattern, discovery)
-        if pattern == _JAVA_8_TO_11 and not discovery:
+        graph_json = (
+            primary_graph_json if pattern == primary
+            else json.dumps(dependency_graph.build_dependency_graph(workspace_dir, pattern))
+        )
+        tech_spec = _inject_dependency_graph(tech_spec, graph_json, pattern)
+        if pattern == _JAVA_8_TO_11:
             tech_spec = _with_preflight(tech_spec, orig_state.get("preflight_json", ""))
 
         await _update_state(session_id, {
@@ -1781,51 +1742,192 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
         })
         sections[pattern] = (brd, tech_spec, test_inventory)
 
-    if len(bundle) == 1 and not discovery:
+    if len(bundle) == 1:
         brd, tech_spec, test_inventory = sections[bundle[0]]
     else:
-        # `primary` is not in the bundle on a discovery run, so every pattern
-        # sorts equal and Python's stable sort leaves stack_detector.STACK_ORDER
-        # intact — which is the order we want there.
         ordered = sorted(bundle, key=lambda p: 0 if p == primary else 1)
 
         def _combine(idx: int) -> str:
-            parts = [f"## {_label(p, discovery, labels)}\n\n{sections[p][idx]}" for p in ordered if sections[p][idx]]
+            parts = [f"## {_label(p)}\n\n{sections[p][idx]}" for p in ordered if sections[p][idx]]
             return "\n\n---\n\n".join(parts)
 
         brd, tech_spec, test_inventory = _combine(0), _combine(1), _combine(2)
 
-    if discovery:
-        # The inventory leads the document: it is the answer to "what is in this
-        # repo", and it carries the evidence for every section that follows. Kept
-        # above the per-stack headings so _split_combined_sections still finds
-        # them (it searches for `## <label>` lines, and the inventory's own
-        # heading is not one of those).
-        inventory = _current_state_only(orig_state.get("stack_inventory_markdown", ""), "inventory")
-        if inventory:
-            brd = f"{inventory}\n\n---\n\n{brd}" if brd else inventory
-        rules_markdown = orig_state.get("rules_markdown", "")
-        if rules_markdown and bundle:
-            brd = f"{brd}\n\n---\n\n{rules_markdown}"
-        if not bundle:
-            brd = (brd + "\n\n") if brd else ""
-            brd += (
-                "> **No stacks were documented.** Either nothing was detected, or every "
-                "detected stack was unchecked at the confirmation step. The inventory above, if "
-                "present, is the deterministic scan's finding only."
-            )
-
     # A partial workspace invalidates every inventory and coverage claim below it,
     # so the warning leads the document rather than sitting in a log nobody reads.
-    ingestion_warning = orig_state.get("ingestion_warning", "")
-    if ingestion_warning:
-        banner = f"> ⚠️ **Incomplete repository.** {ingestion_warning}\n"
-        brd = f"{banner}\n{brd}" if brd else banner
-        tech_spec = f"{banner}\n{tech_spec}" if tech_spec else banner
+    brd, tech_spec = _with_ingestion_warning(orig_state, brd, tech_spec)
 
     await _update_state(session_id, {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory})
     # announce=False: an inventory going straight to the planner is not shown
     # for review, and brd-ready is what opens the review screen.
+    if announce:
+        await _push(session_id, "brd-ready", brd=brd, technical_spec=tech_spec, test_inventory=test_inventory)
+
+
+def _with_ingestion_warning(state: dict, brd: str, tech_spec: str) -> tuple[str, str]:
+    ingestion_warning = state.get("ingestion_warning", "")
+    if not ingestion_warning:
+        return brd, tech_spec
+    banner = f"> ⚠️ **Incomplete repository.** {ingestion_warning}\n"
+    return (f"{banner}\n{brd}" if brd else banner), (f"{banner}\n{tech_spec}" if tech_spec else banner)
+
+
+# ---------------------------------------------------------------------------
+# Stack discovery documents: evidence once, then two writers
+# ---------------------------------------------------------------------------
+
+_WRITER_RULES_INDEX_CHARS = 40_000
+
+
+async def _gather_stack_evidence(session_id: str, stack_id: str, info: dict, label: str) -> str:
+    """One stack's Evidence Pack, from its evidence specialist: wildfly-re, the
+    discovery agent, or unit runs for a stack too large for one run."""
+    state = await _get_state(session_id)
+    workspace_dir = state.get("workspace_dir", "")
+    reference = info.get("reference") or stack_detector.reference_for(stack_id, info.get("kind", ""))
+    files = None if stack_id in stack_detector.DEDICATED_RUNNERS else _stack_files(workspace_dir, info)
+    if files and len(files) > config.DISCOVERY_CHUNK_MIN_FILES:
+        return await _gather_unit_evidence(session_id, info, label, reference, files)
+    cited = "\n".join(f"- {e}" for e in info.get("evidence", [])) or "- (none recorded)"
+    message = (
+        "Gather the evidence about this stack of the repository workspace (starting at the root), using the "
+        "list_files and read_file tools. Return the Evidence Pack your skill specifies. Do not assume any "
+        f"file contents you have not actually read.\n\n## Stack\n{label} (id `{stack_id}`, kind "
+        f"{info.get('kind') or 'unspecified'})\n\n## Checklist\n`references/{reference}`\n\n"
+        f"## Evidence that identified it\n{cited}\n\n"
+        "Confine yourself to this stack — other stacks in this repository are covered separately — but record "
+        "where it connects to them. Describe the repository exactly as it is: no migration, upgrade, "
+        "modernisation, target-version or other change suggestions of any kind."
+    )
+    runner_pattern, step = stack_detector.DEDICATED_RUNNERS.get(stack_id, (_STACK_DISCOVERY, "discover"))
+    await _update_state(session_id, {"analysis": ""})
+    await _run_step(session_id, step, runner_pattern, message=message, sse_event_type="re-stream")
+    return (await _get_state(session_id)).get("analysis", "")
+
+
+def _load_ledger(state: dict) -> dict | None:
+    path = Path(state.get("rules_ledger_path", "") or "/nonexistent")
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    except (OSError, ValueError):
+        return None
+
+
+async def _run_discovery_documents(session_id: str, bundle: list[str], feedback: str | None = None,
+                                   target: str = "all", announce: bool = True) -> None:
+    """Stack discovery's documents, with reading and writing separated.
+
+    1. Evidence (read once): each confirmed stack's evidence specialist returns
+       an Evidence Pack; the pipeline numbers its items (evidence_pack.assign_ids)
+       and keeps it on disk.
+    2. Views: the packs split by section into a Product Owner view and an
+       Enterprise Architect view, each merged down to one request if needed.
+    3. Writers (in parallel, no tools): the PO agent writes the BRD across all
+       stacks, the EA agent the Technical Specification and Test Inventory.
+    4. Checks: the migration-language scrubber on both, and the evidence check —
+       every evidence and rule id either document cites must exist.
+
+    A refine ("Refine with AI") re-uses the stored evidence and re-runs only the
+    writer for `target` ("brd", "technical_spec" or "all")."""
+    state = await _get_state(session_id)
+    workspace_dir = state.get("workspace_dir", "")
+    stack_info = {s["pattern"]: s for s in json.loads(state.get("companion_recommendations_json", "[]"))}
+    labels = {p: s.get("label", "") for p, s in stack_info.items()}
+    evidence_dir = Path(state.get("evidence_dir") or tempfile.mkdtemp(prefix="modernizer-evidence-"))
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    packs: list[tuple[str, str, str]] = []          # (stack id, label, numbered pack)
+    for stack_id in bundle:
+        label = _label(stack_id, True, labels)
+        path = evidence_dir / f"{evidence_pack.slug(stack_id)}.md"
+        if feedback and path.is_file():
+            text = path.read_text(encoding="utf-8")
+        else:
+            await _push(session_id, "re-stream", content=f"\n\n### Gathering evidence: {label}\n")
+            raw = await _gather_stack_evidence(session_id, stack_id, stack_info.get(stack_id, {"pattern": stack_id}),
+                                               label)
+            text = evidence_pack.assign_ids(raw, stack_id)
+            path.write_text(text, encoding="utf-8")
+        packs.append((stack_id, label, text))
+    evidence_ids = set().union(*(evidence_pack.ids(text) for _, _, text in packs)) if packs else set()
+    await _update_state(session_id, {"evidence_dir": str(evidence_dir),
+                                     "evidence_count": str(len(evidence_ids))})
+
+    po_brd, ea_spec, ea_tests = state.get("po_brd", ""), state.get("ea_spec", ""), state.get("ea_tests", "")
+    ledger = _load_ledger(state)
+    rule_ids = {r["id"] for r in (ledger or {}).get("rules", [])}
+    if packs:
+        budget = max(config.RE_SYNTHESIS_MAX_CHARS, 2)
+        stacks = "\n".join(f"- {label} (id `{sid}`, kind {stack_info.get(sid, {}).get('kind') or 'unspecified'})"
+                           for sid, label, _ in packs)
+        write_brd = target in ("all", "brd") or not po_brd
+        write_spec = target in ("all", "technical_spec") or not ea_spec
+
+        async def writer(step: str, sections: tuple, extra: str, previous: str) -> str:
+            view = await _merge_to_budget(evidence_pack.view(packs, sections), budget, f"{step} evidence")
+            request = f"## Confirmed Stacks\n{stacks}\n\n{extra}"
+            if feedback and previous:
+                request += (f"## Your Previous Document (revise it)\n{previous[:30000]}\n\n"
+                            f"## Reviewer Feedback\n{feedback}\n\n")
+            request += "## Evidence\n" + "\n\n---\n\n".join(view)
+            return await _run_isolated(step, _STACK_DISCOVERY, {"writer_request": request},
+                                       "Write the document from the evidence.", step)
+
+        jobs = {}
+        if write_brd:
+            await _push(session_id, "re-stream", content="\n\n### Product Owner agent: writing the BRD\n")
+            jobs["brd"] = writer("po_brd", evidence_pack.PO_SECTIONS,
+                                 "## Business-Rules Catalog (brief)\n"
+                                 + evidence_pack.rules_index(ledger, _WRITER_RULES_INDEX_CHARS) + "\n\n", po_brd)
+        if write_spec:
+            await _push(session_id, "re-stream",
+                        content="\n\n### Enterprise Architect agent: writing the Technical Specification\n")
+            jobs["spec"] = writer("ea_spec", evidence_pack.EA_SECTIONS,
+                                  "## Repository Facts (computed by the pipeline)\n"
+                                  + state.get("stack_inventory_markdown", "")[:60000] + "\n\n",
+                                  ea_spec + "\n\n" + ea_tests)
+        results = dict(zip(jobs, await asyncio.gather(*jobs.values())))
+        if "brd" in results:
+            po_brd = _current_state_only(results["brd"], "BRD (Product Owner)")
+        if "spec" in results:
+            spec, tests = evidence_pack.split_spec(results["spec"])
+            ea_spec = _current_state_only(spec, "Technical Specification (Enterprise Architect)")
+            ea_tests = _current_state_only(tests, "Test Inventory (Enterprise Architect)")
+        await _update_state(session_id, {"po_brd": po_brd, "ea_spec": ea_spec, "ea_tests": ea_tests})
+
+    # Assembly. The deterministic sections are placed exactly as before: the
+    # inventory leads the BRD, the rules catalog and coverage follow it, the
+    # dependency graphs lead the specification.
+    inventory = _current_state_only(state.get("stack_inventory_markdown", ""), "inventory")
+    parts = [inventory] if inventory else []
+    if packs:
+        parts.append(po_brd)
+        if state.get("rules_markdown"):
+            parts.append(state["rules_markdown"])
+        parts.append(evidence_pack.check_markdown(evidence_pack.check(po_brd, evidence_ids, rule_ids),
+                                                  evidence_pack.check(ea_spec + "\n" + ea_tests, evidence_ids,
+                                                                      rule_ids),
+                                                  evidence_ids))
+    else:
+        parts.append("> **No stacks were documented.** Either nothing was detected, or every detected stack was "
+                     "unchecked at the confirmation step. The inventory above, if present, is the deterministic "
+                     "scan's finding only.")
+    brd = "\n\n---\n\n".join(p for p in parts if p)
+
+    graphs = []
+    for stack_id, label, _ in packs:
+        graph_pattern = _DISCOVERY_GRAPHS.get(stack_id)
+        if graph_pattern:
+            graph_json = json.dumps(dependency_graph.build_dependency_graph(workspace_dir, graph_pattern))
+            section = _inject_dependency_graph("", graph_json, stack_id, True).strip()
+            if section:
+                graphs.append(section.replace("## Dependency Graph & Build Order",
+                                              f"## Dependency Graph & Build Order — {label}", 1))
+    tech_spec = "\n\n".join(graphs + ([ea_spec] if ea_spec else []))
+    test_inventory = ea_tests
+
+    brd, tech_spec = _with_ingestion_warning(state, brd, tech_spec)
+    await _update_state(session_id, {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory})
     if announce:
         await _push(session_id, "brd-ready", brd=brd, technical_spec=tech_spec, test_inventory=test_inventory)
 
@@ -2176,80 +2278,69 @@ def _unit_label(files: list[str]) -> str:
     return f"{common or '(root)'} ({len(files)} files)"
 
 
-async def _run_chunked_discovery(session_id: str, stack: dict, label: str, reference: str, files: list[str],
-                                 feedback: str | None = None, previous: str = "") -> None:
-    """One stack documented unit by unit: every file of the stack is read by
-    exactly one unit run (several at once), the findings are merged in bounded
-    batches if needed, and the four-section document is written from them into
-    state["analysis"] — where the single-run agent puts it. A refine re-runs only
-    the last step, from the stored findings."""
+async def _gather_unit_evidence(session_id: str, stack: dict, label: str, reference: str, files: list[str]) -> str:
+    """Evidence for a stack too large for one run: every file of the stack is
+    read by exactly one unit run (RE_CONCURRENCY at once), each returning an
+    Evidence Pack for its files. The packs are returned together; nothing here
+    writes a document."""
     state = await _get_state(session_id)
     workspace_dir = state.get("workspace_dir", "")
     stack_id = stack.get("pattern", "")
-    key = f"discovery_findings_{stack_id}"
-    budget = max(config.RE_SYNTHESIS_MAX_CHARS, 2)
-    per_unit = min(config.RE_FINDINGS_MAX_CHARS, budget // 2)
-    findings = json.loads(state.get(key) or "[]") if feedback else []
-    if not findings:
-        units = _file_units(files, config.DISCOVERY_UNIT_MAX_FILES)
-        await _push(session_id, "re-stream", content=(
-            f"\n**{label}:** {len(files):,} files, documented in {len(units)} units of at most "
-            f"{config.DISCOVERY_UNIT_MAX_FILES} files, {config.RE_CONCURRENCY} at a time.\n"))
-        gate = asyncio.Semaphore(config.RE_CONCURRENCY)
-        finished = 0
+    per_unit = min(config.RE_FINDINGS_MAX_CHARS, max(config.RE_SYNTHESIS_MAX_CHARS, 2) // 2)
+    units = _file_units(files, config.DISCOVERY_UNIT_MAX_FILES)
+    await _push(session_id, "re-stream", content=(
+        f"\n**{label}:** {len(files):,} files, gathered in {len(units)} units of at most "
+        f"{config.DISCOVERY_UNIT_MAX_FILES} files, {config.RE_CONCURRENCY} at a time.\n"))
+    gate = asyncio.Semaphore(config.RE_CONCURRENCY)
+    finished = 0
 
-        async def document(index: int, unit: list[str]) -> str:
-            nonlocal finished
-            title = _unit_label(unit)
-            async with gate:
-                scope = (f"## Stack\n{label} (id `{stack_id}`, kind {stack.get('kind') or 'unspecified'})\n\n"
-                         f"## Checklist\n`references/{reference}` of the `stack-discovery-re` skill\n\n"
-                         f"## Unit {index}/{len(units)}: {title}\nRead every one of these {len(unit)} files:\n"
-                         + "\n".join(f"- `{f}`" for f in unit))
-                try:
-                    text = await _run_isolated("discover_unit", _STACK_DISCOVERY,
-                                               {"workspace_dir": workspace_dir, "unit_scope": scope},
-                                               "Document this unit.", "unit_findings")
-                    reason = "the run returned no findings"
-                except Exception as exc:
-                    traceback.print_exc()
-                    text, reason = "", _describe_error(exc)
-                finished += 1
-                await _push(session_id, "progress", message=f"{label}: unit {finished}/{len(units)}",
-                            progress=int(5 + 80 * finished / max(len(units), 1)))
-            if not text.strip():
-                text = (f"## Unit {index}: {title}\n\n> ⚠ **Not analysed** — {reason}. Files: "
-                        + ", ".join(f"`{f}`" for f in unit[:20]) + (" …" if len(unit) > 20 else ""))
-                return text
-            return _clip_findings(text, per_unit, f"{label} unit {index} ({title})")
+    async def gather(index: int, unit: list[str]) -> str:
+        nonlocal finished
+        title = _unit_label(unit)
+        async with gate:
+            scope = (f"## Stack\n{label} (id `{stack_id}`, kind {stack.get('kind') or 'unspecified'})\n\n"
+                     f"## Checklist\n`references/{reference}` of the `stack-discovery-re` skill\n\n"
+                     f"## Unit {index}/{len(units)}: {title}\nRead every one of these {len(unit)} files:\n"
+                     + "\n".join(f"- `{f}`" for f in unit))
+            try:
+                text = await _run_isolated("discover_unit", _STACK_DISCOVERY,
+                                           {"workspace_dir": workspace_dir, "unit_scope": scope},
+                                           "Gather the evidence for this unit.", "unit_findings")
+                reason = "the run returned no evidence"
+            except Exception as exc:
+                traceback.print_exc()
+                text, reason = "", _describe_error(exc)
+            finished += 1
+            await _push(session_id, "progress", message=f"{label}: unit {finished}/{len(units)}",
+                        progress=int(5 + 60 * finished / max(len(units), 1)))
+        if not text.strip():
+            return (f"## Unit {index}: {title}\n\n### Limitations\n- **Not analysed** — {reason}. Files: "
+                    + ", ".join(f"`{f}`" for f in unit[:20]) + (" …" if len(unit) > 20 else ""))
+        return _clip_findings(text, per_unit, f"{label} unit {index} ({title})")
 
-        findings = list(await asyncio.gather(*(document(i, u) for i, u in enumerate(units, 1))))
-        if units and all("**Not analysed**" in f for f in findings):
-            raise RuntimeError(f"Documenting {label} failed for every unit. Last: {findings[-1][:400]}")
-        await _update_state(session_id, {key: json.dumps(findings)})
+    packs = list(await asyncio.gather(*(gather(i, u) for i, u in enumerate(units, 1))))
+    if units and all("**Not analysed**" in p for p in packs):
+        raise RuntimeError(f"Gathering evidence for {label} failed for every unit. Last: {packs[-1][:400]}")
+    return "\n\n".join(packs)
 
-    while sum(len(f) for f in findings) > budget and len(findings) > 1:
-        batches = _batch_by_size(findings, budget)
+
+async def _merge_to_budget(pieces: list[str], budget: int, label: str) -> list[str]:
+    """Evidence pieces reduced until together they fit one writer request: long
+    pieces are cut at item boundaries, then merged in batches by the merge agent
+    (which keeps every evidence id). Every round shrinks the list."""
+    pieces = [part for piece in pieces for part in evidence_pack.split_piece(piece, max(budget // 2, 1))]
+    while sum(len(p) for p in pieces) > budget and len(pieces) > 1:
+        batches = _batch_by_size(pieces, budget)
 
         async def merge(batch: list[str]) -> str:
             if len(batch) == 1:
                 return batch[0]
             text = await _run_isolated("discover_merge", _STACK_DISCOVERY,
                                        {"findings_batch": "\n\n---\n\n".join(batch)},
-                                       "Merge these findings.", "merged_findings")
-            return _clip_findings(text or "\n\n".join(batch)[: budget // 2], budget // 2, f"{label} merged findings")
-        findings = list(await asyncio.gather(*(merge(b) for b in batches)))
-
-    request = (f"## Stack\n{label} (id `{stack_id}`, kind {stack.get('kind') or 'unspecified'})\n\n"
-               f"## Checklist\n`references/{reference}`\n\n")
-    if feedback:
-        request += (f"## Previous Document (revise it)\n{previous[:16000]}\n\n"
-                    f"## Reviewer Feedback\n{feedback}\n\n")
-    request += "## Unit Findings\n" + "\n\n---\n\n".join(findings)
-    analysis = await _run_isolated("discover_synthesize", _STACK_DISCOVERY,
-                                   {"workspace_dir": workspace_dir, "synthesis_request": request},
-                                   "Write the document.", "analysis")
-    await _update_state(session_id, {"analysis": analysis})
+                                       "Merge this evidence.", "merged_findings")
+            return _clip_findings(text or "\n\n".join(batch), budget // 2, f"{label} (merged)")
+        pieces = list(await asyncio.gather(*(merge(b) for b in batches)))
+    return pieces
 
 
 async def _run_stack_discovery_workflow(session_id: str) -> None:
@@ -2721,6 +2812,10 @@ async def refine_brd(session_id: str, body: RefineRequest):
     state = await _get_state(session_id)
     _require(state, "brd", "analysis")
     bundle = _bundle_for(state)
+    if state.get("pattern") == _STACK_DISCOVERY:
+        # Only the writer of the tab being refined re-runs, from the stored evidence.
+        target = body.target if body.target in ("brd", "technical_spec") else "all"
+        return await _refine(session_id, _run_discovery_documents(session_id, bundle, body.feedback, target))
     return await _refine(session_id, _run_bundle_re(session_id, bundle, feedback=body.feedback))
 
 

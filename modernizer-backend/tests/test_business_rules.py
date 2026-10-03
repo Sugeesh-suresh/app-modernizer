@@ -288,37 +288,43 @@ def test_file_units_cover_every_file_once_within_the_limit():
     assert ["b/c/0.java", "b/c/1.java", "b/c/2.java", "d/x.java"] in units      # small directories share
 
 
-def test_a_large_stack_is_documented_unit_by_unit(monkeypatch, tmp_path):
+def test_a_large_stack_is_gathered_unit_by_unit(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "DISCOVERY_UNIT_MAX_FILES", 3)
-    monkeypatch.setattr(config, "RE_SYNTHESIS_MAX_CHARS", 900)
-    monkeypatch.setattr(config, "RE_FINDINGS_MAX_CHARS", 400)
     files = [f"src/m{i // 3}/F{i}.java" for i in range(8)]
     _write(tmp_path, {f: "class X {}" for f in files})
     runs = []
 
     async def fake(step, pattern, state, message, output_key):
         runs.append(step)
-        if step == "discover_unit":
-            listed = re.findall(r"- `([^`]+)`", state["unit_scope"])
-            return "## Unit\n### Components\n" + "\n".join(f"- `{f}` component" + " detail" * 20 for f in listed)
-        if step == "discover_merge":
-            return "## Units merged\n" + " ".join(re.findall(r"src/m\d/F\d\.java", state["findings_batch"]))
-        assert step == "discover_synthesize"
-        assert all(f in state["synthesis_request"] for f in files)                # nothing lost in merging
-        return "<!-- SECTION: ANALYSIS -->\na\n<!-- SECTION: BRD -->\nbrd\n<!-- SECTION: END -->"
+        listed = re.findall(r"- `([^`]+)`", state["unit_scope"])
+        if "F7" in state["unit_scope"]:
+            raise RuntimeError("quota")
+        return "### Components\n" + "\n".join(f"- `{f}` component" for f in listed)
 
     monkeypatch.setattr(main, "_run_isolated", fake)
     sid = _session(tmp_path, [{"pattern": "java", "kind": "application"}])
-    asyncio.run(main._run_chunked_discovery(sid, {"pattern": "java", "kind": "application"}, "Java application",
-                                            "java.md", files))
-    assert runs.count("discover_unit") == 3 and "discover_merge" in runs and runs[-1] == "discover_synthesize"
-    state = asyncio.run(main._get_state(sid))
-    assert "brd" in state["analysis"] and len(json.loads(state["discovery_findings_java"])) == 3
+    text = asyncio.run(main._gather_unit_evidence(sid, {"pattern": "java", "kind": "application"},
+                                                  "Java application", "java.md", files))
+    assert runs == ["discover_unit"] * 3                                    # 8 files, units of 3
+    assert all(f"`{f}` component" in text for f in files[:6])
+    assert "**Not analysed** — quota" in text and "`src/m2/F7.java`" in text   # a failed unit is stated
 
-    runs.clear()                                            # a refine re-writes from the stored findings
-    asyncio.run(main._run_chunked_discovery(sid, {"pattern": "java", "kind": "application"}, "Java application",
-                                            "java.md", files, feedback="more detail", previous="old"))
-    assert "discover_unit" not in runs and runs[-1] == "discover_synthesize"
+
+def test_evidence_too_large_for_one_request_is_merged_keeping_every_id(monkeypatch):
+    pieces = [f"## Stack {s} (`s{s}`)\n\n### Components\n" + "\n".join(
+        f"- [EV-s{s}-{i:04d}] component {i} " + "detail " * 10 for i in range(1, 11)) for s in range(3)]
+    merged_requests = []
+
+    async def fake(step, pattern, state, message, output_key):
+        assert step == "discover_merge"
+        merged_requests.append(state["findings_batch"])
+        return "\n".join(re.findall(r"\[EV-[^\]]+\]", state["findings_batch"]))
+
+    monkeypatch.setattr(main, "_run_isolated", fake)
+    out = asyncio.run(main._merge_to_budget(pieces, 2_000, "test"))
+    assert merged_requests and sum(len(p) for p in out) <= 2_000 * 2
+    ids = set(re.findall(r"EV-s\d-\d{4}", "\n".join(out)))
+    assert ids == {f"EV-s{s}-{i:04d}" for s in range(3) for i in range(1, 11)}
 
 
 def test_stack_files_are_the_stacks_own_sources(tmp_path):

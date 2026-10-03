@@ -73,7 +73,7 @@ from .jsp_to_react_bff.agents import (
 from .stack_discovery.agents import (
     dependency_mapper_agent as stack_mapper, wildfly_re_agent as wildfly_re,
     discovery_agent as stack_discovery_agent,
-    discover_unit_agent, discover_merge_agent, discover_synthesis_agent, rule_extractor_agent,
+    discover_unit_agent, discover_merge_agent, po_writer_agent, ea_writer_agent, rule_extractor_agent,
 )
 
 APP_NAME = "modernizer"
@@ -162,16 +162,18 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
     },
     # Reverse-engineering only -- no plan, no code. `mapper` is pass 2 of the
     # dependency mapper (pass 1 is agents/shared/stack_detector.py, no model);
-    # the RE fan-out then runs `discover` once per confirmed stack, whatever
-    # the stack is — not the migrations' own `re` runners above.
+    # then `discover` gathers evidence once per confirmed stack (not the
+    # migrations' own `re` runners above) and two writers turn it into documents.
     "stack-discovery": {
         "mapper": _runner(stack_mapper),
         "discover": _runner(stack_discovery_agent),
-        # Large repositories: a stack documented unit by unit, and the
-        # business-rules ledger — see main._run_chunked_discovery / _run_rules_extraction.
+        # Evidence for a large stack, unit by unit; merging evidence that does not
+        # fit one writer request; the two writers; the business-rules ledger —
+        # see main._run_discovery_documents / _run_rules_extraction.
         "discover_unit": _runner(discover_unit_agent),
         "discover_merge": _runner(discover_merge_agent),
-        "discover_synthesize": _runner(discover_synthesis_agent),
+        "po_brd": _runner(po_writer_agent),
+        "ea_spec": _runner(ea_writer_agent),
         "rules": _runner(rule_extractor_agent),
     },
     # A stack, not a migration: reachable only as one leg of a stack-discovery

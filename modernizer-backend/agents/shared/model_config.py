@@ -78,7 +78,7 @@ _ROLE_RULES: list[tuple[str, str]] = [
     (r"validator", "check"),
     (r"fixer", "fix"),
     (r"modifier|generator", "code"),
-    (r"_re$|_re_|re_agent|module_re|findings|synthesis|mapper|classifier|^jsp_re|^discover_|^rule_extractor", "analyse"),
+    (r"_re$|_re_|re_agent|module_re|findings|synthesis|mapper|classifier|^jsp_re|^discover_|^rule_extractor|^po_brd$|^ea_spec$", "analyse"),
 ]
 
 

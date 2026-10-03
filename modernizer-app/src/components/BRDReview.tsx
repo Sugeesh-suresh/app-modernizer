@@ -99,7 +99,9 @@ interface Props {
   refining: boolean;
   refiningContent: string;
   onConfirm: (brdContent: string, techSpecContent: string, feedback?: string) => Promise<void>;
-  onRefine: (feedback: string) => Promise<void>;
+  /** `target` (stack-discovery): the document being refined — the BRD is the
+   * Product Owner agent's, the technical documents the Enterprise Architect's. */
+  onRefine: (feedback: string, target?: 'brd' | 'technical_spec') => Promise<void>;
   /** Reverse-engineering-only run (stack-discovery): confirming finishes the run
    * rather than advancing to plan generation, so the button must not promise a
    * plan that will never be generated. */
@@ -161,7 +163,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
 
   const handleRefine = async () => {
     if (!feedback.trim()) return;
-    await onRefine(feedback);
+    await onRefine(feedback, activeTab === 'brd' ? 'brd' : 'technical_spec');
     setFeedback('');
   };
 
@@ -450,7 +452,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
           className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-900/5 disabled:text-slate-500 text-white font-semibold px-5 py-3 rounded-xl transition-colors text-sm cursor-pointer disabled:cursor-not-allowed"
         >
           {refining ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-          {refining ? 'Refining…' : reOnly ? 'Refine Analysis' : 'Refine with Planner'}
+          {refining ? 'Refining…' : reOnly ? (activeTab === 'brd' ? 'Refine BRD (Product Owner)' : 'Refine Technical Docs (Architect)') : 'Refine with Planner'}
         </button>
         <p className="text-xs text-slate-500">
           {anyUploading

@@ -68,6 +68,9 @@ class ConfirmRequest(BaseModel):
 
 class RefineRequest(BaseModel):
     feedback: str
+    # stack-discovery only: which writer re-runs — "brd" (Product Owner) or
+    # "technical_spec" (Enterprise Architect). Anything else re-runs both.
+    target: Optional[str] = None
 
 
 class SelectCompanionsRequest(BaseModel):

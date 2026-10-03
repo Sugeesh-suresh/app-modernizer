@@ -9,10 +9,12 @@ build loop — the reverse-engineering document is the deliverable.
     dependency_mapper_agent  (tool-driven: list_files/read_file) -> stack_inventory
         ^ seeded with stack_detector's deterministic pre-scan findings
     [HITL] the reviewer confirms/unchecks the detected stacks
-    then, once per confirmed stack, discovery_agent (defined below) with the
-    stack's checklist — or wildfly-re for WildFly
-    -> one combined document, one `## <stack>` section each
-       (main.py's _run_bundle_re does the fan-out and the combining)
+    then, once per confirmed stack, an EVIDENCE specialist — discovery_agent
+    with the stack's checklist, wildfly-re for WildFly, or unit runs for a large
+    stack — returns a cited Evidence Pack (agents/shared/evidence_pack.py)
+    -> po_writer_agent writes the BRD and ea_writer_agent the Technical
+       Specification + Test Inventory, in parallel, from the same evidence
+       (main.py's _run_discovery_documents)
 
 Stacks are whatever the repository turns out to contain: stack_detector derives
 them from repo_fingerprint (manifests, imports, script includes, languages), and
@@ -114,14 +116,13 @@ wildfly_re_agent = LlmAgent(
 discovery_agent = LlmAgent(
     name="discover_stack",
     model=_MODEL,
-    description="Documents one technology stack of an existing repository exactly as it is, via list_files/read_file.",
+    description="Gathers the cited evidence about one technology stack of an existing repository, via list_files/read_file.",
     instruction=(
         "Load and execute the `stack-discovery-re` skill for the stack named in the request, and load "
         "the reference checklist the request names with load_skill_resource. Use the list_files and "
         "read_file tools to explore the workspace, starting from the evidence paths in the request. "
-        "Produce the Analysis, BRD, Technical Specification and Existing Test Inventory sections with "
-        "the exact SECTION markers the skill specifies. Describe only what the repository contains — "
-        "no migration, upgrade or other change suggestions of any kind."
+        "Return the skill's Evidence Pack — evidence only, no documents. Describe only what the repository "
+        "contains — no migration, upgrade or other change suggestions of any kind."
     ),
     tools=[
         _skill("stack-discovery-re"),
@@ -160,43 +161,63 @@ discover_unit_agent = LlmAgent(
 discover_merge_agent = LlmAgent(
     name="discover_merge",
     model=_MODEL,
-    description="Merges several units' findings into one findings document without losing facts.",
+    description="Merges pieces of evidence that do not fit one writer request, keeping every evidence id.",
     instruction=(
-        "Merge the Unit Findings below into ONE findings document with the same sections, headed "
-        "`## Units <first id>-<last id>`. Keep every component, entry point, data item, integration and "
-        "test with its citation; merge only exact duplicates. Keep every limitation. Add nothing the "
-        "findings do not say, and no recommendations.\n\n## Findings to merge\n{findings_batch}"
+        "Merge the evidence below into ONE evidence document with the same `##` and `###` headings. Keep "
+        "every item's `[EV-…]` id at the start of its bullet and its citation. Where items say the same "
+        "thing, merge them into one bullet that keeps ALL their ids. Shorten wording, never drop an id or "
+        "a limitation. Add nothing the evidence does not say, and no recommendations.\n\n"
+        "## Evidence to merge\n{findings_batch}"
     ),
     output_key="merged_findings",
     include_contents="none",
 )
 
-# Every unit's findings -> the stack's four-section document.
-discover_synthesis_agent = LlmAgent(
-    name="discover_synthesize",
+# ── The two document writers ──────────────────────────────────────────────────
+# Reading and writing are separate: the evidence specialists above read the code;
+# these two write only from their evidence packs (main._run_discovery_documents
+# builds each writer's view). Same evidence, two audiences, one set of ids.
+# No tools — every statement must come from the evidence — and the skill text is
+# the instruction itself (a callable also keeps the code in the evidence out of
+# {...} templating).
+def _skill_text(name: str) -> str:
+    return (_SKILLS_DIR / name / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[-1]
+
+
+def _writer_instruction(skill: str):
+    text = _skill_text(skill)
+
+    def instruction(ctx) -> str:
+        return (f"You are running the `{skill}` skill; its instructions follow.\n{text}\n\n"
+                + str(ctx.state.get("writer_request", "")))
+    return instruction
+
+
+po_writer_agent = LlmAgent(
+    name="po_brd",
     model=_MODEL,
-    description="Writes one stack's Analysis/BRD/Technical Specification/Test Inventory from its units' findings.",
-    instruction=(
-        "Load the `stack-discovery-re` skill and write its four-section document for the stack below, "
-        "following its Required output exactly (the five SECTION markers, in order) and its rules: describe "
-        "only what exists, no migration or change suggestions. The skill's discovery procedure has already "
-        "been carried out unit by unit by separate runs: the Unit Findings below are your only evidence. You "
-        "have no workspace tools — never claim to have read a file the findings do not cite. Where a unit "
-        "failed or was cut, say so under Discovery Limitations. The Business Rules section summarises "
-        "the rules by capability; the complete rule-by-rule catalog is appended to the document "
-        "separately.\n\n{synthesis_request}"
-    ),
-    tools=[_skill("stack-discovery-re")],
-    output_key="analysis",
+    description="Product Owner: writes the as-is BRD across all stacks from the evidence packs and the rules catalog.",
+    instruction=_writer_instruction("as-is-brd"),
+    output_key="po_brd",
     include_contents="none",
 )
+
+ea_writer_agent = LlmAgent(
+    name="ea_spec",
+    model=_MODEL,
+    description="Enterprise Architect: writes the current-state Technical Specification and Test Inventory from the evidence packs.",
+    instruction=_writer_instruction("current-state-architecture"),
+    output_key="ea_spec",
+    include_contents="none",
+)
+
 
 # One batch of business-rule candidates -> classified, with every rule extracted.
 # The skill's text is the instruction itself (no SkillToolset): a load_skill call
 # would add a model round trip to each of thousands of batches. A callable
 # instruction also bypasses {...} templating, which the skill's JSON example and
 # the code in each batch would otherwise trip.
-_RULES_SKILL = (_SKILLS_DIR / "business-rules-extract" / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[-1]
+_RULES_SKILL = _skill_text("business-rules-extract")
 
 
 def _rule_instruction(ctx) -> str:

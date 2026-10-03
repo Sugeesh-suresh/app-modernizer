@@ -86,11 +86,13 @@ export async function selectCompanions(sessionId: string, selected: string[]): P
   if (!res.ok) throw await apiError(res, 'Failed to confirm companion migrations');
 }
 
-export async function refineBrd(sessionId: string, feedback: string): Promise<void> {
+export async function refineBrd(
+  sessionId: string, feedback: string, target?: 'brd' | 'technical_spec',
+): Promise<void> {
   const res = await fetch(`${BASE}/api/sessions/${sessionId}/refine-brd`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ feedback }),
+    body: JSON.stringify({ feedback, target }),
   });
   if (!res.ok) throw await apiError(res, 'Failed to refine BRD');
 }

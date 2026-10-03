@@ -254,12 +254,21 @@ def test_stack_discovery_still_runs_the_reverse_engineering_agents(monkeypatch, 
     state = main._initial_state("stack-discovery", str(tmp_path), str(tmp_path), "[]", "bigbang", False, False)
     sid = asyncio.run(session_service.create_session(app_name=APP_NAME, user_id=USER_ID, state=state)).id
     main._sse_queues[sid] = asyncio.Queue()
+    writers = []
+
+    async def fake_writer(step, pattern, state, message, output_key):
+        writers.append(step)
+        return "## Executive Summary\nok" if step == "po_brd" else "<!-- SECTION: TECHNICAL_SPECIFICATION -->\nspec"
+
+    monkeypatch.setattr(main, "_run_isolated", fake_writer)
     stacks = ["java", "oracle", "solr", "tibco-ems", "backbone", "wildfly"]
     asyncio.run(main._run_bundle_re(sid, stacks))
-    # One migration-neutral discovery agent for every stack, not the migrations'
-    # own RE runners; wildfly keeps its own runner, which has no target either.
+    # One migration-neutral evidence run per stack, not the migrations' own RE
+    # runners (wildfly keeps its own runner, which has no target either) — then
+    # the two writers, once each, for the whole repository.
     assert harness.steps == [("discover", "stack-discovery")] * 5 + [("re", "wildfly")]
-    assert "discover" in PATTERN_RUNNERS["stack-discovery"]
+    assert sorted(writers) == ["ea_spec", "po_brd"]
+    assert {"discover", "po_brd", "ea_spec"} <= set(PATTERN_RUNNERS["stack-discovery"])
 
 
 @pytest.mark.parametrize("pattern, review", [
