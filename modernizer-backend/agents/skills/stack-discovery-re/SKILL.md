@@ -17,8 +17,8 @@ You do NOT have the repository in your context. You must discover it using
 
 Your request names ONE stack, the evidence that identified it, and ONE
 reference checklist under `references/` (`java.md`, `jsp.md`, `spa-frontend.md`,
-`oracle.md`, `datastore.md`, `solr.md`, `tibco-ems.md`, `messaging.md`, or
-`general.md` for anything else). Load that reference with `load_skill_resource`
+`oracle.md`, `datastore.md`, `solr.md`, `tibco-ems.md`, `messaging.md`,
+`thymeleaf.md`, `identity.md`, or `general.md` for anything else). Load that reference with `load_skill_resource`
 before beginning. It is a checklist of where to look and what to record; it is
 not evidence about this repository. Start from the evidence paths you were given.
 Describe only that stack — other stacks in the same repository are documented
@@ -67,7 +67,8 @@ reader will use it to understand the code, not to change it.
 - Separate fact from inference. Business intent inferred from code is marked
   **Inferred** with the evidence it rests on.
 - **Redact every credential.** Record the property name and file path and write
-  the value as `[REDACTED]`.
+  the value as `[REDACTED]`. Encrypted values (Jasypt `ENC(...)`) are credentials
+  too: record the property and where the decryption key is supplied from.
 - If a value comes from a system property, environment variable or external
   file that is not in the repository, record the expression and mark the
   effective value unresolved.
@@ -107,7 +108,7 @@ security configuration, authorisation checks, UI and API code.
 
 ### Integrations & Configuration
 External systems reached and how; configuration keys, properties, environment
-values and where they are set (credentials `[REDACTED]`; unresolved `${...}`
+values and where they are set (credentials `[REDACTED]`, Jasypt `ENC(...)` values included; unresolved `${...}`
 expressions marked unresolved).
 
 ### Tests

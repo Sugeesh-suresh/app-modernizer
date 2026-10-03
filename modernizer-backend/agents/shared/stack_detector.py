@@ -36,13 +36,13 @@ from .companion_detector import (
 #: Files whose content is scanned for configuration-level signatures.
 _SCAN_SUFFIXES = {
     ".xml", ".properties", ".yml", ".yaml", ".java", ".gradle", ".kts", ".py", ".js", ".ts",
-    ".jsp", ".jspx", ".jspf", ".tag", ".tagx", ".tld", ".mf", ".conf", ".json", ".env",
+    ".jsp", ".jspx", ".jspf", ".tag", ".tagx", ".tld", ".mf", ".conf", ".json", ".env", ".html", ".htm",
 }
 
 _MAX_EVIDENCE_PER_STACK = 5
 
 #: Section order in the document: what the application runs on, then what it is.
-KIND_ORDER = ("server", "database", "search", "messaging", "web-tier", "frontend", "service",
+KIND_ORDER = ("server", "database", "search", "messaging", "identity", "web-tier", "frontend", "service",
               "application", "language")
 
 
@@ -152,6 +152,18 @@ CATALOG: tuple[StackSpec, ...] = (
     StackSpec("ibm-mq", "IBM MQ", "messaging", reference="messaging.md",
               deps=(r"com\.ibm\.mq",), imports=(r"^com\.ibm\.mq",)),
     # ── web tier ──
+    # ── identity ──
+    StackSpec("ldap", "LDAP directory", "identity", reference="identity.md",
+              content=_rx(r"\bldaps?://[\w.-]+", r"\bspring\.ldap\.", r"\bLdapAuthenticationProvider\b",
+                          r"\.ldapAuthentication\(\)"),
+              deps=(r"spring-security-ldap", r"spring-ldap", r"unboundid-ldapsdk", r"^ldapjs$", r"^ldap3$"),
+              imports=(r"^org\.springframework\.(?:security\.)?ldap", r"^javax\.naming\.ldap", r"^ldap3$")),
+    # ── web tier ──
+    StackSpec("thymeleaf", "Thymeleaf server-rendered UI", "web-tier", reference="thymeleaf.md",
+              content=_rx(r"xmlns:th\s*=\s*\"http://www\.thymeleaf\.org", r"\bth:(?:if|each|text|href|src|field|object|"
+                          r"replace|insert|fragment)\s*="),
+              deps=(r"thymeleaf",), imports=(r"^org\.thymeleaf",),
+              claims=("JavaScript", "JavaScript (JSX)", "TypeScript", "HTML")),
     StackSpec("jsp", "JSP / Servlet web tier", "web-tier", reference="jsp.md",
               suffixes=(".jsp", ".jspx", ".jspf", ".tag", ".tagx"), content=_JSP_PATTERNS, claims=("JSP",)),
     # ── front ends ──
@@ -174,7 +186,7 @@ CATALOG: tuple[StackSpec, ...] = (
               scripts=("ext-all", "ext-all-debug", "ext"), claims=_SPA),
     StackSpec("jquery", "jQuery front end", "frontend", reference="spa-frontend.md",
               deps=(r"^jquery$",), imports=(r"^jquery$",), scripts=("jquery",), claims=_SPA,
-              unless=("backbone", "react", "angular", "angularjs", "vue", "ember", "extjs", "jsp")),
+              unless=("backbone", "react", "angular", "angularjs", "vue", "ember", "extjs", "jsp", "thymeleaf")),
     # ── services ──
     StackSpec("nodejs", "Node.js service", "service", reference="general.md",
               deps=(r"^express$", r"^koa$", r"^fastify$", r"^@nestjs/core$", r"^@hapi/hapi$", r"^hapi$"),
@@ -224,7 +236,7 @@ def reference_for(stack_id: str, kind: str = "") -> str:
     if spec:
         return spec.reference
     return {"database": "datastore.md", "search": "datastore.md", "messaging": "messaging.md",
-            "frontend": "spa-frontend.md", "web-tier": "jsp.md"}.get(kind, "general.md")
+            "frontend": "spa-frontend.md", "web-tier": "jsp.md", "identity": "identity.md"}.get(kind, "general.md")
 
 
 def detect(workspace_dir: str) -> tuple[list[dict], dict]:

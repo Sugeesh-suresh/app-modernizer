@@ -129,8 +129,18 @@ def _walk(node, stop_types=()):
 # Java (tree-sitter)
 # ---------------------------------------------------------------------------
 
-_JAVA_NESTED = ("class_declaration", "interface_declaration", "enum_declaration", "record_declaration",
-                "lambda_expression", "class_body", "object_creation_expression")
+# Only named type declarations are separate: a lambda or anonymous class belongs
+# to the method that contains it — a reactive pipeline's
+# `filter(p -> p.getPrice() > 0)` is that method's rule.
+_JAVA_NESTED = ("class_declaration", "interface_declaration", "enum_declaration", "record_declaration")
+
+#: Spring Security's authorization DSL (`antMatchers(...).hasRole(...)`) — rules
+#: with no `if` in them.
+_AUTHZ_CALLS = {"hasRole", "hasAnyRole", "hasAuthority", "hasAnyAuthority", "permitAll", "denyAll",
+                "authenticated", "fullyAuthenticated", "anonymous", "access", "hasIpAddress", "rememberMe"}
+_AUTHZ_ANNOTATIONS = {"PreAuthorize", "PostAuthorize", "Secured", "RolesAllowed", "PreFilter", "PostFilter",
+                      "DenyAll", "PermitAll"}
+_SCHEDULE_ANNOTATIONS = {"Scheduled", "Schedules"}
 _JAVA_TYPES = ("class_declaration", "interface_declaration", "enum_declaration", "record_declaration")
 
 
@@ -160,6 +170,11 @@ def _decision_signals(body, src: bytes, nested: tuple, lang: str) -> tuple[list[
                 if "null" not in expr and "undefined" not in expr:
                     counts["comparison"] += 1
                     null_only = False
+        elif t == "method_invocation" and lang == "java":
+            name = n.child_by_field_name("name")
+            if name is not None and _text(name, src) in _AUTHZ_CALLS:
+                counts["authorization-rule"] = counts.get("authorization-rule", 0) + 1
+                null_only = False
         elif t == "throw_statement":
             m = re.search(r"new\s+([\w.]+)", _text(n, src))
             name = m.group(1) if m else "exception"
@@ -200,6 +215,10 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
             end = max((c.end_point[0] + 1 for c in (body.children if body else []) if c.type == "enum_constant"),
                       default=start_row)
             add(start_row, end, "enum", owner, [f"{len(constants)} values: " + ", ".join(constants[:12])])
+        class_authz = [a for a in _annotations(node) if a[0] in _AUTHZ_ANNOTATIONS]
+        if class_authz:
+            add(start_row, start_row + len(class_authz), "authorization", owner,
+                [f"@{a}{args}" for a, args in class_authz])
         body = node.child_by_field_name("body")
         if body is None:
             return
@@ -240,18 +259,41 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
         params = node.child_by_field_name("parameters")
         param_annos = [a for a in re.findall(r"@(\w+)", _text(params, src) if params else "")
                        if a in VALIDATION_ANNOTATIONS and a != "Valid"]
-        if body is None:
+        annotations = _annotations(node)
+        authz = [a for a in annotations if a[0] in _AUTHZ_ANNOTATIONS]
+        sched = [a for a in annotations if a[0] in _SCHEDULE_ANNOTATIONS]
+        if body is None and not authz:
             return
-        signals, null_only = _decision_signals(body, src, _JAVA_NESTED, "java")
+        signals, null_only = (_decision_signals(body, src, _JAVA_NESTED, "java") if body is not None
+                              else ([], True))
+        decisions = bool(signals)
         signals += [f"@{a} parameter" for a in dict.fromkeys(param_annos)]
+        signals += [f"@{a}{args}" for a, args in authz + sched]
         if not signals:
             return
         status, reason = "pending", ""
-        if name in _SKIP_METHODS or (_ACCESSOR.match(name) and end - start <= 3):
+        if authz or sched:
+            pass                                   # an access rule or a schedule is never plumbing
+        elif name in _SKIP_METHODS or (_ACCESSOR.match(name) and end - start <= 3):
             status, reason = "auto-technical", f"`{name}` is an accessor/object method"
         elif null_only and not param_annos:
             status, reason = "auto-technical", "decisions are null checks only"
-        add(start, end, "method", f"{owner}.{name}", signals, status=status, reason=reason)
+        kind = ("method" if decisions or param_annos else "authorization" if authz else "scheduled")
+        add(start, end, kind, f"{owner}.{name}", signals, status=status, reason=reason)
+
+    def _annotations(node) -> list[tuple[str, str]]:
+        """[(name, "(arguments)")] of the declaration's annotations, from its syntax tree."""
+        out = []
+        for child in node.children:
+            if child.type != "modifiers":
+                continue
+            for a in child.children:
+                if a.type in ("annotation", "marker_annotation"):
+                    name_node = a.child_by_field_name("name")
+                    args = a.child_by_field_name("arguments")
+                    name = _text(name_node, src).rsplit(".", 1)[-1] if name_node else ""
+                    out.append((name, re.sub(r"\s+", " ", _text(args, src))[:120] if args is not None else ""))
+        return out
 
     def add(start, end, kind, symbol, signals, rows=None, status="pending", reason=""):
         if rows and kind in ("validation", "constants"):
@@ -429,7 +471,12 @@ def _sql(path: str, lines: list[str], max_lines: int, out: list[Candidate]) -> N
         i += 1
 
 
-_JSP_DECISION = re.compile(r"<c:(?:if|when)\b[^>]*test\s*=|<%[^@=!-][^%]*\b(?:if|switch)\s*\(|\$\{[^}]*\?[^}]*:[^}]*\}")
+_JSP_DECISION = re.compile(r"<c:(?:if|when)\b[^>]*test\s*=|<%[^@=!-][^%]*\b(?:if|switch)\s*\(|\$\{[^}]*\?[^}]*:[^}]*\}"
+                           r"|<sec:authorize\b")
+#: Thymeleaf conditional rendering and Spring Security attributes.
+_THYMELEAF_DECISION = re.compile(r"\bth:(?:if|unless|switch|case)\s*=|\bsec:authorize(?:-url)?\s*=|"
+                                 r"\bth:[\w-]+\s*=\s*\"[^\"]*\?[^\"]*:[^\"]*\"")
+_THYMELEAF_MARK = re.compile(r"xmlns:th\s*=|\bth:[\w-]+\s*=|\bsec:authorize")
 
 
 def _jsp(path: str, lines: list[str], max_lines: int, out: list[Candidate]) -> None:
@@ -441,6 +488,21 @@ def _jsp(path: str, lines: list[str], max_lines: int, out: list[Candidate]) -> N
                          symbol=Path(path).name, language="JSP", parser="pattern",
                          signals=[f"conditional rendering ×{len(rows)}"], source=text,
                          truncated=len(rows) > 60))
+
+
+def _thymeleaf(path: str, lines: list[str], max_lines: int, out: list[Candidate]) -> bool:
+    """A template's conditional rendering, as one candidate. False when the file
+    is not a Thymeleaf template at all (plain HTML is not scanned for rules)."""
+    if not any(_THYMELEAF_MARK.search(line) for line in lines):
+        return False
+    rows = [i + 1 for i, line in enumerate(lines) if _THYMELEAF_DECISION.search(line)]
+    if rows:
+        text = "\n".join(_snippet(lines, max(1, r - 1), min(len(lines), r + 2), max_lines)[0] for r in rows[:60])
+        out.append(Candidate(id="", path=path, start=rows[0], end=rows[-1], kind="view-logic",
+                             symbol=Path(path).name, language="Thymeleaf", parser="pattern",
+                             signals=[f"conditional rendering ×{len(rows)}"], source=text,
+                             truncated=len(rows) > 60))
+    return True
 
 
 _DRL_RULE = re.compile(r'^\s*rule\s+"([^"]+)"|^\s*rule\s+(\w+)', re.I)
@@ -476,6 +538,7 @@ _HANDLERS = {
     ".jsp": ("JSP", "jsp", "pattern"), ".jspx": ("JSP", "jsp", "pattern"), ".jspf": ("JSP", "jsp", "pattern"),
     ".tag": ("JSP", "jsp", "pattern"),
     ".drl": ("Drools", "drl", "pattern"),
+    ".html": ("Thymeleaf", "thymeleaf", "pattern"), ".htm": ("Thymeleaf", "thymeleaf", "pattern"),
 }
 #: Program languages with no rule parser here — counted and reported, never silently skipped.
 _UNPARSED = {".kt": "Kotlin", ".scala": "Scala", ".groovy": "Groovy", ".cs": "C#", ".vb": "VB.NET", ".go": "Go",
@@ -522,6 +585,12 @@ def scan(workspace_dir: str, max_lines: int = 250) -> Scan:
             continue
         text = raw.decode("utf-8", "replace")
         lines = text.splitlines()
+        if key == "thymeleaf":
+            # Only templates count; plain HTML pages carry no rules to parse.
+            if _thymeleaf(rel, lines, max_lines, candidates):
+                entry = by_language.setdefault(language, {"files": 0, "parser": parser})
+                entry["files"] += 1
+            continue
         if key in _PARSERS or key in ("python", "sql", "jsp", "drl"):
             entry = by_language.setdefault(language, {"files": 0, "parser": parser})
             entry["files"] += 1

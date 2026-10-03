@@ -58,7 +58,7 @@ security configuration, authorisation checks, UI and API code.
 
 ### Integrations & Configuration
 External systems reached and how; configuration keys, properties, environment
-values and where they are set (credentials `[REDACTED]`; unresolved `${...}`
+values and where they are set (credentials `[REDACTED]`, Jasypt `ENC(...)` values included; unresolved `${...}`
 expressions marked unresolved).
 
 ### Tests

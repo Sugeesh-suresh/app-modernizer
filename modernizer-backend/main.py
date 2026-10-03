@@ -2155,6 +2155,9 @@ def _rule_languages(stacks: list[dict]) -> set[str]:
             languages |= {"Java", "Drools"}
         elif stack == "jsp":
             languages.add("JSP")
+        elif stack == "thymeleaf":
+            # Templates, and the page scripts the templates load.
+            languages |= {"Thymeleaf", "JavaScript", "TypeScript"}
         elif kind in ("frontend", "service") or stack in ("javascript", "typescript"):
             languages |= {"JavaScript", "TypeScript"}
         elif stack == "python":
@@ -2235,6 +2238,7 @@ async def _run_rules_extraction(session_id: str) -> None:
 _STACK_SUFFIXES = {
     "java": {".java"},
     "jsp": {".jsp", ".jspx", ".jspf", ".tag", ".tagx"},
+    "thymeleaf": {".html", ".htm", ".js"},
     "nodejs": {".js", ".mjs", ".cjs", ".ts"},
 }
 _FRONTEND_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".vue", ".hbs", ".handlebars", ".mustache", ".html", ".htm"}
@@ -2262,7 +2266,8 @@ def _stack_files(workspace_dir: str, stack: dict) -> list[str] | None:
         rel = path.relative_to(root).as_posix()
         parts = set(Path(rel).parts)
         if (dependency_graph.EXCLUDED_DIRS & parts or "node_modules" in parts or path.name.endswith(".min.js")
-                or (kind == "frontend" and _re.search(r"(?:^|/)(?:lib|libs|vendor|vendors|third[-_]?party)/", rel))):
+                or (kind in ("frontend", "web-tier")
+                    and _re.search(r"(?:^|/)(?:lib|libs|vendor|vendors|third[-_]?party)/", rel))):
             continue
         files.append(rel)
     return files

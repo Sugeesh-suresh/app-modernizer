@@ -112,6 +112,13 @@ def _pom(text: str) -> list[dict]:
     except ET.ParseError:
         return []
     deps = []
+    # The parent POM is where a Spring Boot version usually comes from.
+    for el in root:
+        if _local(el.tag) == "parent":
+            fields = {_local(c.tag): (c.text or "").strip() for c in el}
+            if fields.get("groupId") and fields.get("artifactId"):
+                deps.append({"name": f"{fields['groupId']}:{fields['artifactId']}",
+                             "version": fields.get("version", ""), "scope": "parent"})
     for el in root.iter():
         if _local(el.tag) != "dependency":
             continue
@@ -120,6 +127,25 @@ def _pom(text: str) -> list[dict]:
             deps.append({"name": f"{fields['groupId']}:{fields['artifactId']}",
                          "version": fields.get("version", ""), "scope": fields.get("scope", "")})
     return deps
+
+
+_KEY_PROPERTY = re.compile(r"(?:^|\.)(?:java\.version|release|source|target)$|version$|encoding$", re.I)
+
+
+def pom_properties(text: str) -> dict[str, str]:
+    """The POM's version-like properties (java.version, maven.compiler.*, *.version)."""
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return {}
+    out = {}
+    for el in root:
+        if _local(el.tag) == "properties":
+            for prop in el:
+                name, value = _local(prop.tag), (prop.text or "").strip()
+                if value and _KEY_PROPERTY.search(name):
+                    out[name] = value
+    return dict(list(out.items())[:20])
 
 
 def _package_json(text: str, keys=("dependencies", "devDependencies", "peerDependencies")) -> list[dict]:
@@ -303,7 +329,8 @@ def fingerprint(workspace_dir: str) -> dict:
         if is_manifest:
             parsed = _manifest(path, text)
             if parsed:
-                manifests.append({"path": rel, "kind": parsed[0], "dependencies": parsed[1]})
+                manifests.append({"path": rel, "kind": parsed[0], "dependencies": parsed[1],
+                                  "properties": pom_properties(text) if parsed[0] == "maven" else {}})
             continue
 
         if suffix == ".java":
@@ -323,7 +350,9 @@ def fingerprint(workspace_dir: str) -> dict:
                 note(imports["javascript"][mod], rel)
         if suffix in (".html", ".htm", ".jsp", ".jspf", ".jspx", ".tag", ".hbs", ".ftl", ".vm", ".vue"):
             for src in _SCRIPT_SRC.findall(text):
-                lib = library_name(src.split("?")[0].rsplit("/", 1)[-1])
+                # Thymeleaf link expressions: th:src="@{/vendor/jquery/jquery-3.6.0.min.js}"
+                src = re.sub(r"^\s*@\{\s*|\s*\}\s*$", "", src)
+                lib = library_name(src.split("?")[0].split("(")[0].rsplit("/", 1)[-1])
                 if lib and rel not in scripts[lib]:
                     scripts[lib].append(rel)
 
@@ -353,6 +382,8 @@ def to_markdown(fp: dict, max_deps: int = 40, max_imports: int = 25) -> str:
             deps = m["dependencies"]
             lines.append(f"**`{m['path']}`** ({m['kind']}, {len(deps)} declared dependenc"
                          f"{'y' if len(deps) == 1 else 'ies'})")
+            if m.get("properties"):
+                lines.append("Key properties: " + ", ".join(f"`{k}` = {v}" for k, v in m["properties"].items()))
             if deps:
                 lines += ["", "| Dependency | Version | Scope |", "|---|---|---|"]
                 for d in deps[:max_deps]:
@@ -388,7 +419,9 @@ def to_prompt(fp: dict) -> str:
     out.append(f"Languages (files): {langs or 'none'}")
     for m in fp.get("manifests", []):
         names = ", ".join(d["name"] + (f"@{d['version']}" if d["version"] else "") for d in m["dependencies"][:60])
-        out.append(f"{m['path']} ({m['kind']}): {names or 'no dependencies declared'}")
+        props = ", ".join(f"{k}={v}" for k, v in (m.get("properties") or {}).items())
+        out.append(f"{m['path']} ({m['kind']}): {names or 'no dependencies declared'}"
+                   + (f"; properties: {props}" if props else ""))
     for eco, mods in (fp.get("imports") or {}).items():
         out.append(f"Imports ({eco}): " + ", ".join(f"{m} ({i['files']})" for m, i in list(mods.items())[:40]))
     if fp.get("scripts"):
