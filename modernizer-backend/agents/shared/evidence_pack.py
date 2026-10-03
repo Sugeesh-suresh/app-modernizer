@@ -173,7 +173,7 @@ def check(document: str, evidence_ids: set[str], rule_ids: set[str]) -> dict:
             "unknown_evidence": sorted(cited_ev - evidence_ids), "unknown_rules": sorted(cited_br - rule_ids)}
 
 
-def check_markdown(brd: dict, spec: dict, evidence_ids: set[str]) -> str:
+def check_markdown(brd: dict, spec: dict, evidence_ids: set[str], uncovered: list[str] | None = None) -> str:
     """The Evidence Check section: what each document cites, and any citation
     that points at nothing."""
     cited = brd["evidence"] | spec["evidence"]
@@ -197,6 +197,12 @@ def check_markdown(brd: dict, spec: dict, evidence_ids: set[str]) -> str:
             lines.append(f"- …and {len(unknown) - 50} more")
     else:
         lines += ["", "Every evidence and rule id cited by either document exists."]
+    if uncovered:
+        lines += ["", f"**Endpoints and jobs in the code that the Technical Specification does not mention "
+                  f"({len(uncovered)}) — see the computed Interface & Job Inventory:**"]
+        lines += [f"- {u}" for u in uncovered[:50]] + ([f"- …and {len(uncovered) - 50} more"] if len(uncovered) > 50 else [])
+    elif uncovered is not None:
+        lines += ["", "Every endpoint and scheduled job found in the code is mentioned by the Technical Specification."]
     return "\n".join(lines)
 
 

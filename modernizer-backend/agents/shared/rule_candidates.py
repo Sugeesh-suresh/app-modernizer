@@ -141,6 +141,24 @@ _AUTHZ_CALLS = {"hasRole", "hasAnyRole", "hasAuthority", "hasAnyAuthority", "per
 _AUTHZ_ANNOTATIONS = {"PreAuthorize", "PostAuthorize", "Secured", "RolesAllowed", "PreFilter", "PostFilter",
                       "DenyAll", "PermitAll"}
 _SCHEDULE_ANNOTATIONS = {"Scheduled", "Schedules"}
+
+_SQL_VERB = re.compile(r"\b(?:SELECT|UPDATE|DELETE|MERGE|INSERT\s+INTO)\b", re.I)
+_SQL_FILTER = re.compile(r"\bWHERE\b|\bHAVING\b|\bCASE\s+WHEN\b|\bJOIN\b[^;]*?\bON\b|\bQUALIFY\b", re.I)
+
+
+def is_sql_filter(text: str) -> bool:
+    """A SQL statement whose WHERE / HAVING / CASE / JOIN ... ON chooses or
+    transforms rows — a business filter, not plumbing."""
+    return bool(_SQL_VERB.search(text) and _SQL_FILTER.search(text))
+
+
+#: Static tables and patterns: normalisation maps, allowed/excluded value sets,
+#: code lists and regular expressions are rules expressed as data.
+_LOOKUP_INIT = re.compile(
+    r"=\s*(?:Map\.(?:of|ofEntries|entry)|Set\.of|List\.of|Arrays\.asList|EnumSet\.(?:of|range)|"
+    r"Immutable(?:Map|Set|List|SortedMap|SortedSet)\.|Collections\.(?:unmodifiable\w+|singleton\w*)|"
+    r"Stream\.of|new\s+[\w.]+(?:<[^>]*>)?\s*\[\s*\]\s*\{|\{\s*[\"'\d{-]|Pattern\.compile|"
+    r"new\s+(?:Hash|Linked|Tree|Enum)(?:Map|Set)\s*<[^>]*>\s*\(\s*\)\s*\{\s*\{)")
 _JAVA_TYPES = ("class_declaration", "interface_declaration", "enum_declaration", "record_declaration")
 
 
@@ -149,8 +167,12 @@ def _decision_signals(body, src: bytes, nested: tuple, lang: str) -> tuple[list[
     counts = {"if": 0, "switch-case": 0, "ternary": 0, "comparison": 0, "loop-condition": 0}
     throws: list[str] = []
     null_only = True
+    literals: list[str] = []
     for n in _walk(body, nested):
         t = n.type
+        if lang == "java" and t in ("string_literal", "text_block"):
+            literals.append(_text(n, src).strip('"'))
+            continue
         if t == "if_statement":
             counts["if"] += 1
             cond = n.child_by_field_name("condition")
@@ -181,6 +203,9 @@ def _decision_signals(body, src: bytes, nested: tuple, lang: str) -> tuple[list[
             throws.append(name)
             if not re.fullmatch(r"(?:java\.lang\.)?(?:NullPointer|IllegalArgument|IllegalState|UnsupportedOperation)Exception|Error", name):
                 null_only = False
+    if literals and is_sql_filter(" ".join(literals)):
+        counts["sql-filter"] = 1                    # the query decides which rows the business sees
+        null_only = False
     signals = [f"{k} ×{v}" for k, v in counts.items() if v]
     signals += [f"throws {name}" for name in dict.fromkeys(throws)]
     return signals, null_only
@@ -223,9 +248,25 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
         if body is None:
             return
         validation_rows, constant_rows, validation_signals, constant_names = [], [], [], []
+        lookup_rows, lookup_names = [], []
+        query_rows, query_names = [], []
         for member in body.children:
+            if member.type == "static_initializer":
+                text = _text(member, src)
+                if re.search(r"\.(?:put|putIfAbsent|add|addAll)\s*\(", text):
+                    lookup_rows.append((member.start_point[0] + 1, member.end_point[0] + 1))
+                    lookup_names.append("static { … }")
+                continue
             if member.type == "field_declaration":
                 text = _text(member, src)
+                if re.search(r"\bString\b", text) and "=" in text and is_sql_filter(text.split("=", 1)[1]):
+                    name_m = re.search(r"(\w+)\s*=", text)
+                    query_rows.append((member.start_point[0] + 1, member.end_point[0] + 1))
+                    query_names.append(name_m.group(1) if name_m else "?")
+                elif re.search(r"\bstatic\b", text) and _LOOKUP_INIT.search(text):
+                    name_m = re.search(r"(\w+)\s*=", text)
+                    lookup_rows.append((member.start_point[0] + 1, member.end_point[0] + 1))
+                    lookup_names.append(name_m.group(1) if name_m else "?")
                 annos = [a for a in re.findall(r"@(\w+)", text) if a in VALIDATION_ANNOTATIONS and a != "Valid"]
                 if annos:
                     validation_rows.append((member.start_point[0] + 1, member.end_point[0] + 1))
@@ -250,6 +291,12 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
         if constant_rows:
             add(constant_rows[0][0], constant_rows[-1][1], "constants", owner,
                 [", ".join(constant_names[:12])], rows=constant_rows)
+        if lookup_rows:
+            add(lookup_rows[0][0], lookup_rows[-1][1], "lookup", owner,
+                [", ".join(lookup_names[:12])], rows=lookup_rows)
+        if query_rows:
+            add(query_rows[0][0], query_rows[-1][1], "query", owner,
+                ["SQL constants: " + ", ".join(query_names[:12])], rows=query_rows)
 
     def _java_method(node, owner: str):
         name_node = node.child_by_field_name("name")
@@ -278,7 +325,9 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
             status, reason = "auto-technical", f"`{name}` is an accessor/object method"
         elif null_only and not param_annos:
             status, reason = "auto-technical", "decisions are null checks only"
-        kind = ("method" if decisions or param_annos else "authorization" if authz else "scheduled")
+        only_sql = decisions and all(s.startswith("sql-filter") for s in signals if not s.startswith("@"))
+        kind = ("query" if only_sql and not authz and not sched else
+                "method" if decisions or param_annos else "authorization" if authz else "scheduled")
         add(start, end, kind, f"{owner}.{name}", signals, status=status, reason=reason)
 
     def _annotations(node) -> list[tuple[str, str]]:
@@ -296,7 +345,7 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
         return out
 
     def add(start, end, kind, symbol, signals, rows=None, status="pending", reason=""):
-        if rows and kind in ("validation", "constants"):
+        if rows and kind in ("validation", "constants", "lookup", "query"):
             text = "\n".join(_snippet(lines, a, b, max_lines)[0] for a, b in rows)
             truncated = False
         else:
@@ -368,6 +417,7 @@ def _js(path: str, src: bytes, lines: list[str], max_lines: int, grammar: str, l
 
 def _python(path: str, text: str, lines: list[str], max_lines: int, out: list[Candidate]) -> None:
     tree = ast.parse(text)
+    _python_lookups(path, tree, lines, max_lines, out)
 
     def visit(node, owner):
         for child in ast.iter_child_nodes(node):
@@ -415,6 +465,31 @@ def _python(path: str, text: str, lines: list[str], max_lines: int, out: list[Ca
     visit(tree, "")
 
 
+def _python_lookups(path: str, tree, lines: list[str], max_lines: int, out: list[Candidate]) -> None:
+    """Module- and class-level dict/set/list/tuple literals with at least three
+    literal entries, and re.compile patterns: rules expressed as data."""
+    rows, names = [], []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.col_offset > 4:
+            continue
+        value = node.value
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        name = next((t.id for t in targets if isinstance(t, ast.Name)), None)
+        is_table = (isinstance(value, ast.Dict) and len(value.keys) >= 3) or \
+                   (isinstance(value, (ast.Set, ast.List, ast.Tuple)) and len(value.elts) >= 3
+                    and all(isinstance(e, ast.Constant) for e in value.elts))
+        is_pattern = (isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute)
+                      and value.func.attr == "compile" and getattr(value.func.value, "id", "") == "re")
+        if name and (is_table or is_pattern):
+            rows.append((node.lineno, node.end_lineno or node.lineno))
+            names.append(name)
+    if rows:
+        text = "\n".join(_snippet(lines, a, b, max_lines)[0] for a, b in rows)
+        out.append(Candidate(id="", path=path, start=rows[0][0], end=rows[-1][1], kind="lookup",
+                             symbol=Path(path).stem, language="Python", parser="python-ast",
+                             signals=[", ".join(names[:12])], source=text))
+
+
 def _py_own_nodes(func):
     stack = list(ast.iter_child_nodes(func))
     while stack:
@@ -432,6 +507,8 @@ _SQL_ROUTINE = re.compile(r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:EDITIONABLE\s+|N
                           r"(PROCEDURE|FUNCTION|TRIGGER|PACKAGE\s+BODY)\s+([\w.\"$]+)", re.I)
 _SQL_TABLE = re.compile(r"^\s*(?:CREATE\s+TABLE|ALTER\s+TABLE)\s+([\w.\"$]+)", re.I)
 _SQL_END = re.compile(r"^\s*/\s*$|^\s*CREATE\s+", re.I)
+_SQL_STATEMENT = re.compile(r"^\s*(?:(SELECT|UPDATE|DELETE|MERGE|INSERT)\b|CREATE\s+(?:OR\s+REPLACE\s+)?"
+                            r"(?:MATERIALIZED\s+)?VIEW\s+([\w.\"$]+))", re.I)
 
 
 def _sql(path: str, lines: list[str], max_lines: int, out: list[Candidate]) -> None:
@@ -440,6 +517,22 @@ def _sql(path: str, lines: list[str], max_lines: int, out: list[Candidate]) -> N
     while i < n:
         routine = _SQL_ROUTINE.match(lines[i])
         table = _SQL_TABLE.match(lines[i])
+        statement = None if routine or table else _SQL_STATEMENT.match(lines[i])
+        if statement:
+            j = i + 1
+            # A statement ends at ";", "/" or the next CREATE — never at a nested SELECT
+            # (CREATE VIEW v AS <newline> SELECT ... WHERE ...).
+            while j < n and not re.search(r";\s*$", lines[j - 1]) and not _SQL_END.match(lines[j]):
+                j += 1
+            body = "\n".join(lines[i:j])
+            if _SQL_FILTER.search(body):
+                snippet, truncated = _snippet(lines, i + 1, j, max_lines)
+                name = (statement.group(2) or "").strip('"') or f"{statement.group(1).upper()} at line {i + 1}"
+                out.append(Candidate(id="", path=path, start=i + 1, end=j, kind="query", symbol=name,
+                                     language="SQL", parser="pattern", signals=["sql-filter"], source=snippet,
+                                     truncated=truncated))
+            i = j if j > i else i + 1
+            continue
         if routine:
             j = i + 1
             while j < n and not _SQL_END.match(lines[j]):
@@ -526,6 +619,76 @@ def _drl(path: str, lines: list[str], max_lines: int, out: list[Candidate]) -> N
 
 _PARSERS = {k: Parser(v) for k, v in _TS_LANGUAGES.items()}
 
+# ---------------------------------------------------------------------------
+# Template / configuration data files
+# ---------------------------------------------------------------------------
+
+_DATA_SUFFIXES = {".json": "JSON", ".yaml": "YAML", ".yml": "YAML", ".xml": "XML", ".properties": "Properties",
+                  ".csv": "CSV"}
+#: Folders whose structured files define behaviour: category templates, rule
+#: sets, mappings, lookups, reference data.
+_RULE_DATA_DIRS = re.compile(r"(?:^|/)(?:templates?|rules?|rulesets?|mappings?|lookups?|refdata|reference[-_]?data|"
+                             r"standards?|standardi[sz]ation|categories|dictionar(?:y|ies)|validations?|"
+                             r"transformations?|normali[sz]ations?)/", re.I)
+#: Build, deployment, logging and environment files are not rule data (the
+#: environment files are covered by the configuration matrix instead).
+_NOT_RULE_DATA = re.compile(r"(?:^|/)(?:pom\.xml|package(?:-lock)?\.json|tsconfig[\w.-]*\.json|\.eslintrc[\w.]*|"
+                            r"log4j2?[\w.-]*|logback[\w.-]*|application(?:-[\w.-]+)?\.(?:ya?ml|properties)|"
+                            r"bootstrap(?:-[\w.-]+)?\.(?:ya?ml|properties)|docker-compose[\w.-]*|"
+                            r"\.gitlab-ci\.yml|web\.xml|persistence\.xml|beans\.xml|[\w-]*context\.xml)$|"
+                            r"(?:^|/)(?:\.github|\.circleci|k8s|kubernetes|helm|charts|deploy(?:ment)?s?|"
+                            r"META-INF)/", re.I)
+
+
+_MYBATIS_STATEMENT = re.compile(r"<(select|update|delete|insert)\b[^>]*\bid\s*=\s*\"([^\"]+)\"", re.I)
+
+
+def _mybatis(path: str, lines: list[str], max_lines: int, out: list[Candidate]) -> None:
+    """Each mapped statement whose SQL filters rows or whose dynamic SQL decides
+    (<if test>, <choose>/<when>)."""
+    i = 0
+    while i < len(lines):
+        m = _MYBATIS_STATEMENT.search(lines[i])
+        if not m:
+            i += 1
+            continue
+        j = i
+        close = re.compile(rf"</{m.group(1)}\s*>", re.I)
+        while j < len(lines) and not close.search(lines[j]):
+            j += 1
+        body = "\n".join(lines[i:j + 1])
+        dynamic = len(re.findall(r"<(?:if|when)\b[^>]*\btest\s*=", body, re.I))
+        if _SQL_FILTER.search(body) or dynamic:
+            snippet, truncated = _snippet(lines, i + 1, min(j + 1, len(lines)), max_lines)
+            out.append(Candidate(id="", path=path, start=i + 1, end=min(j + 1, len(lines)), kind="query",
+                                 symbol=m.group(2), language="MyBatis XML", parser="pattern",
+                                 signals=["sql-filter"] + ([f"dynamic condition ×{dynamic}"] if dynamic else []),
+                                 source=snippet, truncated=truncated))
+        i = j + 1
+
+
+def is_rule_data(rel: str) -> bool:
+    if _NOT_RULE_DATA.search(rel):
+        return False
+    return bool(_RULE_DATA_DIRS.search(rel)) or (rel.lower().endswith(".csv") and "/resources/" in f"/{rel}")
+
+
+def _data_file(path: str, language: str, lines: list[str], max_lines: int, out: list[Candidate]) -> None:
+    """One candidate per file, or per consecutive part of a long one — every line
+    is shown to the extractor, none is cut."""
+    body = [i for i, line in enumerate(lines, 1) if line.strip()]
+    if not body:
+        return
+    first, last = body[0], body[-1]
+    parts = list(range(first, last + 1, max_lines))
+    for n, start in enumerate(parts, 1):
+        end = min(start + max_lines - 1, last)
+        snippet, _ = _snippet(lines, start, end, max_lines)
+        label = Path(path).name + (f" (part {n}/{len(parts)})" if len(parts) > 1 else "")
+        out.append(Candidate(id="", path=path, start=start, end=end, kind="config-rule", symbol=label,
+                             language=language, parser="structured file",
+                             signals=[f"{language} definition, lines {start}-{end}"], source=snippet))
+
 #: extension -> (language, handler key, parser label)
 _HANDLERS = {
     ".java": ("Java", "java", "tree-sitter"),
@@ -563,6 +726,32 @@ def scan(workspace_dir: str, max_lines: int = 250) -> Scan:
         if EXCLUDED_DIRS & parts or "node_modules" in parts:
             continue
         suffix = path.suffix.lower()
+        if suffix == ".xml" and not _TEST_PATH.search(rel):
+            try:
+                head = path.read_text(encoding="utf-8", errors="replace")[:4000] \
+                    if path.stat().st_size <= _MAX_FILE_BYTES else ""
+            except OSError:
+                head = ""
+            if re.search(r"<mapper\b[^>]*namespace\s*=", head) or "mybatis.org//DTD Mapper" in head:
+                entry = by_language.setdefault("MyBatis XML", {"files": 0, "parser": "pattern"})
+                entry["files"] += 1
+                _mybatis(rel, path.read_text(encoding="utf-8", errors="replace").splitlines(), max_lines, candidates)
+                continue
+        if suffix in _DATA_SUFFIXES and is_rule_data(rel) and not _TEST_PATH.search(rel):
+            try:
+                data_text = path.read_text(encoding="utf-8", errors="replace") \
+                    if path.stat().st_size <= _MAX_FILE_BYTES else ""
+            except OSError as exc:
+                errors.append(f"{rel}: {exc}")
+                continue
+            if not data_text:
+                errors.append(f"{rel}: larger than {_MAX_FILE_BYTES // 1_000_000} MB, not scanned")
+                continue
+            language = _DATA_SUFFIXES[suffix]
+            entry = by_language.setdefault(language, {"files": 0, "parser": "structured file"})
+            entry["files"] += 1
+            _data_file(rel, language, data_text.splitlines(), max_lines, candidates)
+            continue
         if suffix in _UNPARSED:
             unparsed[_UNPARSED[suffix]] = unparsed.get(_UNPARSED[suffix], 0) + 1
             continue

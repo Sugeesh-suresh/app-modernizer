@@ -18,7 +18,8 @@ You do NOT have the repository in your context. You must discover it using
 Your request names ONE stack, the evidence that identified it, and ONE
 reference checklist under `references/` (`java.md`, `jsp.md`, `spa-frontend.md`,
 `oracle.md`, `datastore.md`, `solr.md`, `tibco-ems.md`, `messaging.md`,
-`thymeleaf.md`, `identity.md`, or `general.md` for anything else). Load that reference with `load_skill_resource`
+`thymeleaf.md`, `identity.md`, `secrets.md`, `email.md`, or `general.md` for anything
+else). Load that reference with `load_skill_resource`
 before beginning. It is a checklist of where to look and what to record; it is
 not evidence about this repository. Start from the evidence paths you were given.
 Describe only that stack — other stacks in the same repository are documented

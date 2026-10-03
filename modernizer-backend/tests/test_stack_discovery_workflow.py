@@ -228,6 +228,30 @@ class TestStackDiscoveryWorkflow:
         assert brd.index("Detected Technology Stacks") < brd.index("## Executive Summary") < brd.index("## Evidence Check")
         assert "Every evidence and rule id cited by either document exists." in brd
 
+    def test_computed_interfaces_and_configuration_reach_the_architect_and_the_check(self, monkeypatch):
+        h = _Harness(monkeypatch)
+        sid = _session(PRESCAN)
+        inventory = {"endpoints": [{"verb": "GET", "path": "/rest/v1/jobs/{id}", "handler": "JobRestController.get",
+                                    "kind": "REST", "view": "", "source": "src/JobRestController.java:12"}],
+                     "jobs": [{"handler": "JobController.nightly", "schedule": "cron = 0 0 2 * * *", "zone": "",
+                               "source": "src/JobController.java:20"}],
+                     "listeners": []}
+        asyncio.run(main._update_state(sid, {
+            "interfaces_json": json.dumps(inventory),
+            "config_matrix_markdown": "## Configuration Matrix (computed)\n\n| Key | default |"}))
+
+        _run(sid, ["java"])
+
+        state = _state(sid)
+        request = h.request("ea_spec")
+        assert "`/rest/v1/jobs/{id}`" in request and "must appear in your Interface Catalog" in request
+        assert "## Configuration Matrix (computed)" in request
+        assert "## Interface & Job Inventory (computed)" in state["technical_spec"]
+        assert "## Configuration Matrix (computed)" in state["technical_spec"]
+        # The stub architect mentions neither, so the evidence check names both.
+        assert "GET /rest/v1/jobs/{id} (JobRestController.get)" in state["brd"]
+        assert "scheduled job JobController.nightly" in state["brd"]
+
     def test_a_citation_that_matches_no_evidence_is_reported(self, monkeypatch):
         _Harness(monkeypatch, cite=", EV-java-0999, BR-0007")
         sid = _session(PRESCAN)

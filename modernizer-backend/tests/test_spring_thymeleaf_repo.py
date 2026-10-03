@@ -129,3 +129,16 @@ def test_everything_is_deterministic(tmp_path):
     first = (json.dumps(sd.detect(root), sort_keys=True), [c.to_dict() | {"source": c.source} for c in rc.scan(root).candidates])
     second = (json.dumps(sd.detect(root), sort_keys=True), [c.to_dict() | {"source": c.source} for c in rc.scan(root).candidates])
     assert first == second
+
+
+def test_db2_is_detected_from_every_driver_coordinate(tmp_path):
+    for i, dep in enumerate(("<groupId>com.ibm.db2</groupId><artifactId>jcc</artifactId>",
+                             "<groupId>com.ibm.db2.jcc</groupId><artifactId>db2jcc4</artifactId>")):
+        root = tmp_path / str(i)
+        root.mkdir()
+        (root / "pom.xml").write_text(f"<project><dependencies><dependency>{dep}</dependency></dependencies></project>")
+        assert "db2" in {s["pattern"] for s in sd.detect_stacks(str(root))}, dep
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "ds.properties").write_text("driver=com.ibm.db2.jcc.DB2Driver\n")
+    assert "db2" in {s["pattern"] for s in sd.detect_stacks(str(cfg))}

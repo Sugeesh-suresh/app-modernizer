@@ -164,6 +164,19 @@ def _norm(text: str) -> str:
     return " ".join(re.sub(r"[^a-z0-9 ]+", " ", text.lower().replace("`", "")).split())
 
 
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"|`[^`]*`")
+_QUALIFIER = re.compile(r"\b[A-Z][A-Z0-9_]{1,}\b")   # BCOM, MCOM, PDS_ADMIN, US …
+
+
+def _facts(statement: str) -> tuple:
+    """What two rules must share to be the same rule: every number, quoted or
+    code value, and upper-case qualifier (brand, role, code). Wording may differ;
+    these may not — "height above 20 inches" and "above 22 inches" are two rules."""
+    return (tuple(sorted(_NUMBER.findall(statement))), tuple(sorted(q.lower() for q in _QUOTED.findall(statement))),
+            tuple(sorted(set(_QUALIFIER.findall(statement)))))
+
+
 def _similar(a: str, b: str) -> bool:
     sa, sb = set(a.split()), set(b.split())
     return bool(sa and sb) and len(sa & sb) / len(sa | sb) >= 0.9
@@ -179,11 +192,13 @@ def finalize(ledger: dict, workspace_dir: str, test_files: list[str]) -> None:
     for rule in ledger["raw_rules"]:
         norm = _norm(rule["statement"])
         key = (rule["type"], " ".join(norm.split()[:3]))
-        target = exact.get((rule["type"], norm)) or next(
-            (m for m in buckets[key][-50:] if _similar(m["_norm"], norm)), None)
+        target = exact.get((rule["type"], norm, _facts(rule["statement"]))) or next(
+            (m for m in buckets[key][-50:]
+             if m["_facts"] == _facts(rule["statement"]) and _similar(m["_norm"], norm)), None)
         if target is None:
-            rule = {**rule, "sources": list(rule["sources"]), "flags": list(rule["flags"]), "_norm": norm}
-            exact[(rule["type"], norm)] = rule
+            rule = {**rule, "sources": list(rule["sources"]), "flags": list(rule["flags"]), "_norm": norm,
+                    "_facts": _facts(rule["statement"])}
+            exact[(rule["type"], norm, rule["_facts"])] = rule
             buckets[key].append(rule)
             merged.append(rule)
         else:
@@ -195,6 +210,7 @@ def finalize(ledger: dict, workspace_dir: str, test_files: list[str]) -> None:
     merged.sort(key=lambda r: (r["area"], r["sources"][0]["path"], r["sources"][0]["start"]))
     for i, rule in enumerate(merged, 1):
         rule.pop("_norm", None)
+        rule.pop("_facts", None)
         rule["id"] = f"BR-{i:04d}"
         names = set()
         for s in rule["sources"]:

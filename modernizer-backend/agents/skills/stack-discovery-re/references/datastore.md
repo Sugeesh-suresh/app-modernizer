@@ -13,3 +13,10 @@ What to record:
 - Which application capabilities depend on which objects
 - Caching, batching, pagination and consistency settings
 - Tests that touch the store and what they need to run
+
+## Cloud data stores (BigQuery, Cloud Storage, S3)
+
+Also record:
+- BigQuery: projects, datasets and tables read or written; every query (with its WHERE/JOIN conditions); load/export jobs, partitioning and clustering if configured; the service account or credentials used (never the key)
+- Cloud Storage / S3: buckets and object paths (`gs://…`, `s3://…`), what is written or read there and in which format, naming conventions, retention/lifecycle configuration if present
+- Per-environment project ids, datasets and buckets

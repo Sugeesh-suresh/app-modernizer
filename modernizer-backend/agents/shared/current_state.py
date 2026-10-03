@@ -55,16 +55,37 @@ _TERMS = re.compile(
     | \bshould\s+(?:be\s+)?(?:replac|upgrad|migrat|mov|refactor|consider|adopt|remov|rewrit|introduc|switch|convert|modern|retir|decommission)\w*
     | \bconsider\s+(?:replacing|moving|adopting|upgrading|migrating|switching|using|introducing|retiring)\b
     | \b(?:java|jdk)\s*(?:8|1\.8|11|17|21)\s*(?:→|->|=>|to)\s*(?:java|jdk)?\s*\d+
-    | \bjava\s*25\b|\bjdk\s*25\b
-    | \b23ai\b
-    | \bsolr\s*9(?:\.\w+)?\b
-    | \bpub/?sub\b
-    | \bgoogle\s+cloud\b|\bGCP\b
     | \beffort\s+(?:estimate|sizing)\b|\bstory\s+points\b|\bt-shirt\s+siz\w*
     | \d[\w.]*\s*(?:→|->|=>)\s*\d
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+
+# Technologies the migration pipelines move TO. Naming one is migration talk —
+# unless the repository already uses it (a service that really reads BigQuery
+# must be able to say "Google Cloud"). `targets_in_repo` decides that from the
+# repository's own dependencies, imports and properties; the scrubber then keeps
+# those terms. name -> (term in prose, sign the repository uses it)
+TARGETS: dict[str, tuple[re.Pattern, re.Pattern]] = {
+    "java 25": (re.compile(r"\bjava\s*25\b|\bjdk\s*25\b", re.I),
+                re.compile(r"(?:java\.version|maven\.compiler\.(?:release|source|target)|release)\s*=\s*25\b", re.I)),
+    "23ai": (re.compile(r"\b23ai\b", re.I), re.compile(r"23ai|ojdbc\d*@23\.", re.I)),
+    "solr 9": (re.compile(r"\bsolr\s*9(?:\.\w+)?\b", re.I), re.compile(r"solr[\w.-]*@9\.", re.I)),
+    "pub/sub": (re.compile(r"\bpub/?sub\b", re.I), re.compile(r"pubsub", re.I)),
+    "google cloud": (re.compile(r"\bgoogle\s+cloud\b|\bGCP\b", re.I),
+                     re.compile(r"com\.google\.cloud|google-cloud|@google-cloud/|googleapis|spring-cloud-gcp|"
+                                r"spring\.cloud\.gcp|com\.google\.api|"
+                                r"\bstacks:.*\b(?:bigquery|gcs|gcp-secret-manager)\b", re.I)),
+}
+
+
+def targets_in_repo(repository_facts: str) -> frozenset[str]:
+    """The target technologies the repository itself uses, from its fingerprint
+    (repo_fingerprint.to_prompt: manifests with versions, imports, properties)
+    and the detected stacks ("stacks: bigquery gcs …" — a stack found only from a
+    gs:// URL in a properties file is still Google Cloud)."""
+    return frozenset(name for name, (_, sign) in TARGETS.items() if sign.search(repository_facts or ""))
+
 
 # Headings that introduce advice even without one of the terms above.
 _HEADING_ONLY = re.compile(
@@ -93,17 +114,19 @@ def _prose(text: str) -> str:
     return _ARTIFACT_PHRASES.sub(" ", _CODE_SPAN.sub(" ", text))
 
 
-def is_migration_language(text: str) -> bool:
-    return bool(_TERMS.search(_prose(text)))
+def is_migration_language(text: str, keep: frozenset = frozenset()) -> bool:
+    prose = _prose(text)
+    return bool(_TERMS.search(prose)) or any(term.search(prose) for name, (term, _) in TARGETS.items()
+                                             if name not in keep)
 
 
-def _heading_is_advice(title: str) -> bool:
-    prose = _prose(title)
-    return bool(_TERMS.search(prose) or _HEADING_ONLY.search(prose))
+def _heading_is_advice(title: str, keep: frozenset = frozenset()) -> bool:
+    return is_migration_language(title, keep) or bool(_HEADING_ONLY.search(_prose(title)))
 
 
-def scrub(markdown: str) -> tuple[str, list[str]]:
-    """(cleaned markdown, removed fragments). Idempotent."""
+def scrub(markdown: str, keep: frozenset = frozenset()) -> tuple[str, list[str]]:
+    """(cleaned markdown, removed fragments). Idempotent. `keep`: target
+    technologies the repository uses (targets_in_repo), which are facts here."""
     if not markdown:
         return markdown, []
     lines = markdown.split("\n")
@@ -133,7 +156,7 @@ def scrub(markdown: str) -> tuple[str, list[str]]:
                 i += 1
                 continue
             skip_level = 0
-            if _heading_is_advice(heading.group(2)):
+            if _heading_is_advice(heading.group(2), keep):
                 skip_level = level
                 removed.append(line.strip())
                 i += 1
@@ -155,13 +178,13 @@ def scrub(markdown: str) -> tuple[str, list[str]]:
                 j += 1
             table = lines[i:j]
             has_header = len(table) > 1 and _TABLE_SEP.match(table[1])
-            if has_header and is_migration_language(table[0]):
+            if has_header and is_migration_language(table[0], keep):
                 removed.append(table[0].strip())
                 i = j
                 continue
             kept = []
             for k, row in enumerate(table):
-                if (has_header and k < 2) or not is_migration_language(row):
+                if (has_header and k < 2) or not is_migration_language(row, keep):
                     kept.append(row)
                 else:
                     removed.append(row.strip())
@@ -181,7 +204,7 @@ def scrub(markdown: str) -> tuple[str, list[str]]:
                    and len(lines[j]) - len(lines[j].lstrip()) > indent):
                 j += 1
             block = lines[i:j]
-            if is_migration_language(" ".join(block)):
+            if is_migration_language(" ".join(block), keep):
                 removed.append(" ".join(s.strip() for s in block))
                 # Nested items belong to the removed one.
                 while (j < len(lines) and _LIST_ITEM.match(lines[j])
@@ -204,10 +227,10 @@ def scrub(markdown: str) -> tuple[str, list[str]]:
                and not _FENCE.match(lines[j]) and not _HTML_COMMENT.match(lines[j])):
             j += 1
         paragraph = lines[i:j]
-        if is_migration_language(" ".join(paragraph)):
+        if is_migration_language(" ".join(paragraph), keep):
             sentences = _SENTENCE.split(" ".join(s.strip() for s in paragraph))
-            kept = [s for s in sentences if not is_migration_language(s)]
-            removed.extend(s for s in sentences if is_migration_language(s))
+            kept = [s for s in sentences if not is_migration_language(s, keep)]
+            removed.extend(s for s in sentences if is_migration_language(s, keep))
             if kept:
                 out.append(" ".join(kept))
         else:

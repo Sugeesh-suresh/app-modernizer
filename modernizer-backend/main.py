@@ -48,7 +48,8 @@ from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11 import preflight as java11_preflight
-from agents.shared import current_state, evidence_pack, migration_inventory, repo_fingerprint, rule_candidates, rules_ledger
+from agents.shared import (config_matrix, current_state, evidence_pack, interfaces, migration_inventory, repo_fingerprint,
+                           rule_candidates, rules_ledger)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -1012,6 +1013,8 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         # stack-discovery documents: evidence packs on disk, and each writer's
         # latest output (so a refine can re-run one writer and keep the other's).
         "evidence_dir": "",
+        "interfaces_json": "",
+        "config_matrix_markdown": "",
         "evidence_count": "",
         "po_brd": "",
         "ea_spec": "",
@@ -1468,11 +1471,12 @@ def _with_reviewer_notes(document: str, feedback: str | None) -> str:
     )
 
 
-def _current_state_only(text: str, where: str) -> str:
+def _current_state_only(text: str, where: str, keep: frozenset = frozenset()) -> str:
     """A discovery section with any migration or advisory language removed and
     the detector's migration-named pattern ids replaced by stack ids — the
-    deterministic backstop to the stack-discovery-re skill's instructions."""
-    cleaned, removed = current_state.scrub(current_state.neutral_ids(text or ""))
+    deterministic backstop to the stack-discovery-re skill's instructions.
+    `keep`: target technologies the repository itself uses (current_state.targets_in_repo)."""
+    cleaned, removed = current_state.scrub(current_state.neutral_ids(text or ""), keep)
     if removed:
         print(f"[discovery] {where}: removed {len(removed)} migration/advisory fragment(s): "
               + " | ".join(r[:80] for r in removed[:5]), flush=True)
@@ -1847,6 +1851,10 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     workspace_dir = state.get("workspace_dir", "")
     stack_info = {s["pattern"]: s for s in json.loads(state.get("companion_recommendations_json", "[]"))}
     labels = {p: s.get("label", "") for p, s in stack_info.items()}
+    # A technology the repository really uses is a fact, not migration talk.
+    keep = current_state.targets_in_repo(
+        (state.get("stack_fingerprint", "") or repo_fingerprint.to_prompt(repo_fingerprint.fingerprint(workspace_dir)))
+        + "\nstacks: " + " ".join(stack_info))
     evidence_dir = Path(state.get("evidence_dir") or tempfile.mkdtemp(prefix="modernizer-evidence-"))
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1866,6 +1874,19 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     evidence_ids = set().union(*(evidence_pack.ids(text) for _, _, text in packs)) if packs else set()
     await _update_state(session_id, {"evidence_dir": str(evidence_dir),
                                      "evidence_count": str(len(evidence_ids))})
+
+    # Interfaces and jobs, from the syntax tree: computed once, kept for refines.
+    if not state.get("interfaces_json"):
+        endpoints_jobs = await asyncio.to_thread(interfaces.scan, workspace_dir)
+        await _update_state(session_id, {"interfaces_json": json.dumps(endpoints_jobs)})
+    else:
+        endpoints_jobs = json.loads(state["interfaces_json"])
+    inventory_md = interfaces.to_markdown(endpoints_jobs)
+    if not state.get("config_matrix_markdown"):
+        config_md = await asyncio.to_thread(lambda: config_matrix.to_markdown(config_matrix.scan(workspace_dir)))
+        await _update_state(session_id, {"config_matrix_markdown": config_md or " "})
+    else:
+        config_md = state["config_matrix_markdown"].strip()
 
     po_brd, ea_spec, ea_tests = state.get("po_brd", ""), state.get("ea_spec", ""), state.get("ea_tests", "")
     ledger = _load_ledger(state)
@@ -1898,21 +1919,25 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
                         content="\n\n### Enterprise Architect agent: writing the Technical Specification\n")
             jobs["spec"] = writer("ea_spec", evidence_pack.EA_SECTIONS,
                                   "## Repository Facts (computed by the pipeline)\n"
-                                  + state.get("stack_inventory_markdown", "")[:60000] + "\n\n",
+                                  + state.get("stack_inventory_markdown", "")[:60000] + "\n\n"
+                                  + (inventory_md[:40000] + "\n\nEvery endpoint, job and listener above must "
+                                     "appear in your Interface Catalog.\n\n" if inventory_md else "")
+                                  + (config_md[:30000] + "\n\nUse the matrix for per-environment behaviour; never "
+                                     "print a value it shows as redacted.\n\n" if config_md else ""),
                                   ea_spec + "\n\n" + ea_tests)
         results = dict(zip(jobs, await asyncio.gather(*jobs.values())))
         if "brd" in results:
-            po_brd = _current_state_only(results["brd"], "BRD (Product Owner)")
+            po_brd = _current_state_only(results["brd"], "BRD (Product Owner)", keep)
         if "spec" in results:
             spec, tests = evidence_pack.split_spec(results["spec"])
-            ea_spec = _current_state_only(spec, "Technical Specification (Enterprise Architect)")
-            ea_tests = _current_state_only(tests, "Test Inventory (Enterprise Architect)")
+            ea_spec = _current_state_only(spec, "Technical Specification (Enterprise Architect)", keep)
+            ea_tests = _current_state_only(tests, "Test Inventory (Enterprise Architect)", keep)
         await _update_state(session_id, {"po_brd": po_brd, "ea_spec": ea_spec, "ea_tests": ea_tests})
 
     # Assembly. The deterministic sections are placed exactly as before: the
     # inventory leads the BRD, the rules catalog and coverage follow it, the
     # dependency graphs lead the specification.
-    inventory = _current_state_only(state.get("stack_inventory_markdown", ""), "inventory")
+    inventory = _current_state_only(state.get("stack_inventory_markdown", ""), "inventory", keep)
     parts = [inventory] if inventory else []
     if packs:
         parts.append(po_brd)
@@ -1921,7 +1946,9 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         parts.append(evidence_pack.check_markdown(evidence_pack.check(po_brd, evidence_ids, rule_ids),
                                                   evidence_pack.check(ea_spec + "\n" + ea_tests, evidence_ids,
                                                                       rule_ids),
-                                                  evidence_ids))
+                                                  evidence_ids,
+                                                  interfaces.uncovered(endpoints_jobs, ea_spec + "\n" + ea_tests)
+                                                  if inventory_md else None))
     else:
         parts.append("> **No stacks were documented.** Either nothing was detected, or every detected stack was "
                      "unchecked at the confirmation step. The inventory above, if present, is the deterministic "
@@ -1937,7 +1964,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
             if section:
                 graphs.append(section.replace("## Dependency Graph & Build Order",
                                               f"## Dependency Graph & Build Order — {label}", 1))
-    tech_spec = "\n\n".join(graphs + ([ea_spec] if ea_spec else []))
+    tech_spec = "\n\n".join(graphs + [md for md in (inventory_md, config_md) if md] + ([ea_spec] if ea_spec else []))
     test_inventory = ea_tests
 
     brd, tech_spec = _with_ingestion_warning(state, brd, tech_spec)
@@ -2164,6 +2191,9 @@ def _rule_languages(stacks: list[dict]) -> set[str]:
             languages.add("Python")
         elif kind == "database" or stack in ("sql", "pl-sql"):
             languages |= {"SQL", "PL/SQL"}
+    if languages:
+        # Template / rule / reference-data files belong to the application, whatever its stacks.
+        languages |= {"JSON", "YAML", "XML", "Properties", "CSV", "MyBatis XML"}
     return languages
 
 

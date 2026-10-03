@@ -80,8 +80,9 @@ def test_pattern_ids_become_stack_ids():
 
 
 def test_stack_labels_and_inventory_name_stacks_not_migrations():
-    for label in stack_detector.STACK_LABELS.values():
-        assert not cs.is_migration_language(label), label
+    # A stack's own name is never scrubbed once that stack has been detected.
+    for stack_id, label in stack_detector.STACK_LABELS.items():
+        assert not cs.is_migration_language(label, cs.targets_in_repo(f"stacks: {stack_id}")), label
     table = stack_detector.to_markdown([{"pattern": "solr", "label": "Apache Solr", "kind": "search",
                                          "evidence": ["a: b"]}])
     assert "`solr`" in table and "migration" not in table.lower()
@@ -93,3 +94,23 @@ def test_discovery_dependency_graph_is_a_build_order():
     section = dependency_graph.to_markdown_section(graph, "java-8-to-25", discovery=True)
     assert section.startswith("## Dependency Graph & Build Order") and "migrat" not in section.lower()
     assert "Migration Groups" in dependency_graph.to_markdown_section(graph, "java-8-to-25")
+
+
+def test_a_target_technology_the_repository_uses_is_kept():
+    """A service that really reads BigQuery must be able to say "Google Cloud"."""
+    facts = "pds-javaflux/pom.xml (maven): com.google.cloud:google-cloud-bigquery, com.ibm.db2:jcc@11.5.8.0"
+    keep = cs.targets_in_repo(facts)
+    assert keep == frozenset({"google cloud"})
+    text = "Items are exported to Google Cloud BigQuery (EV-java-0003). Moving to Java 25 would help."
+    assert cs.scrub(text, keep)[0] == "Items are exported to Google Cloud BigQuery (EV-java-0003)."
+    assert cs.scrub(text)[0] == ""                                   # without the repository's facts: removed
+    assert cs.targets_in_repo("x/pom.xml (maven): org.apache.solr:solr-solrj@9.4.0; properties: java.version=25") \
+        == frozenset({"solr 9", "java 25"})
+    assert cs.targets_in_repo("pom.xml (maven): org.apache.solr:solr-solrj@4.10.4") == frozenset()
+
+
+def test_a_stack_detected_only_from_configuration_keeps_its_name():
+    keep = cs.targets_in_repo("app/application.properties (no manifest)\nstacks: oracle gcs java")
+    assert "google cloud" in keep
+    assert cs.scrub("## Google Cloud Storage\nExports are written to `gs://pds-exports`.", keep)[0].startswith(
+        "## Google Cloud Storage")

@@ -376,3 +376,25 @@ def test_the_catalog_uses_no_raw_html():
                          "sources": [{"path": f"p{i}.py", "start": 1, "end": 2} for i in range(5)]}]}
     md = rl.catalog_markdown(ledger, 10)
     assert "<br>" not in md and "`p0.py:1-2`; `p1.py:1-2`; `p2.py:1-2`; +2 more" in md and "`t1`; `t2`" in md
+
+
+def _raw(statement, cid):
+    return {"statement": statement, "type": "validation", "condition": "", "outcome": "", "basis": "explicit",
+            "confidence": "high", "area": "bcom", "flags": [],
+            "sources": [{"candidate": cid, "path": f"{cid}.java", "start": 1, "end": 2, "symbol": cid}]}
+
+
+def test_rules_that_differ_only_in_a_value_or_brand_are_never_merged(tmp_path):
+    long = ("For {b}, a mattress listing is rejected when the mattress height is above {n} inches and the unit is "
+            "inches and the value is not rounded to the nearest half inch")
+    ledger = {"candidates": {}, "raw_rules": [
+        _raw(long.format(b="BCOM", n=20), "C1"), _raw(long.format(b="BCOM", n=22), "C2"),      # value differs
+        _raw(long.format(b="MCOM", n=20), "C3"),                                                 # brand differs
+        _raw(long.format(b="BCOM", n=20) + ".", "C4"),                                           # same rule
+        _raw("Color 'NAVY' is normalised to 'Blue' for every product in the catalog feed today", "C5"),
+        _raw("Color 'IVORY' is normalised to 'Blue' for every product in the catalog feed today", "C6"),
+    ]}
+    rl.finalize(ledger, str(tmp_path), [])
+    assert len(ledger["rules"]) == 5
+    merged = next(r for r in ledger["rules"] if len(r["sources"]) == 2)
+    assert {s["candidate"] for s in merged["sources"]} == {"C1", "C4"}
