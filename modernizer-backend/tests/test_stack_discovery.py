@@ -218,7 +218,8 @@ class TestRunnerWiring:
     def test_stack_discovery_has_a_mapper_and_one_discovery_agent(self):
         from agents import PATTERN_RUNNERS
 
-        assert set(PATTERN_RUNNERS["stack-discovery"]) == {"mapper", "discover"}
+        assert set(PATTERN_RUNNERS["stack-discovery"]) == {
+            "mapper", "discover", "discover_unit", "discover_merge", "discover_synthesize", "rules"}
 
     def test_dedicated_runners_exist(self):
         from agents import PATTERN_RUNNERS

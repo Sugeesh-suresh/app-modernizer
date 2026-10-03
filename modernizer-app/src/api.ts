@@ -140,6 +140,11 @@ export const brdDownloadUrl = (sessionId: string) =>
 export const reverseEngineeringDownloadUrl = (sessionId: string) =>
   `${BASE}/api/sessions/${sessionId}/download/reverse-engineering`;
 
+/** stack-discovery: the complete business-rules ledger (every rule and every
+ * candidate with its classification) as CSV — the document lists up to a limit. */
+export const businessRulesDownloadUrl = (sessionId: string) =>
+  `${BASE}/api/sessions/${sessionId}/download/business-rules`;
+
 export const planDownloadUrl = (sessionId: string) =>
   `${BASE}/api/sessions/${sessionId}/download/plan`;
 

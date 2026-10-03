@@ -27,3 +27,11 @@ def no_skill_learning(monkeypatch):
     from agents.shared import callbacks, learned_fixes
     monkeypatch.setattr(callbacks, "_LEARNING_ENABLED", False)
     monkeypatch.setattr(learned_fixes, "_LEARNING_ENABLED", False)
+
+
+@pytest.fixture(autouse=True)
+def no_rules_extraction(monkeypatch):
+    """Rules extraction runs its own agents outside _run_step, which most
+    workflow tests stub; the tests of that mechanism switch it on."""
+    from agents import config
+    monkeypatch.setattr(config, "RULES_EXTRACTION", "off")

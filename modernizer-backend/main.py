@@ -48,7 +48,7 @@ from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11 import preflight as java11_preflight
-from agents.shared import current_state, migration_inventory, repo_fingerprint
+from agents.shared import current_state, migration_inventory, repo_fingerprint, rule_candidates, rules_ledger
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -1005,6 +1005,10 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         # they must exist before it runs; `stack_inventory` is its raw output and
         # `stack_inventory_markdown` the reconciled section that opens the document.
         "stack_fingerprint": "",
+        # stack-discovery business-rules ledger (see _run_rules_extraction).
+        "rules_markdown": "",
+        "rules_ledger_path": "",
+        "rules_coverage_json": "",
         "stack_prescan": "",
         "stack_known": "",
         "stack_inventory": "",
@@ -1409,7 +1413,11 @@ def _clip_findings(text: str, limit: int, label: str) -> str:
 
 
 def _batch_by_size(items: list[str], budget: int) -> list[list[str]]:
-    """Consecutive batches whose joined size stays within *budget*."""
+    """Consecutive batches whose joined size stays within *budget*.
+
+    Used by merge loops, which must shrink the list every round: when no two
+    items fit together (each is over half the budget), items are paired anyway —
+    a merge request somewhat over budget beats a loop that never ends."""
     batches: list[list[str]] = []
     size = 0
     for item in items:
@@ -1419,6 +1427,8 @@ def _batch_by_size(items: list[str], budget: int) -> list[list[str]]:
         else:
             batches.append([item])
             size = len(item)
+    if len(items) > 1 and all(len(b) == 1 for b in batches):
+        batches = [items[i:i + 2] for i in range(0, len(items), 2)]
     return batches
 
 
@@ -1719,9 +1729,20 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
             await _run_step(session_id, step, runner_pattern, message=message, sse_event_type="re-stream")
         elif discovery:
             # Every other stack, known or not: the migration-neutral discovery
-            # agent (skills/stack-discovery-re) with the stack's checklist.
-            await _run_step(session_id, "discover", _STACK_DISCOVERY, message=message,
-                            sse_event_type="re-stream")
+            # agent (skills/stack-discovery-re) with the stack's checklist — in
+            # units when the stack is too large for one run to read.
+            info = stack_info.get(pattern, {"pattern": pattern})
+            files = _stack_files(workspace_dir, info)
+            if files and len(files) > config.DISCOVERY_CHUNK_MIN_FILES:
+                previous = (orig_state.get(f"brd_{pattern}", "") + "\n\n"
+                            + orig_state.get(f"technical_spec_{pattern}", "")) if feedback else ""
+                await _run_chunked_discovery(
+                    session_id, info, _label(pattern, True, labels),
+                    info.get("reference") or stack_detector.reference_for(pattern, info.get("kind", "")),
+                    files, feedback, previous)
+            else:
+                await _run_step(session_id, "discover", _STACK_DISCOVERY, message=message,
+                                sse_event_type="re-stream")
         elif pattern == _JAVA_8_TO_11 and config.JAVA11_ANALYSIS == "agent":
             await _run_java11_re(session_id, message, refine=bool(feedback))
         elif pattern == _JAVA_8_TO_11:
@@ -1783,6 +1804,9 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
         inventory = _current_state_only(orig_state.get("stack_inventory_markdown", ""), "inventory")
         if inventory:
             brd = f"{inventory}\n\n---\n\n{brd}" if brd else inventory
+        rules_markdown = orig_state.get("rules_markdown", "")
+        if rules_markdown and bundle:
+            brd = f"{brd}\n\n---\n\n{rules_markdown}"
         if not bundle:
             brd = (brd + "\n\n") if brd else ""
             brd += (
@@ -1973,6 +1997,261 @@ async def _run_bundle_code_generation(session_id: str, bundle: list[str]) -> Non
         await _push(session_id, "skill-curator-ready", content=combined_curator)
 
 
+# ---------------------------------------------------------------------------
+# Stack discovery on large repositories: units, and the business-rules ledger
+# ---------------------------------------------------------------------------
+
+async def _run_isolated(step_key: str, pattern: str, state: dict, message: str, output_key: str) -> str:
+    """Run one agent in its own short-lived session and return its output.
+
+    Unit and rule-batch runs execute concurrently; each needs its own state
+    (its scope, its batch) and must not see the others', so none of them runs
+    in the workflow's session. The session is deleted afterwards."""
+    runner = PATTERN_RUNNERS[pattern][step_key]
+    session = await session_service.create_session(app_name=APP_NAME, user_id=USER_ID, state=state)
+    try:
+        async for _ in runner.run_async(
+            session_id=session.id, user_id=USER_ID,
+            new_message=types.Content(role="user", parts=[types.Part(text=message)]),
+        ):
+            pass
+        done = await session_service.get_session(app_name=APP_NAME, user_id=USER_ID, session_id=session.id)
+        return str(((done.state if done else {}) or {}).get(output_key, "") or "")
+    finally:
+        try:
+            await session_service.delete_session(app_name=APP_NAME, user_id=USER_ID, session_id=session.id)
+        except Exception:
+            pass
+
+
+def _confirmed_stacks(state: dict) -> list[dict]:
+    selected = set(json.loads(state.get("companion_patterns_json", "[]")))
+    return [s for s in json.loads(state.get("companion_recommendations_json", "[]")) if s.get("pattern") in selected]
+
+
+def _rule_languages(stacks: list[dict]) -> set[str]:
+    """Languages whose rule candidates belong to a confirmed stack. Code of a stack
+    the reviewer unchecked is not analysed (and the coverage report says so)."""
+    languages: set[str] = set()
+    for s in stacks:
+        stack, kind = s.get("pattern", ""), s.get("kind", "")
+        if stack == "java":
+            languages |= {"Java", "Drools"}
+        elif stack == "jsp":
+            languages.add("JSP")
+        elif kind in ("frontend", "service") or stack in ("javascript", "typescript"):
+            languages |= {"JavaScript", "TypeScript"}
+        elif stack == "python":
+            languages.add("Python")
+        elif kind == "database" or stack in ("sql", "pl-sql"):
+            languages |= {"SQL", "PL/SQL"}
+    return languages
+
+
+async def _run_rules_extraction(session_id: str) -> None:
+    """The business-rules ledger: parse every rule candidate in the confirmed
+    stacks' code, classify each in batches (several at once), check every answer
+    against the code, and store the catalog, the coverage report and the ledger.
+    Stored once; "Refine with AI" re-uses it rather than paying for it again."""
+    if config.RULES_EXTRACTION != "on":
+        await _update_state(session_id, {"rules_markdown": "", "rules_ledger_path": ""})
+        return
+    state = await _get_state(session_id)
+    workspace_dir = state.get("workspace_dir", "")
+    languages = _rule_languages(_confirmed_stacks(state))
+    scanned = await asyncio.to_thread(rule_candidates.scan, workspace_dir, config.RULES_CANDIDATE_MAX_LINES)
+    excluded = [c for c in scanned.candidates if c.language not in languages]
+    candidates = [c for c in scanned.candidates if c.language in languages]
+    ledger = rules_ledger.new_ledger(candidates)
+    pending = [c for c in candidates if c.status == "pending"]
+    batches = rules_ledger.batches(pending, config.RULES_BATCH_MAX_CANDIDATES, config.RULES_BATCH_MAX_CHARS)
+    await _push(session_id, "re-stream", content=(
+        f"\n**Business rules:** {len(candidates):,} candidates found by parsing "
+        f"({len(candidates) - len(pending):,} classified as technical without the model); "
+        f"classifying {len(pending):,} in {len(batches):,} batches, {config.RE_CONCURRENCY} at a time.\n"
+    ))
+    gate = asyncio.Semaphore(config.RE_CONCURRENCY)
+    finished = 0
+
+    async def classify(batch: list) -> None:
+        nonlocal finished
+        async with gate:
+            missing, reason = batch, "the agent's answer did not cover it (asked twice)"
+            for _attempt in range(2):
+                try:
+                    raw = await _run_isolated(
+                        "rules", _STACK_DISCOVERY,
+                        {"workspace_dir": workspace_dir, "rule_batch": rules_ledger.render_batch(missing)},
+                        "Classify every candidate and extract its business rules.", "rule_batch_result",
+                    )
+                    missing = rules_ledger.apply_answer(missing, rules_ledger.parse_answer(raw), ledger)
+                except Exception as exc:
+                    traceback.print_exc()
+                    reason = f"the agent run failed: {_describe_error(exc)}"
+                if not missing:
+                    break
+            rules_ledger.mark_unclassified(missing, ledger, reason)
+            finished += 1
+            await _push(session_id, "progress", message=f"Business rules: batch {finished}/{len(batches)}",
+                        progress=int(5 + 80 * finished / max(len(batches), 1)))
+
+    await asyncio.gather(*(classify(b) for b in batches))
+    rules_ledger.finalize(ledger, workspace_dir, scanned.test_files)
+    cov = rules_ledger.coverage(ledger, {
+        "languages": scanned.files_by_language, "unparsed": scanned.unparsed,
+        "parse_errors": scanned.parse_errors, "excluded": len(excluded),
+        "parser_error": scanned.tree_sitter_error,
+    })
+    markdown = (rules_ledger.catalog_markdown(ledger, config.RULES_CATALOG_MAX_IN_DOCUMENT)
+                + "\n\n" + rules_ledger.coverage_markdown(cov))
+    print(f"[rules] {cov['candidates']} candidates, {cov['rules']} rules, statuses {cov['statuses']}", flush=True)
+    # The ledger lists every candidate — tens of MB on a large repository — so it
+    # lives in a file rather than session state, which is copied on every read.
+    # Outside the workspace, which is deleted when the review is confirmed.
+    ledger.pop("raw_rules", None)
+    ledger_path = Path(tempfile.mkdtemp(prefix="modernizer-rules-")) / "ledger.json"
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    await _update_state(session_id, {"rules_ledger_path": str(ledger_path), "rules_markdown": markdown,
+                                     "rules_coverage_json": json.dumps(cov)})
+
+
+#: Source files that belong to a stack, for deciding whether to document it in units.
+_STACK_SUFFIXES = {
+    "java": {".java"},
+    "jsp": {".jsp", ".jspx", ".jspf", ".tag", ".tagx"},
+    "nodejs": {".js", ".mjs", ".cjs", ".ts"},
+}
+_FRONTEND_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".vue", ".hbs", ".handlebars", ".mustache", ".html", ".htm"}
+
+
+def _stack_files(workspace_dir: str, stack: dict) -> list[str] | None:
+    """The stack's own source files, or None for a stack whose artifacts are not
+    a body of source (a database, broker, server) — those are documented in one run."""
+    stack_id, kind = stack.get("pattern", ""), stack.get("kind", "")
+    suffixes = _STACK_SUFFIXES.get(stack_id)
+    if suffixes is None and kind == "frontend":
+        suffixes = _FRONTEND_SUFFIXES
+    if suffixes is None and kind == "language":
+        suffixes = {ext for ext, lang in repo_fingerprint.LANGUAGES.items()
+                    if stack_detector.slug(stack_detector._LANGUAGE_FAMILY.get(lang, lang)) == stack_id}
+    if not suffixes:
+        return None
+    root = Path(workspace_dir)
+    if not root.is_dir():
+        return None
+    files = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in suffixes:
+            continue
+        rel = path.relative_to(root).as_posix()
+        parts = set(Path(rel).parts)
+        if (dependency_graph.EXCLUDED_DIRS & parts or "node_modules" in parts or path.name.endswith(".min.js")
+                or (kind == "frontend" and _re.search(r"(?:^|/)(?:lib|libs|vendor|vendors|third[-_]?party)/", rel))):
+            continue
+        files.append(rel)
+    return files
+
+
+def _file_units(files: list[str], max_files: int) -> list[list[str]]:
+    """Files packed into units of at most `max_files`, keeping a directory's
+    files together where they fit. Every file is in exactly one unit."""
+    by_dir: dict[str, list[str]] = {}
+    for f in files:
+        by_dir.setdefault(str(PurePosixPath(f).parent), []).append(f)
+    units: list[list[str]] = []
+    for directory in sorted(by_dir):
+        group = by_dir[directory]
+        for i in range(0, len(group), max_files):
+            part = group[i:i + max_files]
+            if units and len(units[-1]) + len(part) <= max_files:
+                units[-1].extend(part)
+            else:
+                units.append(list(part))
+    return units
+
+
+def _unit_label(files: list[str]) -> str:
+    dirs = sorted({str(PurePosixPath(f).parent) for f in files})
+    common = os.path.commonpath(dirs) if dirs else ""
+    return f"{common or '(root)'} ({len(files)} files)"
+
+
+async def _run_chunked_discovery(session_id: str, stack: dict, label: str, reference: str, files: list[str],
+                                 feedback: str | None = None, previous: str = "") -> None:
+    """One stack documented unit by unit: every file of the stack is read by
+    exactly one unit run (several at once), the findings are merged in bounded
+    batches if needed, and the four-section document is written from them into
+    state["analysis"] — where the single-run agent puts it. A refine re-runs only
+    the last step, from the stored findings."""
+    state = await _get_state(session_id)
+    workspace_dir = state.get("workspace_dir", "")
+    stack_id = stack.get("pattern", "")
+    key = f"discovery_findings_{stack_id}"
+    budget = max(config.RE_SYNTHESIS_MAX_CHARS, 2)
+    per_unit = min(config.RE_FINDINGS_MAX_CHARS, budget // 2)
+    findings = json.loads(state.get(key) or "[]") if feedback else []
+    if not findings:
+        units = _file_units(files, config.DISCOVERY_UNIT_MAX_FILES)
+        await _push(session_id, "re-stream", content=(
+            f"\n**{label}:** {len(files):,} files, documented in {len(units)} units of at most "
+            f"{config.DISCOVERY_UNIT_MAX_FILES} files, {config.RE_CONCURRENCY} at a time.\n"))
+        gate = asyncio.Semaphore(config.RE_CONCURRENCY)
+        finished = 0
+
+        async def document(index: int, unit: list[str]) -> str:
+            nonlocal finished
+            title = _unit_label(unit)
+            async with gate:
+                scope = (f"## Stack\n{label} (id `{stack_id}`, kind {stack.get('kind') or 'unspecified'})\n\n"
+                         f"## Checklist\n`references/{reference}` of the `stack-discovery-re` skill\n\n"
+                         f"## Unit {index}/{len(units)}: {title}\nRead every one of these {len(unit)} files:\n"
+                         + "\n".join(f"- `{f}`" for f in unit))
+                try:
+                    text = await _run_isolated("discover_unit", _STACK_DISCOVERY,
+                                               {"workspace_dir": workspace_dir, "unit_scope": scope},
+                                               "Document this unit.", "unit_findings")
+                    reason = "the run returned no findings"
+                except Exception as exc:
+                    traceback.print_exc()
+                    text, reason = "", _describe_error(exc)
+                finished += 1
+                await _push(session_id, "progress", message=f"{label}: unit {finished}/{len(units)}",
+                            progress=int(5 + 80 * finished / max(len(units), 1)))
+            if not text.strip():
+                text = (f"## Unit {index}: {title}\n\n> ⚠ **Not analysed** — {reason}. Files: "
+                        + ", ".join(f"`{f}`" for f in unit[:20]) + (" …" if len(unit) > 20 else ""))
+                return text
+            return _clip_findings(text, per_unit, f"{label} unit {index} ({title})")
+
+        findings = list(await asyncio.gather(*(document(i, u) for i, u in enumerate(units, 1))))
+        if units and all("**Not analysed**" in f for f in findings):
+            raise RuntimeError(f"Documenting {label} failed for every unit. Last: {findings[-1][:400]}")
+        await _update_state(session_id, {key: json.dumps(findings)})
+
+    while sum(len(f) for f in findings) > budget and len(findings) > 1:
+        batches = _batch_by_size(findings, budget)
+
+        async def merge(batch: list[str]) -> str:
+            if len(batch) == 1:
+                return batch[0]
+            text = await _run_isolated("discover_merge", _STACK_DISCOVERY,
+                                       {"findings_batch": "\n\n---\n\n".join(batch)},
+                                       "Merge these findings.", "merged_findings")
+            return _clip_findings(text or "\n\n".join(batch)[: budget // 2], budget // 2, f"{label} merged findings")
+        findings = list(await asyncio.gather(*(merge(b) for b in batches)))
+
+    request = (f"## Stack\n{label} (id `{stack_id}`, kind {stack.get('kind') or 'unspecified'})\n\n"
+               f"## Checklist\n`references/{reference}`\n\n")
+    if feedback:
+        request += (f"## Previous Document (revise it)\n{previous[:16000]}\n\n"
+                    f"## Reviewer Feedback\n{feedback}\n\n")
+    request += "## Unit Findings\n" + "\n\n---\n\n".join(findings)
+    analysis = await _run_isolated("discover_synthesize", _STACK_DISCOVERY,
+                                   {"workspace_dir": workspace_dir, "synthesis_request": request},
+                                   "Write the document.", "analysis")
+    await _update_state(session_id, {"analysis": analysis})
+
+
 async def _run_stack_discovery_workflow(session_id: str) -> None:
     """The stack-discovery pipeline: map -> confirm -> reverse-engineer -> stop.
 
@@ -2003,6 +2282,8 @@ async def _run_stack_discovery_workflow(session_id: str) -> None:
     bundle = _bundle_for(state)
 
     await _push(session_id, "step-change", step="reverse-engineering")
+    if bundle:
+        await _run_rules_extraction(session_id)
     await _run_bundle_re(session_id, bundle)
 
     await _push(session_id, "step-change", step="brd-review")
@@ -2453,6 +2734,24 @@ async def download_brd(session_id: str):
         content=brd,
         media_type="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="brd-{session_id[:8]}.md"'},
+    )
+
+
+@app.get("/api/sessions/{session_id}/download/business-rules")
+async def download_business_rules(session_id: str):
+    """The complete business-rules ledger as CSV: every rule (with its sources,
+    tests and flags) and every candidate with its classification — including the
+    ones the document's catalog does not list."""
+    state = await _get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    path = Path(state.get("rules_ledger_path", "") or "/nonexistent")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="No business-rules ledger for this run.")
+    return Response(
+        content=rules_ledger.to_csv(json.loads(path.read_text(encoding="utf-8"))),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="business-rules-{session_id[:8]}.csv"'},
     )
 
 

@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { brdDownloadUrl, uploadContextFiles } from '../api';
+import { brdDownloadUrl, businessRulesDownloadUrl, uploadContextFiles } from '../api';
 
 // ── Plain-text diagram renderer ──────────────────────────────────────────────
 // Diagrams (class trees, business flows, the dependency graph) arrive as fenced
@@ -242,6 +242,16 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
                 <Download size={12} />
                 Download
               </a>
+              {reOnly && brd.includes('## Business Rules Catalog') && (
+                <a
+                  href={businessRulesDownloadUrl(sessionId)}
+                  download
+                  className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 bg-slate-900/5 hover:bg-slate-900/10 border border-slate-900/10 rounded-lg px-2.5 py-1 transition-colors"
+                >
+                  <Download size={12} />
+                  Business rules (CSV)
+                </a>
+              )}
             </div>
           </div>
           {brdEditMode ? (

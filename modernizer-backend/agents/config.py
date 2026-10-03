@@ -122,6 +122,28 @@ RE_FINDINGS_MAX_CHARS: int = _int("RE_FINDINGS_MAX_CHARS", 20_000)
 # Above it, findings are first merged in batches that each fit.
 RE_SYNTHESIS_MAX_CHARS: int = _int("RE_SYNTHESIS_MAX_CHARS", 400_000)
 
+# ── Stack discovery on large repositories ─────────────────────────────────────
+# Independent agent runs (units, rule batches) in flight at once. The LLM pacer
+# (LLM_MAX_TPM / LLM_MAX_RPM) still applies across all of them.
+RE_CONCURRENCY: int = max(1, _int("RE_CONCURRENCY", 4))
+
+# A stack whose own source files exceed this is documented in units instead of
+# one agent run: each unit is read in full, then the findings are combined.
+DISCOVERY_CHUNK_MIN_FILES: int = _int("DISCOVERY_CHUNK_MIN_FILES", 150)
+# Files per unit — small enough that one run reads every file it is given.
+DISCOVERY_UNIT_MAX_FILES: int = max(1, _int("DISCOVERY_UNIT_MAX_FILES", 40))
+
+# Business-rules extraction (agents/shared/rule_candidates.py + rules_ledger.py):
+# `on` parses every rule candidate in the confirmed stacks' code and classifies
+# each one, producing the rules catalog, the coverage report and the CSV ledger.
+RULES_EXTRACTION: str = (os.getenv("RULES_EXTRACTION", "on") or "on").strip().lower()
+RULES_BATCH_MAX_CANDIDATES: int = max(1, _int("RULES_BATCH_MAX_CANDIDATES", 40))
+RULES_BATCH_MAX_CHARS: int = max(2_000, _int("RULES_BATCH_MAX_CHARS", 60_000))
+# Lines of one candidate shown to the model; longer ones are cut and counted.
+RULES_CANDIDATE_MAX_LINES: int = max(10, _int("RULES_CANDIDATE_MAX_LINES", 250))
+# Rules listed in the document itself; the CSV download always has all of them.
+RULES_CATALOG_MAX_IN_DOCUMENT: int = max(1, _int("RULES_CATALOG_MAX_IN_DOCUMENT", 2_000))
+
 # Matches one search_files call returns before it paginates. The total is always
 # reported, so a capped page never reads as the whole answer.
 SEARCH_MAX_RESULTS: int = _int("SEARCH_MAX_RESULTS", 200)

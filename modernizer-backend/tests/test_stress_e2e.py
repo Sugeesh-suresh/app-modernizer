@@ -69,6 +69,8 @@ class Scripted(BaseLlm):
     calls: list = []
     plan_files: list = []
     stages: list = []
+    rule_batches: list = []
+    units: list = []
 
     def _reply(self, text=None, call=None):
         part = types.Part(text=text) if text is not None else types.Part(function_call=types.FunctionCall(
@@ -90,6 +92,21 @@ class Scripted(BaseLlm):
             yield self._reply(_six_sections(self.plan_files, self.stages))
         elif skill in ("dependency-mapper",):
             yield self._reply("Inventory.\n```json\n{\"confirmed\": [], \"added\": [], \"rejected\": []}\n```")
+        elif "running the `business-rules-extract` skill" in system:
+            # Answer every candidate in the batch, citing each one's first line.
+            found = re.findall(r"### (C\d{5}) .*?\nFile: `[^`]+` lines (\d+)-", system)
+            self.rule_batches.append([cid for cid, _ in found])
+            results = [{"candidate": cid, "rules": [{"statement": f"Rule found in {cid}.", "type": "validation",
+                                                     "lines": start, "basis": "explicit"}]} for cid, start in found]
+            yield self._reply("```json\n" + json.dumps({"results": results}) + "\n```")
+        elif skill == "stack-discovery-unit":
+            listed = re.findall(r"- `([^`]+)`", system)
+            self.units.append(listed)
+            yield self._reply("## Unit\n### Components\n" + "\n".join(f"- `{f}`: component" for f in listed))
+        elif "Unit Findings below are your only evidence" in system:
+            yield self._reply(DISCOVERY_DOC)
+        elif system.startswith("Merge the Unit Findings") or "Merge the Unit Findings below" in system:
+            yield self._reply("## Units merged\n" + system[-2000:])
         elif skill == "stack-discovery-re":
             yield self._reply(DISCOVERY_DOC)
         elif skill == "jsp-re":
@@ -189,6 +206,7 @@ def _fixture(pattern: str) -> dict[str, str]:
 def scripted(monkeypatch):
     model = Scripted(model="scripted")
     model.calls, model.plan_files, model.stages = [], [], []
+    model.rule_batches, model.units = [], []
     seen = set()
 
     def walk(agent):
@@ -546,3 +564,32 @@ def test_stack_discovery_documents_each_stack_the_repository_contains(scripted, 
                     "## Backbone.js front end", "## Java application"):
         assert heading in brd, heading
     assert brd.index("## JSP / Servlet web tier") < brd.index("## Backbone.js front end") < brd.index("## Java application")
+
+
+
+def test_large_repository_discovery_with_the_business_rules_ledger(scripted, tmp_path, monkeypatch):
+    """Rules extraction and unit-by-unit documentation through the real agents
+    and runners: every candidate is classified, every Java file is read by
+    exactly one unit, and the document carries the catalog and the coverage."""
+    monkeypatch.setattr(config, "RULES_EXTRACTION", "on")
+    monkeypatch.setattr(config, "RULES_BATCH_MAX_CANDIDATES", 2)
+    monkeypatch.setattr(config, "DISCOVERY_CHUNK_MIN_FILES", 3)
+    monkeypatch.setattr(config, "DISCOVERY_UNIT_MAX_FILES", 2)
+    java = {f"src/main/java/com/acme/m{i % 2}/Svc{i}.java":
+            f"package com.acme.m{i % 2};\npublic class Svc{i} {{\n  int fee(int a) {{\n    if (a > {i}) return 1;\n"
+            f"    return 0;\n  }}\n}}\n" for i in range(5)}
+    events, state = _run(tmp_path, "stack-discovery", stacks=["java"], extra=java)
+
+    assert not [e for e in events if e["type"] == "error"], events
+    ledger = json.loads(Path(state["rules_ledger_path"]).read_text())
+    classified = [e for e in ledger["candidates"].values() if e["status"] != "auto-technical"]
+    assert classified and all(e["status"] == "rule" for e in classified)
+    assert all(len(b) <= 2 for b in scripted.rule_batches)
+    assert sorted(cid for b in scripted.rule_batches for cid in b) == sorted(e["id"] for e in classified)
+    java_files = sorted(f for f in {**_fixture("stack-discovery"), **java} if f.endswith(".java"))
+    assert sorted(f for u in scripted.units for f in u) == java_files          # each file read once
+    assert all(len(u) <= 2 for u in scripted.units)
+    brd = state["brd"]
+    assert "## Business Rules Catalog" in brd and "## Business Rules Coverage" in brd
+    assert brd.index("## Java application") < brd.index("## Business Rules Catalog")
+    assert "Rule found in" in brd

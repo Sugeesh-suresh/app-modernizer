@@ -121,6 +121,13 @@ For `stack-discovery`, the stacks come from the repository itself, in two passes
 
 Every confirmed stack is then documented by one discovery agent (`skills/stack-discovery-re`). Each request names the stack, the evidence that identified it, and its checklist: `java.md`, `jsp.md`, `spa-frontend.md`, `oracle.md`, `datastore.md`, `solr.md`, `tibco-ems.md`, `messaging.md`, or `general.md` for anything else. WildFly keeps `wildfly-re`. The document opens with the stack table and the **Repository Fingerprint** (languages, manifests with their declared dependencies, imported libraries, script includes), followed by one section per stack in the BRD, the Technical Specification and the Test Inventory.
 
+**Large repositories and the business-rules ledger.** Two mechanisms keep discovery exhaustive where one agent run could only sample:
+
+- **Units.** A stack with more than `DISCOVERY_CHUNK_MIN_FILES` (150) of its own source files (Java, JSP, front-end, or a generic language stack) is documented in units of at most `DISCOVERY_UNIT_MAX_FILES` (40) files, directories kept together. Each unit run (`skills/stack-discovery-unit`) is given its exact file list and reads every file, noting each one as it goes; `RE_CONCURRENCY` units run at once, each in its own short-lived session. Findings too large for one request are merged in bounded batches (every round shrinks the list), and `discover_synthesize` writes the stack's four sections from them. "Refine with AI" re-writes from the stored findings without re-reading the units. Stacks whose artifacts are not a body of source (databases, brokers, servers) stay single-run.
+- **Business-rules ledger** (`RULES_EXTRACTION=on`). `shared/rule_candidates.py` parses the confirmed stacks' code — Java, JavaScript and TypeScript with **tree-sitter**, Python with `ast`, SQL/PL-SQL, JSP and Drools with statement patterns — and lists every place a rule can live: methods with decisions (conditions, switch cases, comparisons, thrown exceptions), validation annotations, enums, literal constants, stored routines, CHECK constraints, conditional view logic and rules-engine rules. Accessors, `equals`/`hashCode`/`toString` and methods whose only decisions are null checks are classified technical without the model. The rest go to `rule_extractor` in batches (`RULES_BATCH_MAX_CANDIDATES` / `RULES_BATCH_MAX_CHARS`), each batch carrying the exact numbered source of its candidates, so the model reads nothing it was not given and makes one call per batch. `shared/rules_ledger.py` checks every answer in code: answers about candidates not in the batch are ignored, a candidate left out is retried once and then marked *unclassified* with the reason, cited lines outside the candidate are clamped and flagged, identifiers a rule names that are not in the cited code are flagged, duplicate rules found in several places are merged, and tests are attached by the class or file they name. The BRD gets a **Business Rules Catalog** (by functional area: ID, rule, type, condition → outcome, source, tests, explicit/inferred) and a **Business Rules Coverage** report (candidates found, rules / technical / unclassified per kind, files and parser per language, languages with no parser), and the review screen offers the complete ledger as CSV.
+
+Measured on a synthetic repository of 4,000 Java files and 1.49M lines: fingerprint and stack detection 5.5 s, candidate parsing 11.6 s, 150,410 candidates of which 47,733 were classified technical without the model; the remaining 102,677 form 2,567 batches carrying ~9.5M tokens of code, and the Java narrative splits into 140 units. Model time and cost are dominated by those batches and units and scale with `RE_CONCURRENCY` and your quota. Rules held in database rows, external configuration or other services are outside what parsing the repository can find, and the coverage report says so.
+
 ---
 
 ## Architecture
@@ -553,6 +560,14 @@ app-modernizer/
 | `RE_UNIT_MAX_FILES` | No | `300` | Java 8 → 11: files per reverse-engineering unit, each analysed in its own run. `0` = one run over the whole repository |
 | `RE_FINDINGS_MAX_CHARS` | No | `20000` | Characters of findings kept per unit; a cut is stated in the document |
 | `RE_SYNTHESIS_MAX_CHARS` | No | `400000` | Characters of findings per combining request; above it, findings are merged in batches first |
+| `RE_CONCURRENCY` | No | `4` | Stack discovery: unit and rule-batch agent runs in flight at once |
+| `DISCOVERY_CHUNK_MIN_FILES` | No | `150` | Stack discovery: a stack with more of its own source files is documented in units |
+| `DISCOVERY_UNIT_MAX_FILES` | No | `40` | Stack discovery: files per unit, each unit read in full by its own run |
+| `RULES_EXTRACTION` | No | `on` | Stack discovery: business-rules ledger (catalog, coverage report, CSV); `off` skips it |
+| `RULES_BATCH_MAX_CANDIDATES` | No | `40` | Rule candidates per extraction call |
+| `RULES_BATCH_MAX_CHARS` | No | `60000` | Characters of candidate source per extraction call |
+| `RULES_CANDIDATE_MAX_LINES` | No | `250` | Lines of one candidate shown to the model; longer ones are cut and counted in the coverage report |
+| `RULES_CATALOG_MAX_IN_DOCUMENT` | No | `2000` | Rules listed in the document; the CSV always has all of them |
 | `SEARCH_MAX_RESULTS` | No | `200` | Matches per `search_files` page (the total is always reported) |
 | `SEARCH_MAX_FILE_BYTES` | No | `2000000` | Files larger than this are skipped by `search_files`, and counted as skipped |
 | `COMMAND_OUTPUT_MAX_CHARS` | No | `40000` | Characters of build output returned (head + tail) |

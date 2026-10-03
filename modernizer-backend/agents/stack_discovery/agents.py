@@ -131,3 +131,84 @@ discovery_agent = LlmAgent(
     output_key="analysis",
     include_contents="none",
 )
+
+
+# ── Large repositories ────────────────────────────────────────────────────────
+# Each of these runs in its own short-lived session (main._run_isolated), so many
+# can run at once without sharing state; their inputs arrive as session state.
+
+# One unit (a bounded list of files) of one stack -> Unit Findings.
+discover_unit_agent = LlmAgent(
+    name="discover_unit",
+    model=_MODEL,
+    description="Reads every file of one unit of one stack and writes cited Unit Findings.",
+    instruction=(
+        "Load and execute the `stack-discovery-unit` skill for the unit below, using read_file, "
+        "search_files and list_files.\n\n{unit_scope}"
+    ),
+    tools=[
+        _skill("stack-discovery-unit"),
+        FunctionTool(fs_tools.list_files),
+        FunctionTool(fs_tools.search_files),
+        FunctionTool(fs_tools.read_file),
+    ],
+    output_key="unit_findings",
+    include_contents="none",
+)
+
+# Several units' findings -> one, when all of them do not fit one request.
+discover_merge_agent = LlmAgent(
+    name="discover_merge",
+    model=_MODEL,
+    description="Merges several units' findings into one findings document without losing facts.",
+    instruction=(
+        "Merge the Unit Findings below into ONE findings document with the same sections, headed "
+        "`## Units <first id>-<last id>`. Keep every component, entry point, data item, integration and "
+        "test with its citation; merge only exact duplicates. Keep every limitation. Add nothing the "
+        "findings do not say, and no recommendations.\n\n## Findings to merge\n{findings_batch}"
+    ),
+    output_key="merged_findings",
+    include_contents="none",
+)
+
+# Every unit's findings -> the stack's four-section document.
+discover_synthesis_agent = LlmAgent(
+    name="discover_synthesize",
+    model=_MODEL,
+    description="Writes one stack's Analysis/BRD/Technical Specification/Test Inventory from its units' findings.",
+    instruction=(
+        "Load the `stack-discovery-re` skill and write its four-section document for the stack below, "
+        "following its Required output exactly (the five SECTION markers, in order) and its rules: describe "
+        "only what exists, no migration or change suggestions. The skill's discovery procedure has already "
+        "been carried out unit by unit by separate runs: the Unit Findings below are your only evidence. You "
+        "have no workspace tools — never claim to have read a file the findings do not cite. Where a unit "
+        "failed or was cut, say so under Discovery Limitations. The Business Rules section summarises "
+        "the rules by capability; the complete rule-by-rule catalog is appended to the document "
+        "separately.\n\n{synthesis_request}"
+    ),
+    tools=[_skill("stack-discovery-re")],
+    output_key="analysis",
+    include_contents="none",
+)
+
+# One batch of business-rule candidates -> classified, with every rule extracted.
+# The skill's text is the instruction itself (no SkillToolset): a load_skill call
+# would add a model round trip to each of thousands of batches. A callable
+# instruction also bypasses {...} templating, which the skill's JSON example and
+# the code in each batch would otherwise trip.
+_RULES_SKILL = (_SKILLS_DIR / "business-rules-extract" / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[-1]
+
+
+def _rule_instruction(ctx) -> str:
+    return ("You are running the `business-rules-extract` skill; its instructions follow.\n"
+            + _RULES_SKILL + "\n\n## Candidates\n" + str(ctx.state.get("rule_batch", "")))
+
+
+rule_extractor_agent = LlmAgent(
+    name="rule_extractor",
+    model=_MODEL,
+    description="Classifies each parsed code candidate and extracts every business rule it implements, cited to lines.",
+    instruction=_rule_instruction,
+    output_key="rule_batch_result",
+    include_contents="none",
+)
