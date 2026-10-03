@@ -1254,6 +1254,18 @@ def _without_result_block(raw: str) -> str:
     return head
 
 
+def _dedupe_evidence(lines: list[str]) -> list[str]:
+    """Evidence lines without restatements: the mapper often repeats a pre-scan
+    finding without its backticks or with "—" for ":". The first wording is kept."""
+    seen, out = set(), []
+    for line in lines:
+        key = " ".join(_re.sub(r"[`*]|\s[—–-]\s|:\s", " ", line).lower().split())
+        if key not in seen:
+            seen.add(key)
+            out.append(line)
+    return out
+
+
 def _merge_mapper_result(prescan: list[dict], raw: str, workspace_dir: str = "") -> tuple[list[dict], list[str]]:
     """Reconcile the LLM mapper's JSON block against the deterministic pre-scan.
 
@@ -1302,7 +1314,7 @@ def _merge_mapper_result(prescan: list[dict], raw: str, workspace_dir: str = "")
         if not isinstance(entry, dict):
             continue
         pattern = str(entry.get("pattern") or "").strip()
-        evidence = [str(e).strip() for e in (entry.get("evidence") or []) if str(e).strip()]
+        evidence = _dedupe_evidence([str(e).strip() for e in (entry.get("evidence") or []) if str(e).strip()])
         if not pattern or not evidence:
             notes.append(
                 f"Dropped a stack the mapper reported without evidence: `{pattern or 'unnamed'}`."
@@ -1321,8 +1333,7 @@ def _merge_mapper_result(prescan: list[dict], raw: str, workspace_dir: str = "")
             # Confirmed. The mapper read the files, so prefer its citations and
             # keep the pre-scan's underneath as corroboration.
             existing = by_pattern[pattern]["evidence"]
-            merged = evidence + [e for e in existing if e not in evidence]
-            by_pattern[pattern]["evidence"] = merged[:6]
+            by_pattern[pattern]["evidence"] = _dedupe_evidence(evidence + existing)[:6]
         else:
             kind = str(entry.get("kind") or "").strip().lower()
             spec_kind = next((s.kind for s in stack_detector.CATALOG if s.pattern == pattern), "")
@@ -1392,7 +1403,10 @@ async def _run_stack_mapping(session_id: str) -> list[dict]:
     # reconciled list so the document's inventory matches what actually ran.
     inventory = stack_detector.to_markdown(stacks, source="deterministic scan + dependency mapper")
     # The trailing JSON block is for the pipeline; the table above already says it.
-    prose = _without_result_block(raw)
+    # Nested under "## Detected Technology Stacks": the mapper's own headings
+    # (it starts with "# Technology Stack Inventory") move down two levels.
+    prose = _re.sub(r"^(#{1,4})(?=\s)", lambda m: "#" * min(len(m.group(1)) + 2, 6),
+                    _without_result_block(raw), flags=_re.M)
     if prose:
         inventory += "\n\n" + prose
     if notes:

@@ -361,3 +361,18 @@ def test_the_ledger_downloads_as_csv_and_is_not_kept_in_session_state(monkeypatc
     assert res.status_code == 200 and res.headers["content-type"].startswith("text/csv")
     assert "\nrule,BR-0001,Rule of C00001." in res.text and "\ncandidate,C00001," in res.text
     assert missing.status_code == 404
+
+
+def test_pages_directly_under_the_web_root_are_grouped_by_that_root(tmp_path):
+    _write(tmp_path, {"src/main/webapp/orders.jsp": '<c:if test="${a > 1}">x</c:if>\n',
+                      "src/main/webapp/js/models/order.js": "function v(a) { if (a > 1) return 1; }\n"})
+    areas = {c.path: c.area for c in rc.scan(str(tmp_path)).candidates}
+    assert areas == {"src/main/webapp/orders.jsp": "webapp", "src/main/webapp/js/models/order.js": "js/models"}
+
+
+def test_the_catalog_uses_no_raw_html():
+    ledger = {"rules": [{"id": "BR-0001", "statement": "s", "type": "other", "condition": "", "outcome": "",
+                         "basis": "explicit", "confidence": "high", "area": "a", "flags": [], "tests": ["t1", "t2"],
+                         "sources": [{"path": f"p{i}.py", "start": 1, "end": 2} for i in range(5)]}]}
+    md = rl.catalog_markdown(ledger, 10)
+    assert "<br>" not in md and "`p0.py:1-2`; `p1.py:1-2`; `p2.py:1-2`; +2 more" in md and "`t1`; `t2`" in md

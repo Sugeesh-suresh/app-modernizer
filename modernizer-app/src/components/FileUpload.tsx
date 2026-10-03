@@ -406,7 +406,7 @@ export function FileUpload({ pattern, options, onSessionCreated, onBack }: Props
           </>
         ) : (
           <>
-            Start Modernization
+            {reOnly ? 'Start Discovery' : 'Start Modernization'}
             <ArrowLeft size={16} className="rotate-180" />
           </>
         )}

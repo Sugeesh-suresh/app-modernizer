@@ -573,6 +573,12 @@ def _assign_areas(candidates: list[Candidate]) -> None:
             rest = pkg[len(prefix):]
             c.area = ".".join(rest[:2]) if rest else (".".join(pkg[-1:]) or "(default package)")
         else:
-            rel = _SOURCE_ROOTS.sub("", c.path)
+            root = _SOURCE_ROOTS.match(c.path)
+            rel = c.path[root.end():] if root else c.path
             parent = str(Path(rel).parent)
-            c.area = "/".join(Path(parent).parts[:2]) if parent != "." else "(root)"
+            if parent != ".":
+                c.area = "/".join(Path(parent).parts[:2])
+            else:
+                # Directly under a source root (src/main/webapp/orders.jsp): name the root
+                # ("webapp"), not "(root)", which reads as the repository root.
+                c.area = root.group(0).rstrip("/").rsplit("/", 1)[-1] if root else "(root)"

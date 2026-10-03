@@ -182,8 +182,9 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
         <div>
           <h2 className="text-xl font-bold text-slate-900">Analysis Review</h2>
           <p className="text-sm text-slate-600 mt-0.5">
-            Review and edit the AI-generated BRD and Technical Specification. Upload additional context files
-            (Swagger, OpenAPI, design diagrams) to enrich the migration plan.
+            {reOnly
+              ? 'Review and edit the BRD (written by the Product Owner agent) and the technical documents (written by the Enterprise Architect agent) — both from the same evidence gathered from the code.'
+              : 'Review and edit the AI-generated BRD and Technical Specification. Upload additional context files (Swagger, OpenAPI, design diagrams) to enrich the migration plan.'}
           </p>
         </div>
       </div>
@@ -325,7 +326,8 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
         </div>
       )}
 
-      {/* Additional context files */}
+      {/* Additional context files — they feed the planner, and stack discovery has none */}
+      {!reOnly && (
       <div className="glass rounded-2xl overflow-hidden mb-6">
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-900/10 glass-inset">
           <div>
@@ -390,6 +392,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
           </ul>
         )}
       </div>
+      )}
 
       {/* Feedback */}
       {showFeedback ? (
@@ -458,7 +461,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
           {anyUploading
             ? 'Waiting for file uploads to finish…'
             : reOnly
-              ? 'Refine re-runs the analysis with your feedback; Confirm finishes the run — this pattern produces no plan or code.'
+              ? 'Refine re-writes the document on this tab from the gathered evidence, with your feedback; Confirm finishes the run — this pattern produces no plan or code.'
               : 'Refine re-runs the planner with your feedback; Confirm advances to plan generation.'}
         </p>
       </div>

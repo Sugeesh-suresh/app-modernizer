@@ -26,8 +26,15 @@ interface Props {
   skipSteps?: WorkflowStep[];
 }
 
-export function StepIndicator({ currentStep, progress, progressMessage, skipSteps = [] }: Props) {
-  const STEPS = ALL_STEPS.filter((s) => !skipSteps.includes(s.id));
+/** Stack discovery migrates nothing: its confirmation step is about stacks. */
+const DISCOVERY_LABELS: Partial<Record<WorkflowStep, string>> = {
+  'companion-selection': 'Confirm Stacks',
+};
+
+export function StepIndicator({ currentStep, pattern, progress, progressMessage, skipSteps = [] }: Props) {
+  const STEPS = ALL_STEPS.filter((s) => !skipSteps.includes(s.id)).map((s) =>
+    pattern === 'stack-discovery' && DISCOVERY_LABELS[s.id] ? { ...s, label: DISCOVERY_LABELS[s.id]! } : s,
+  );
   const STEP_ORDER = STEPS.map((s) => s.id);
   const currentIndex = STEP_ORDER.indexOf(currentStep);
 
@@ -45,7 +52,7 @@ export function StepIndicator({ currentStep, progress, progressMessage, skipStep
               <div key={step.id} className="flex items-center gap-0 flex-1 last:flex-none">
                 {/* Connector line before */}
                 {i > 0 && (
-                  <div className={`flex-1 h-px ${isComplete ? 'bg-red-500' : 'bg-slate-900/10'} transition-colors duration-500`} />
+                  <div className={`flex-1 min-w-10 h-px ${isComplete ? 'bg-red-500' : 'bg-slate-900/10'} transition-colors duration-500`} />
                 )}
 
                 {/* Step circle */}

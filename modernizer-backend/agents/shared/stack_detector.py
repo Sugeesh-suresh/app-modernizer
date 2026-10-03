@@ -332,7 +332,8 @@ def to_markdown(stacks: list[dict], source: str = "deterministic scan") -> str:
              f"Detected by {source}. Every row carries the evidence that produced it.", "",
              "| Stack | Id | Kind | Evidence |", "|---|---|---|---|"]
     for stack in stacks:
-        cited = "<br>".join(_format_evidence(e) for e in stack["evidence"][:_MAX_EVIDENCE_PER_STACK])
+        # "; " not "<br>": the review screen renders Markdown only, never raw HTML.
+        cited = "; ".join(_format_evidence(e) for e in stack["evidence"][:_MAX_EVIDENCE_PER_STACK])
         lines.append(f"| {stack['label']} | `{stack['pattern']}` | {stack.get('kind') or '—'} | {cited or '—'} |")
     return "\n".join(lines)
 

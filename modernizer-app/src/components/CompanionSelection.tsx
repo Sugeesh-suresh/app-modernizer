@@ -91,7 +91,7 @@ export function CompanionSelection({
                 onChange={() => toggle(rec.pattern)}
                 className="mt-0.5 w-4 h-4 accent-violet-600 cursor-pointer"
               />
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <FileSearch size={14} className="text-slate-500" />
                   <span className="text-sm font-semibold text-slate-900">{rec.label}</span>

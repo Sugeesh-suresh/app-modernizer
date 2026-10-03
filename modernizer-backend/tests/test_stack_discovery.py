@@ -251,3 +251,37 @@ class TestRunnerWiring:
 ])
 def test_only_the_trailing_result_block_is_cut_from_the_prose(raw, expected):
     assert main._without_result_block(raw) == expected
+
+
+class TestEndToEndFindings:
+    """Defects found by the end-to-end run through the real UI."""
+
+    def test_evidence_the_mapper_restates_is_not_listed_twice(self):
+        raw = _mapper_reply([{"pattern": "oracle", "label": "Oracle Database",
+                              "evidence": ["pom.xml: matched ojdbc8", "pom.xml — matched `ojdbc8`"]}])
+
+        stacks, _ = main._merge_mapper_result(PRESCAN, raw)
+
+        assert next(s for s in stacks if s["pattern"] == "oracle")["evidence"] == ["pom.xml: matched ojdbc8"]
+
+    def test_the_inventory_table_uses_no_raw_html(self):
+        table = stack_detector.to_markdown([{"pattern": "java", "label": "Java application", "kind": "application",
+                                             "evidence": ["a.java: present", "b.java: present"]}])
+        assert "<br>" not in table and "`a.java` — present; `b.java` — present" in table
+
+    def test_the_mappers_headings_nest_under_the_inventory(self, monkeypatch):
+        import asyncio
+        from agents import APP_NAME, USER_ID, session_service
+        state = main._initial_state("stack-discovery", "/tmp/none", "/tmp/none", "[]", "bigbang", False, False,
+                                    json.dumps(PRESCAN))
+        sid = asyncio.run(session_service.create_session(app_name=APP_NAME, user_id=USER_ID, state=state)).id
+
+        async def mapper(session_id, step, pattern, message, sse_event_type):
+            await main._update_state(session_id, {"stack_inventory": "# Technology Stack Inventory\n## Shape\nx\n"
+                                                  + _mapper_reply([])})
+
+        monkeypatch.setattr(main, "_run_step", mapper)
+        asyncio.run(main._run_stack_mapping(sid))
+        inventory = asyncio.run(main._get_state(sid))["stack_inventory_markdown"]
+        assert "\n### Technology Stack Inventory\n#### Shape" in inventory
+        assert not [l for l in inventory.splitlines() if l.startswith("# ")]

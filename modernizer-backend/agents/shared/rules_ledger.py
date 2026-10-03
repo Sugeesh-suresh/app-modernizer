@@ -313,11 +313,11 @@ def catalog_markdown(ledger: dict, max_rules: int) -> str:
             area = rule["area"]
             lines += ["", f"### {area}", "", "| ID | Rule | Type | Condition → Outcome | Source | Tests | Basis |",
                       "|---|---|---|---|---|---|---|"]
-        src = "<br>".join(f"`{s['path']}:{s['start']}-{s['end']}`" for s in rule["sources"][:3])
+        src = "; ".join(f"`{s['path']}:{s['start']}-{s['end']}`" for s in rule["sources"][:3])
         if len(rule["sources"]) > 3:
-            src += f"<br>+{len(rule['sources']) - 3} more"
+            src += f"; +{len(rule['sources']) - 3} more"
         cond = " → ".join(x for x in (rule["condition"], rule["outcome"]) if x) or "—"
-        tests = "<br>".join(f"`{t}`" for t in rule["tests"][:2]) or "none found"
+        tests = "; ".join(f"`{t}`" for t in rule["tests"][:2]) or "none found"
         basis = f"{rule['basis']}, {rule['confidence']}" + (" ⚠ " + "; ".join(rule["flags"]) if rule["flags"] else "")
         lines.append(f"| {rule['id']} | {_cell(rule['statement'])} | {rule['type']} | {_cell(cond)} | {src} | "
                      f"{tests} | {_cell(basis)} |")
