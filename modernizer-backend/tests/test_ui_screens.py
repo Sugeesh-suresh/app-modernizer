@@ -369,3 +369,12 @@ def test_document_lists_screens_rules_and_what_was_not_rendered():
     assert "Sample data: as SCR-0001, with `jobs` = `[]`." in md
     assert "| GET /jobs/legacy (JobController.legacy) | `legacy/page` |" in md
     assert "<" not in md.replace("<!--", "")                       # Markdown only, no HTML
+
+
+def test_an_object_read_only_in_a_condition_still_gets_sample_data(tmp_path):
+    root = tmp_path / "templates"
+    root.mkdir()
+    (root / "dash.html").write_text('<html><div th:if="${job.failedCount > 0}">Some failed</div>'
+                                    '<p th:if="${error}">x</p></html>')
+    model = mock.base_model({}, mock.read_template(root, "dash"), {})
+    assert model == {"job": {"failedCount": 1}}            # the object is there; the bare flag stays unset

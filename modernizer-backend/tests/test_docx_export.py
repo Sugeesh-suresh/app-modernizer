@@ -193,3 +193,24 @@ def test_a_section_does_not_repeat_its_own_title():
     doc = _doc(dx.to_docx("Doc", [("UI Screens", "## UI Screens\n\nintro\n\n### `GET /jobs`\n")]))
     heads = [(p.style.name, p.text) for p in doc.paragraphs if p.style.name.startswith("Heading")]
     assert heads == [("Heading 1", "UI Screens"), ("Heading 2", "GET /jobs")]
+
+
+def test_a_wide_rules_table_gets_a_landscape_page_sized_columns_and_whole_rows():
+    from docx.enum.section import WD_ORIENT
+    from docx.oxml.ns import qn
+    md = ("| Rule ID | Business rule | Use case | Negative scenario | Edge cases | Observed or inferred | Confidence |\n"
+          "|---|---|---|---|---|---|---|\n"
+          "| BR-CLAIMS-001 | A claim may be auto-approved only when the amount is below the threshold. | A claim of "
+          "200 is approved at once. | A claim of 800 waits for an adjuster. | • A claim of exactly 500 is not "
+          "auto-approved. | Observed | High |\n")
+    doc = _doc(dx.to_docx("BRD", [(None, md)]))
+    assert doc.sections[0].orientation == WD_ORIENT.LANDSCAPE
+    widths = [c.width.inches for c in doc.tables[0].columns]
+    assert abs(sum(widths) - dx.LANDSCAPE_WIDTH_IN) < 0.05
+    assert widths[1] > widths[5] and widths[1] > widths[6]                 # prose wider than "Observed"/"High"
+    assert widths[5] >= len("Observed") * dx._CHAR_IN                       # short words are never broken
+    rows = doc.tables[0]._tbl.tr_lst
+    assert all(tr.trPr.find(qn("w:cantSplit")) is not None for tr in rows)
+    assert rows[0].trPr.find(qn("w:tblHeader")) is not None and rows[1].trPr.find(qn("w:tblHeader")) is None
+    narrow = _doc(dx.to_docx("Spec", [(None, "| a | b |\n|---|---|\n| 1 | 2 |\n")]))
+    assert narrow.sections[0].orientation == WD_ORIENT.PORTRAIT

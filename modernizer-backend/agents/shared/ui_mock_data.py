@@ -721,8 +721,8 @@ def base_model(controller: dict[str, str], facts: TemplateFacts, classes: dict[s
     for name, shape in sorted(facts.shapes.items()):
         if name in model or name in ("param", "session", "request", "application"):
             continue
-        if not shape.content:
-            continue
+        if not shape.content and not shape.props and shape.item is None:
+            continue            # a bare flag only tested (th:if="${error}"): a page state, not data
         model[name] = _from_shape(shape, name, 1, 0)
     return model
 

@@ -65,7 +65,7 @@ The BRD only, in Markdown, with these sections (`##` headings):
 1. **Executive Summary** — what the system does, for whom, in a few sentences
 2. **Actors & Roles** — each actor or role, what it can do, how it is recognised
 3. **Business Capabilities** — each capability: its purpose and how users reach it (the screens, reports, jobs or messages, described by purpose)
-4. **Business Scenarios** — each end-to-end scenario as numbered steps from the user's point of view, with its decision points and outcomes
+4. **Business Scenarios** — for each capability, every kind of scenario the evidence shows, each as numbered steps from the user's point of view with its decision points and outcomes: the main (happy-path) scenario, alternative paths, negative scenarios (rejections, validation failures, errors shown to the user, access denied) and edge cases (limits and boundary values, missing or empty data, time-based or scheduled behaviour). Label each one ("Main", "Alternative", "Negative", "Edge case")
 5. **Business Data** — the business entities (customer, order, product…), what they represent, and which capabilities create and use them — no table or field names
 6. **External Parties & Dependencies** — other organisations and systems the business depends on, as the business sees them
 7. **Observed Risks** — only what the evidence establishes about the system today, in business terms

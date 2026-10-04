@@ -43,6 +43,18 @@ can contain both rules and plumbing — report only the rules.
   words a business reader uses: "Claims", "Order approval", "Product
   standardization", "Access". Rules of the same capability use the same words;
   the rule's id is built from them (BR-CLAIMS-042).
+- `use_case` — the normal situation in which the rule applies and what the user
+  sees, e.g. "A customer submits a claim of 200 for a policy with a 500 auto-approval
+  threshold; it is approved at once."
+- `negative_scenario` — what happens when the rule's condition is not met or the
+  input is invalid, e.g. "A claim of 800 is not auto-approved; it waits for an
+  adjuster." Use the system's own outcome (the message shown, the status set).
+- `edge_cases` — a list of the limits the code shows: the exact boundary values
+  (an amount equal to the threshold), missing or empty values the code checks,
+  alternative branches, maximums and minimums, e.g. ["A claim of exactly 500 is not
+  auto-approved: the amount must be below the threshold.", "A claim with no amount
+  is rejected."]. Only cases the code shows; an empty list when it shows none.
+  All three fields in plain English, no code.
 - `type` — one of: validation, calculation, eligibility, state-transition,
   authorization, constraint, default, workflow, notification, data-integrity, other
 - `condition` — when it applies, in words ("the order has more than 50 items");
@@ -67,7 +79,11 @@ appears exactly once:
   "results": [
     {"candidate": "C00012", "rules": [
       {"statement": "An order with more than 50 items is rejected and the customer is asked to split it.",
-       "capability": "Order entry", "type": "validation", "condition": "the order has more than 50 items", "outcome": "the order is rejected",
+       "capability": "Order entry",
+       "use_case": "A customer places an order of 20 items; it is accepted.",
+       "negative_scenario": "A customer places an order of 60 items; it is rejected with a request to split it.",
+       "edge_cases": ["An order of exactly 50 items is accepted: only more than 50 is rejected."],
+       "type": "validation", "condition": "the order has more than 50 items", "outcome": "the order is rejected",
        "lines": "9-11", "basis": "explicit", "confidence": "high"}
     ]},
     {"candidate": "C00013", "rules": [], "technical": "null guard before saving; no business decision"}

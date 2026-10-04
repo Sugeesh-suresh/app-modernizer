@@ -87,10 +87,14 @@ def _finalized(raw_rules):
     return ledger
 
 
-def test_every_rule_is_a_plain_english_record_by_capability():
+def test_every_rule_is_a_table_row_with_its_scenarios_by_capability():
+    claims = _raw("C1", "A claim may be auto-approved only when the amount is below the configured threshold and "
+                        "no fraud flag exists.", "Claims")
+    claims.update(use_case="A claim of 200 under a 500 threshold with no fraud flag is approved at once.",
+                  negative_scenario="A claim with a fraud flag waits for an adjuster.",
+                  edge_cases=["A claim of exactly 500 is not auto-approved.", "A claim with no amount is rejected."])
     ledger = _finalized([
-        _raw("C1", "A claim may be auto-approved only when the amount is below the configured threshold and "
-                   "no fraud flag exists.", "Claims"),
+        claims,
         _raw("C2", "Only managers can reopen a closed claim.", "Claims", rtype="authorization", basis="inferred",
              confidence="medium"),
         _raw("C3", "An order with more than 50 items is rejected.", "Order entry"),
@@ -99,13 +103,41 @@ def test_every_rule_is_a_plain_english_record_by_capability():
     md = rules_ledger.business_rules_markdown(ledger, 100)
     assert md.startswith("## Business Rules by Capability")
     assert md.index("### Claims") < md.index("### Order entry")
-    assert ("- **Rule ID:** BR-CLAIMS-001\n- **Statement:** “A claim may be auto-approved only when the amount is "
-            "below the configured threshold and no fraud flag exists.”\n- **Observed or inferred:** Observed\n"
-            "- **Confidence:** High") in md
-    assert "* **Rule ID:** BR-CLAIMS-002" in md and "* **Observed or inferred:** Inferred" in md
-    assert "* **Confidence:** Medium" in md
+    header = ("| Rule ID | Business rule | Use case | Negative scenario | Edge cases | Observed or inferred "
+              "| Confidence |")
+    assert md.count(header) == 2
+    assert ("| BR-CLAIMS-001 | A claim may be auto-approved only when the amount is below the configured threshold "
+            "and no fraud flag exists. | A claim of 200 under a 500 threshold with no fraud flag is approved at once. "
+            "| A claim with a fraud flag waits for an adjuster. | • A claim of exactly 500 is not auto-approved. • A "
+            "claim with no amount is rejected. | Observed | High |") in md
+    assert ("| BR-CLAIMS-002 | Only managers can reopen a closed claim. | None identified | None identified "
+            "| None identified | Inferred | Medium |") in md
     # No reference to the audit file, no code, no locations.
     assert "evidence" not in md.lower() and ".java" not in md and "`" not in md and "Source" not in md
+
+
+def test_scenarios_are_cleaned_merged_and_sent_back_when_worded_in_code():
+    from agents.shared.rule_candidates import Candidate
+    rule = _raw("C1", "Orders above 100 units need a manager's approval.", "Orders")
+    rule.update(use_case="An order of 20 units goes straight through.",
+                negative_scenario="`OrderService.hold()` is called.",
+                edge_cases=["An order of exactly 100 units needs no approval.", "`qty == null`"])
+    twin = _raw("C2", "Orders above 100 units need a manager's approval.", "Orders")
+    twin.update(edge_cases=["An order with no quantity is rejected."])
+    ledger = _finalized([rule, twin])
+    [merged] = ledger["rules"]
+    assert merged["use_case"] == "An order of 20 units goes straight through."
+    assert merged["negative_scenario"] == ""                                 # nothing readable left
+    assert merged["edge_cases"] == ["An order of exactly 100 units needs no approval.",
+                                    "An order with no quantity is rejected."]
+    c = Candidate(id="C00001", path="src/A.java", start=1, end=3, kind="method", symbol="A.f", language="Java",
+                  parser="tree-sitter", source="1| if (x > 5) return;", signals=["if"])
+    led = {"candidates": {"C00001": {"status": "pending"}}, "raw_rules": [], "rules": []}
+    rules_ledger.apply_answer([c], [{"candidate": "C00001", "rules": [
+        {"statement": "Requests with more than five items are refused.", "lines": "1",
+         "negative_scenario": "Throws `TooManyItems`.", "edge_cases": "Exactly five items pass; `x == 6` fails"}]}], led)
+    assert led["raw_rules"][0]["edge_cases"] == ["Exactly five items pass", "`x == 6` fails"]
+    assert rules_ledger.needs_rewording([c], led) == {"C00001": ["Throws `TooManyItems`.", "`x == 6` fails"]}
 
 
 def test_a_technical_statement_is_reworded_never_referred_elsewhere():

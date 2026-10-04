@@ -26,6 +26,7 @@ from pathlib import Path
 
 from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.section import WD_ORIENT
 from docx.enum.text import WD_BREAK
 from docx.opc.constants import RELATIONSHIP_TYPE
 from docx.oxml import OxmlElement
@@ -41,8 +42,11 @@ _COMMENT_LINE = re.compile(r"^\s*<!--.*?-->\s*$", re.M)
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")   # not allowed in Word XML
 _LINKABLE = re.compile(r"^(?:https?://|mailto:)", re.I)
 MONO = "Consolas"
-PAGE_WIDTH_IN = 7.0          # inside 0.75 in margins on US Letter
+PAGE_WIDTH_IN = 7.0          # inside 0.75 in margins on US Letter, portrait
 MAX_IMAGE_HEIGHT_IN = 8.6
+LANDSCAPE_WIDTH_IN = 9.5     # the same margins, landscape
+LANDSCAPE_IMAGE_HEIGHT_IN = 6.6
+WIDE_TABLE_COLUMNS = 6       # a document with a table this wide is laid out in landscape
 
 
 def _clean(text: str) -> str:
@@ -99,9 +103,39 @@ def _rule(paragraph) -> None:
     _insert_ordered(paragraph._p.get_or_add_pPr(), border, _PPR_ORDER)
 
 
+def _text_of(children) -> str:
+    return "".join(tok.content for tok in children or [] if tok.type in ("text", "code_inline"))
+
+
+_CHAR_IN = 0.085          # width of one character at the table's 8.5 pt, in inches (bold headers included)
+_CELL_PAD_IN = 0.16       # cell margins
+
+
+def _column_widths(rows: list[tuple[bool, list]], cols: int, page_width_in: float = PAGE_WIDTH_IN) -> list:
+    """Column widths: each column at least as wide as its longest word (up to 16
+    characters — longer ones, like rule ids, wrap at their hyphens), and the rest
+    of the page shared in proportion to how much text the column holds. A short
+    column ("Observed", "Medium") stays narrow without breaking its words."""
+    minimum, weight = [], []
+    for c in range(cols):
+        texts = [_text_of(cells[c]) for _, cells in rows if c < len(cells)]
+        longest_word = max((len(w) for t in texts for w in t.split()), default=4)
+        average = sum(len(t) for t in texts) / max(len(texts), 1)
+        # A short column keeps its words whole; a prose column wraps, so it needs less.
+        cap = 16 if average <= 14 else 12
+        minimum.append(min(longest_word, cap) * _CHAR_IN + _CELL_PAD_IN)
+        weight.append(max(average - min(longest_word, cap), 1.0) ** 0.85)
+    spare = page_width_in - sum(minimum)
+    if spare <= 0:                                      # too many columns: shrink the minimums to fit
+        return [Inches(page_width_in * m / sum(minimum)) for m in minimum]
+    return [Inches(m + spare * w / sum(weight)) for m, w in zip(minimum, weight)]
+
+
 class _Writer:
-    def __init__(self, doc, images: dict[str, Path]):
+    def __init__(self, doc, images: dict[str, Path], page_width_in: float = PAGE_WIDTH_IN,
+                 image_height_in: float = MAX_IMAGE_HEIGHT_IN):
         self.doc, self.images = doc, images
+        self.page_width_in, self.image_height_in = page_width_in, image_height_in
         self.paragraph = None
         self.lists: list[dict] = []       # open lists: {"ordered", "number"}
         self.quote = 0
@@ -169,11 +203,11 @@ class _Writer:
             paragraph.add_run(f"[image: {_clean(alt) or src}]").italic = True
             return
         size = _png_size(path)
-        width = Inches(PAGE_WIDTH_IN)
+        width = Inches(self.page_width_in)
         if size and size[0]:
-            height_in = PAGE_WIDTH_IN * size[1] / size[0]
-            if height_in > MAX_IMAGE_HEIGHT_IN:
-                width = Inches(PAGE_WIDTH_IN * MAX_IMAGE_HEIGHT_IN / height_in)
+            height_in = self.page_width_in * size[1] / size[0]
+            if height_in > self.image_height_in:
+                width = Inches(self.page_width_in * self.image_height_in / height_in)
         paragraph.add_run().add_picture(str(path), width=width)
 
     # ── blocks ──────────────────────────────────────────────────────────────
@@ -218,12 +252,22 @@ class _Writer:
         table = self.doc.add_table(rows=len(rows), cols=cols)
         table.style = "Table Grid"
         table.alignment = WD_TABLE_ALIGNMENT.LEFT
+        widths = _column_widths(rows, cols, self.page_width_in)
+        table.autofit = False
+        for col, width in zip(table.columns, widths):
+            col.width = width
         # Cells straight from the XML: python-docx's row.cells recomputes the
         # whole grid on every call, which is quadratic on a 2,000-row catalog.
         for tr, (header, cells) in zip(table._tbl.tr_lst, rows):
+            # A row never splits across pages; the header row repeats on each page.
+            tr_pr = tr.get_or_add_trPr()
+            tr_pr.append(OxmlElement("w:cantSplit"))
+            if header:
+                tr_pr.append(OxmlElement("w:tblHeader"))
             row_cells = [_Cell(tc, table) for tc in tr.tc_lst]
             for c in range(cols):
                 cell = row_cells[c]
+                cell.width = widths[c]
                 p = cell.paragraphs[0]
                 if c < len(cells):
                     self.inline(p, cells[c], size=Pt(8.5), bold=header)
@@ -305,12 +349,29 @@ class _Writer:
             i += 1
 
 
+def _widest_table(markdown: str) -> int:
+    """The most columns any table in `markdown` has (0 without tables)."""
+    widest, cells, in_row = 0, 0, False
+    for tok in _MD.parse(markdown or ""):
+        if tok.type == "tr_open":
+            cells, in_row = 0, True
+        elif tok.type in ("th_open", "td_open") and in_row:
+            cells += 1
+        elif tok.type == "tr_close":
+            widest, in_row = max(widest, cells), False
+    return widest
+
+
 def to_docx(title: str, sections: list[tuple[str | None, str]], images: dict[str, Path] | None = None,
             subtitle: str = "") -> bytes:
     """A Word document: `title`, then each (heading, markdown) section — a heading
     starts a new page and the section's own headings sit below it."""
     doc = Document()
+    landscape = any(_widest_table(markdown) >= WIDE_TABLE_COLUMNS for _, markdown in sections)
     for s in doc.sections:
+        if landscape:
+            s.orientation = WD_ORIENT.LANDSCAPE
+            s.page_width, s.page_height = s.page_height, s.page_width
         s.left_margin = s.right_margin = Inches(0.75)
         s.top_margin = s.bottom_margin = Inches(0.75)
     normal = doc.styles["Normal"]
@@ -321,7 +382,8 @@ def to_docx(title: str, sections: list[tuple[str | None, str]], images: dict[str
     doc.add_heading(_clean(title), level=0)
     if subtitle:
         doc.add_paragraph(_clean(subtitle)).runs[0].italic = True
-    writer = _Writer(doc, images or {})
+    writer = _Writer(doc, images or {}, *((LANDSCAPE_WIDTH_IN, LANDSCAPE_IMAGE_HEIGHT_IN) if landscape
+                                           else (PAGE_WIDTH_IN, MAX_IMAGE_HEIGHT_IN)))
     first = True
     for heading, markdown in sections:
         if heading:

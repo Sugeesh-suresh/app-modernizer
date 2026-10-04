@@ -620,7 +620,8 @@ def test_large_repository_discovery_with_the_business_rules_ledger(scripted, tmp
     assert all(len(u) <= 2 for u in scripted.units)
     brd, evidence = state["brd"], Path(state["evidence_path"]).read_text()
     assert brd.index("## Executive Summary") < brd.index("## Business Rules by Capability")
-    assert "**Statement:** “Rule found in candidate" in brd and "**Rule ID:** BR-" in brd
+    assert "| Rule ID | Business rule | Use case | Negative scenario | Edge cases |" in brd
+    assert re.search(r"\| BR-[A-Z0-9-]+-\d{3} \| Rule found in candidate C\d+ applies\. \|", brd)
     assert "## Business Rules Coverage" not in brd and "Source" not in brd and "evidence file" not in brd
     assert evidence.index("## Business Rules Catalog — Code Locations and Tests") \
         < evidence.index("## Business Rules Coverage") < evidence.index("## Evidence Check")
