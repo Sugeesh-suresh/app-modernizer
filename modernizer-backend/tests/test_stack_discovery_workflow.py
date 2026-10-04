@@ -232,10 +232,15 @@ class TestStackDiscoveryWorkflow:
 
         _run(sid, ["java"])
 
-        brd = _state(sid)["brd"]
-        assert brd.lstrip().startswith("## Detected Technology Stacks")
-        assert brd.index("Detected Technology Stacks") < brd.index("## Executive Summary") < brd.index("## Evidence Check")
-        assert "Every evidence and rule id cited by either document exists." in brd
+        state = _state(sid)
+        brd, evidence = state["brd"], Path(state["evidence_path"]).read_text()
+        # The BRD is the business document; the inventory and the check are in the evidence file.
+        assert brd.lstrip().startswith("## Executive Summary")
+        assert "Detected Technology Stacks" not in brd and "Evidence Check" not in brd and "EV-" not in brd
+        assert Path(state["evidence_path"]).parent == Path(state["evidence_dir"])
+        assert evidence.index("## BRD Traceability") < evidence.index("## Detected Technology Stacks") \
+            < evidence.index("## Evidence Check")
+        assert "Every evidence and rule id cited by either document exists." in evidence
 
     def test_computed_interfaces_and_configuration_reach_the_architect_and_the_check(self, monkeypatch):
         h = _Harness(monkeypatch)
@@ -258,8 +263,9 @@ class TestStackDiscoveryWorkflow:
         assert "## Interface & Job Inventory (computed)" in state["technical_spec"]
         assert "## Configuration Matrix (computed)" in state["technical_spec"]
         # The stub architect mentions neither, so the evidence check names both.
-        assert "GET /rest/v1/jobs/{id} (JobRestController.get)" in state["brd"]
-        assert "scheduled job JobController.nightly" in state["brd"]
+        evidence = Path(state["evidence_path"]).read_text()
+        assert "GET /rest/v1/jobs/{id} (JobRestController.get)" in evidence
+        assert "scheduled job JobController.nightly" in evidence
 
     def test_a_citation_that_matches_no_evidence_is_reported(self, monkeypatch):
         _Harness(monkeypatch, cite=", EV-java-0999, BR-0007")
@@ -267,8 +273,9 @@ class TestStackDiscoveryWorkflow:
 
         _run(sid, ["java"])
 
-        brd = _state(sid)["brd"]
-        assert "BRD: `EV-java-0999`" in brd and "BRD: `BR-0007`" in brd
+        evidence = Path(_state(sid)["evidence_path"]).read_text()
+        assert "BRD: `EV-java-0999`" in evidence and "BRD: `BR-0007`" in evidence
+        assert "`EV-java-0999` — **no such evidence item** (unverified)" in evidence
 
     def test_evidence_packs_are_numbered_and_kept_on_disk(self, monkeypatch):
         _Harness(monkeypatch)

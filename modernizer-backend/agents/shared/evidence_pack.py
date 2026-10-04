@@ -212,3 +212,51 @@ def split_spec(text: str) -> tuple[str, str]:
     text = re.sub(r"<!--\s*SECTION:\s*TECHNICAL_SPECIFICATION\s*-->", "", text)
     parts = re.split(r"<!--\s*SECTION:\s*TEST_INVENTORY\s*-->", text, maxsplit=1)
     return parts[0].strip(), (parts[1].strip() if len(parts) > 1 else "")
+
+
+#: How the evidence file introduces a BRD statement the plain-language guard had to remove.
+REMOVED = "Removed from the BRD — written in technical terms: "
+
+
+def items(text: str) -> dict[str, str]:
+    """{evidence id: the item's text without its id} for one numbered pack."""
+    out = {}
+    for line in (text or "").splitlines():
+        m = re.match(r"^- \[(EV-[^\]]+)\]\s*(.*)$", line)
+        if m:
+            out[m.group(1)] = m.group(2).strip()
+    return out
+
+
+def evidence_markdown(title: str, inventory: str, citations: list[tuple[str, list[str]]],
+                      packs: list[tuple[str, str, str]], rules_markdown: str, check_md: str,
+                      ingestion_warning: str = "") -> str:
+    """The BRD's evidence file: what each BRD statement rests on, the technology
+    inventory, the rules with their code locations and tests, and the checks."""
+    known: dict[str, str] = {}
+    for _, _, text in packs:
+        known.update(items(text))
+    lines = [f"# Evidence — {title}", "",
+             "_Supporting evidence for the Business Requirements Document, computed by the pipeline. The BRD is "
+             "written in business language; this file records what each of its statements rests on, the technology "
+             "found in the repository, where each business rule is implemented and tested, and the checks run on "
+             "both documents. The per-stack evidence packs are in the same folder._"]
+    if ingestion_warning:
+        lines += ["", f"> ⚠️ **Incomplete repository.** {ingestion_warning}"]
+    lines += ["", "## BRD Traceability", ""]
+    if citations:
+        lines.append("Each BRD statement, followed by the evidence items the Product Owner agent cited for it.")
+        for statement, ids_ in citations:
+            lines += ["", f"- *{REMOVED.rstrip(': ')}:* {statement[len(REMOVED):]}" if statement.startswith(REMOVED)
+                      else f"- **{statement}**"]
+            for i in ids_:
+                found = known.get(i)
+                lines.append(f"  - `{i}` — {found if found else '**no such evidence item** (unverified)'}")
+    else:
+        lines.append("The BRD cites no evidence items.")
+    for section in (inventory, rules_markdown.replace("## Business Rules Catalog",
+                                                      "## Business Rules Catalog — Code Locations and Tests", 1)
+                    if rules_markdown else "", check_md):
+        if section:
+            lines += ["", "---", "", section.strip()]
+    return "\n".join(lines).rstrip() + "\n"

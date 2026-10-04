@@ -32,20 +32,22 @@ can contain both rules and plumbing — report only the rules.
 
 ## For each rule
 
-- `statement` — the rule in business language a non-developer can check, e.g.
-  "An order with more than 50 items is rejected." Name code identifiers in
-  backticks only when they help a reader find it (`MAX_ITEMS`); every identifier
-  you put in backticks must appear in the candidate's code.
+- `statement` — the rule in plain business language a non-developer can check,
+  e.g. "An order with more than 50 items is rejected." No code: no class,
+  method, field, variable, constant, table or file names, no expressions, no
+  backticks. The statement goes into the business document as written; where
+  the rule lives is recorded separately, from `lines`.
 - `type` — one of: validation, calculation, eligibility, state-transition,
   authorization, constraint, default, workflow, notification, data-integrity, other
-- `condition` — when it applies; `outcome` — what happens
+- `condition` — when it applies, in words ("the order has more than 50 items");
+  `outcome` — what happens, in words ("the order is rejected"). No code here either.
 - `lines` — the line range inside the candidate that implements it, e.g. "12-18"
 - `basis` — `explicit` when the code states it plainly; `inferred` when you are
   interpreting intent (a magic number, an unexplained branch)
 - `confidence` — high, medium or low
 
-Use the values in the code (limits, codes, states, messages) — they are what
-makes a rule checkable. Never invent a value, a reason or a policy the code
+Use the values in the code (limits, codes, states, messages), written as words
+and numbers — they are what makes a rule checkable. Never invent a value, a reason or a policy the code
 does not show. Describe the system as it is: no recommendations, no migration
 or upgrade remarks, no judgement of the code.
 
@@ -58,8 +60,8 @@ appears exactly once:
 {
   "results": [
     {"candidate": "C00012", "rules": [
-      {"statement": "An order with more than `MAX_ITEMS` (50) items is rejected with TooManyItemsException.",
-       "type": "validation", "condition": "item count > 50", "outcome": "order rejected",
+      {"statement": "An order with more than 50 items is rejected and the customer is asked to split it.",
+       "type": "validation", "condition": "the order has more than 50 items", "outcome": "the order is rejected",
        "lines": "9-11", "basis": "explicit", "confidence": "high"}
     ]},
     {"candidate": "C00013", "rules": [], "technical": "null guard before saving; no business decision"}

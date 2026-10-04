@@ -49,7 +49,7 @@ from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11 import preflight as java11_preflight
 from agents.shared import (config_matrix, current_state, docx_export, evidence_pack, interfaces, migration_inventory,
-                           repo_fingerprint, rule_candidates, rules_ledger, ui_screens)
+                           plain_language, repo_fingerprint, rule_candidates, rules_ledger, ui_screens)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -1015,6 +1015,7 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         # stack-discovery documents: evidence packs on disk, and each writer's
         # latest output (so a refine can re-run one writer and keep the other's).
         "evidence_dir": "",
+        "evidence_path": "",
         "interfaces_json": "",
         "config_matrix_markdown": "",
         # UI screens (agents/shared/ui_screens.py): what was offered at stack
@@ -1805,6 +1806,8 @@ def _with_ingestion_warning(state: dict, brd: str, tech_spec: str) -> tuple[str,
 # ---------------------------------------------------------------------------
 
 _WRITER_RULES_INDEX_CHARS = 40_000
+#: The BRD's supporting evidence, written beside the evidence packs; not shown in the UI.
+EVIDENCE_FILE = "evidence.md"
 
 
 async def _gather_stack_evidence(session_id: str, stack_id: str, info: dict, label: str) -> str:
@@ -1944,26 +1947,36 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
             ea_tests = _current_state_only(tests, "Test Inventory (Enterprise Architect)", keep)
         await _update_state(session_id, {"po_brd": po_brd, "ea_spec": ea_spec, "ea_tests": ea_tests})
 
-    # Assembly. The deterministic sections are placed exactly as before: the
-    # inventory leads the BRD, the rules catalog and coverage follow it, the
+    # Assembly. The BRD is business language only: the Product Owner's document
+    # with its evidence citations and any code reference taken out (moved to the
+    # evidence file), then the rules catalog in business words. Everything that
+    # points into the code — the stack inventory and fingerprint, the catalog
+    # with code locations, coverage, the evidence check and the traceability of
+    # each BRD statement — goes to evidence.md beside the evidence packs. The
     # dependency graphs lead the specification.
     inventory = _current_state_only(state.get("stack_inventory_markdown", ""), "inventory", keep)
-    parts = [inventory] if inventory else []
+    business_brd, citations, removed = plain_language.business_only(po_brd) if po_brd else ("", [], 0)
+    if removed:
+        print(f"[discovery] BRD: moved {removed} code reference(s) out of the business document", flush=True)
+    check_md = ""
     if packs:
-        parts.append(po_brd)
-        if state.get("rules_markdown"):
-            parts.append(state["rules_markdown"])
-        parts.append(evidence_pack.check_markdown(evidence_pack.check(po_brd, evidence_ids, rule_ids),
-                                                  evidence_pack.check(ea_spec + "\n" + ea_tests, evidence_ids,
-                                                                      rule_ids),
-                                                  evidence_ids,
-                                                  interfaces.uncovered(endpoints_jobs, ea_spec + "\n" + ea_tests)
-                                                  if inventory_md else None))
+        parts = [business_brd]
+        if ledger:
+            parts.append(rules_ledger.business_catalog_markdown(ledger, config.RULES_CATALOG_MAX_IN_DOCUMENT))
+        check_md = evidence_pack.check_markdown(evidence_pack.check(po_brd, evidence_ids, rule_ids),
+                                                evidence_pack.check(ea_spec + "\n" + ea_tests, evidence_ids, rule_ids),
+                                                evidence_ids,
+                                                interfaces.uncovered(endpoints_jobs, ea_spec + "\n" + ea_tests)
+                                                if inventory_md else None)
     else:
-        parts.append("> **No stacks were documented.** Either nothing was detected, or every detected stack was "
-                     "unchecked at the confirmation step. The inventory above, if present, is the deterministic "
-                     "scan's finding only.")
+        parts = ["> **No stacks were documented.** Either nothing was detected, or every detected part of the "
+                 "system was left out at the confirmation step."]
     brd = "\n\n---\n\n".join(p for p in parts if p)
+    evidence_md = evidence_pack.evidence_markdown(
+        _discovery_title(state), inventory, citations, packs, state.get("rules_markdown", ""), check_md,
+        state.get("ingestion_warning", ""))
+    evidence_file = evidence_dir / EVIDENCE_FILE
+    evidence_file.write_text(evidence_md, encoding="utf-8")
 
     graphs = []
     for stack_id, label, _ in packs:
@@ -1977,10 +1990,14 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     tech_spec = "\n\n".join(graphs + [md for md in (inventory_md, config_md) if md] + ([ea_spec] if ea_spec else []))
     test_inventory = ea_tests
 
-    brd, tech_spec = _with_ingestion_warning(state, brd, tech_spec)
+    if state.get("ingestion_warning"):
+        # The BRD says it in business terms; the specification and the evidence file give the details.
+        brd = ("> ⚠️ **Incomplete repository.** Only part of the uploaded repository could be analysed, so this "
+               "document may leave out parts of the system.\n\n" + brd)
+        _, tech_spec = _with_ingestion_warning(state, "", tech_spec)
     ui_md = await _ui_screens_document(session_id, ledger)
     await _update_state(session_id, {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory,
-                                     "ui_screens": ui_md})
+                                     "ui_screens": ui_md, "evidence_path": str(evidence_file)})
     if announce:
         extra = {"ui_screens": ui_md} if ui_md else {}
         await _push(session_id, "brd-ready", brd=brd, technical_spec=tech_spec, test_inventory=test_inventory,
@@ -2974,6 +2991,24 @@ async def download_brd(session_id: str, format: str = "md"):
     if fmt == "docx":
         return await _docx_response(name, f"Business Requirements — {_discovery_title(state)}", [(None, brd)])
     return _markdown_response(brd, name)
+
+
+@app.get("/api/sessions/{session_id}/download/evidence")
+async def download_evidence(session_id: str, format: str = "md"):
+    """The BRD's supporting evidence (evidence.md beside the evidence packs). Not linked
+    from the UI; for reviewers and auditors who need what each BRD statement rests on."""
+    fmt = _download_format(format, ("md", "docx"))
+    state = await _get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    path = Path(state.get("evidence_path", "") or "/nonexistent")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="No evidence file for this run.")
+    text = path.read_text(encoding="utf-8")
+    name = f"evidence-{session_id[:8]}"
+    if fmt == "docx":
+        return await _docx_response(name, f"Evidence — {_discovery_title(state)}", [(None, text)])
+    return _markdown_response(text, name)
 
 
 @app.get("/api/sessions/{session_id}/download/technical-spec")

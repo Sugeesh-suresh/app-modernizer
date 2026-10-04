@@ -329,11 +329,14 @@ def test_stack_discovery_runs_end_to_end(scripted, tmp_path):
     # The migrations' own RE skills are written towards a target; discovery never uses them.
     assert not [s for s in skills if s.endswith("-re") and s not in ("stack-discovery-re", "wildfly-re")]
     document = "\n".join(state[k] for k in ("brd", "technical_spec", "test_inventory"))
-    assert "`orders.q` queue" in document and "TibjmsConnectionFactory" in document
+    evidence = Path(state["evidence_path"]).read_text()
+    # The Product Owner's code wording stays out of the BRD; the writer's own output keeps it.
+    assert "`orders.q` queue" in state["po_brd"] and "`" not in state["brd"] and "EV-" not in state["brd"]
+    assert "TibjmsConnectionFactory" in document
     assert "Publishes each confirmed order." in document
     assert "### TIBCO EMS messaging" in state["technical_spec"] and "### WildFly / JBoss (app server)" in state["technical_spec"]
     assert sorted(scripted.writers) == ["ea_spec", "po_brd"]                 # each writer once, for both stacks
-    assert "Every evidence and rule id cited by either document exists." in state["brd"]
+    assert "Every evidence and rule id cited by either document exists." in evidence
     assert "## Dependency Graph & Migration Groups" not in document
     for banned in ("migrat", "Pub/Sub", "Google Cloud", "upgrade", "end of life", "Recommendations",
                    "tibco-ems-to-pubsub", "→ 25", "Target"):
@@ -582,8 +585,10 @@ def test_stack_discovery_documents_each_stack_the_repository_contains(scripted, 
     assert (checklist["jsp"], checklist["backbone"], checklist["java"]) == ("jsp.md", "spa-frontend.md", "java.md")
     assert "src/main/webapp/js/app.js: imports `backbone`" in next(m for m in requests if "(id `backbone`" in m)
     brd, spec = state["brd"], state["technical_spec"]
-    for heading in ("## Detected Technology Stacks", "## Repository Fingerprint", "## Executive Summary"):
-        assert heading in brd, heading
+    evidence = Path(state["evidence_path"]).read_text()
+    assert "## Executive Summary" in brd
+    for heading in ("## Detected Technology Stacks", "## Repository Fingerprint"):
+        assert heading in evidence and heading not in brd, heading
     for label in ("JSP / Servlet web tier", "Backbone.js front end", "Java application"):
         assert f"A journey through {label}" in brd                          # the PO saw every stack
     assert spec.index("### JSP / Servlet web tier") < spec.index("### Backbone.js front end") \
@@ -613,7 +618,8 @@ def test_large_repository_discovery_with_the_business_rules_ledger(scripted, tmp
     java_files = sorted(f for f in {**_fixture("stack-discovery"), **java} if f.endswith(".java"))
     assert sorted(f for u in scripted.units for f in u) == java_files          # each file read once
     assert all(len(u) <= 2 for u in scripted.units)
-    brd = state["brd"]
-    assert "## Business Rules Catalog" in brd and "## Business Rules Coverage" in brd
-    assert brd.index("## Executive Summary") < brd.index("## Business Rules Catalog") < brd.index("## Evidence Check")
-    assert "Rule found in" in brd
+    brd, evidence = state["brd"], Path(state["evidence_path"]).read_text()
+    assert brd.index("## Executive Summary") < brd.index("## Business Rules Catalog")
+    assert "Rule found in" in brd and "## Business Rules Coverage" not in brd and "Source" not in brd
+    assert evidence.index("## Business Rules Catalog — Code Locations and Tests") \
+        < evidence.index("## Business Rules Coverage") < evidence.index("## Evidence Check")

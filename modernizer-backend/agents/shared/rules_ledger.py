@@ -340,6 +340,45 @@ def catalog_markdown(ledger: dict, max_rules: int) -> str:
     return "\n".join(lines)
 
 
+#: Rule types as a business reader groups them, in this order.
+_TYPE_HEADINGS = {
+    "authorization": "Access and permissions", "validation": "Validation", "eligibility": "Eligibility",
+    "calculation": "Calculations", "state-transition": "Status changes", "workflow": "Workflow",
+    "default": "Defaults", "constraint": "Constraints", "data-integrity": "Data integrity",
+    "notification": "Notifications", "other": "Other rules",
+}
+TECHNICAL_ONLY = "Described only in technical terms — see the evidence file."
+
+
+def business_catalog_markdown(ledger: dict | None, max_rules: int) -> str:
+    """The catalog for the BRD: every rule in business words, by kind of rule, with
+    no code locations or tests (those are in the evidence file's catalog). Same ids."""
+    from .plain_language import phrase
+    rules = (ledger or {}).get("rules") or []
+    lines = ["## Business Rules Catalog", "",
+             "_Every business rule the system was found to apply, grouped by kind. Where each one is "
+             "implemented, and the tests that cover it, are recorded in the evidence file._"]
+    if not rules:
+        return "\n".join(lines + ["", "No business rules were found in the analysed code."])
+    shown = rules[:max_rules]
+    if len(rules) > max_rules:
+        lines += ["", f"> Showing {max_rules:,} of {len(rules):,} rules. The business-rules download (CSV) "
+                  "has all of them."]
+    order = list(_TYPE_HEADINGS)
+    by_type: dict[str, list[dict]] = {}
+    for rule in shown:
+        kind = rule.get("type") if rule.get("type") in _TYPE_HEADINGS else "other"
+        by_type.setdefault(kind, []).append(rule)
+    for kind in sorted(by_type, key=order.index):
+        lines += ["", f"### {_TYPE_HEADINGS[kind]}", "", "| ID | Rule | When | Then | Basis |", "|---|---|---|---|---|"]
+        for rule in by_type[kind]:
+            basis = "Stated in the system" if rule.get("basis") == "explicit" else "Inferred — confirm with the business"
+            lines.append(f"| {rule['id']} | {_cell(phrase(rule.get('statement', '')) or TECHNICAL_ONLY)} | "
+                         f"{_cell(phrase(rule.get('condition', '')) or '—')} | "
+                         f"{_cell(phrase(rule.get('outcome', '')) or '—')} | {basis} |")
+    return "\n".join(lines)
+
+
 def to_csv(ledger: dict) -> str:
     out = io.StringIO()
     w = csv.writer(out)
