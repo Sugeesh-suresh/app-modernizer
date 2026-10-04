@@ -10,6 +10,7 @@ through it, which is all activation does anyway.
 
     python dev.py              set up if needed, then start the API with auto-reload
     python dev.py setup        create .venv and install requirements, nothing else
+    python dev.py setup-ui     setup, then build the optional UI-screenshot tools
     python dev.py test         run the test suite (installs pytest into .venv first)
     python dev.py run --port 9000 --host 0.0.0.0 --no-reload
 
@@ -20,6 +21,7 @@ Standard library only, so it runs before any dependency is installed.
 import argparse
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -64,6 +66,39 @@ def _run(argv: list) -> int:
         return 130
 
 
+RENDERER = ROOT / "tools" / "thymeleaf-render"
+RENDERER_JAR = RENDERER / "target" / "thymeleaf-render.jar"
+
+
+def renderer_is_stale() -> bool:
+    if not RENDERER_JAR.exists():
+        return True
+    built = RENDERER_JAR.stat().st_mtime
+    sources = [RENDERER / "pom.xml", *(RENDERER / "src").rglob("*.java")]
+    return any(s.stat().st_mtime > built for s in sources)
+
+
+def setup_ui() -> int:
+    """Optional tools for stack discovery's UI screenshots: the Thymeleaf renderer
+    (Java 17+ and Maven) and Playwright's Chromium. Without them the option is
+    shown as unavailable, with the reason; nothing else depends on them."""
+    code = setup()
+    if code:
+        return code
+    mvn = shutil.which("mvn") or shutil.which("mvn.cmd")
+    if not (mvn and shutil.which("java")):
+        print("ERROR: Java 17+ and Maven are needed to build the Thymeleaf renderer.", file=sys.stderr)
+        return 1
+    print("Building the Thymeleaf renderer for UI screenshots ...")
+    code = _run([mvn, "-q", "-f", RENDERER / "pom.xml", "package"])
+    if code:
+        return code
+    if os.environ.get("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD") == "1":
+        print("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1: not installing Chromium (set UI_SCREENSHOTS_CHROMIUM instead).")
+        return 0
+    return _run([venv_python(), "-m", "playwright", "install", "chromium"])
+
+
 def setup() -> int:
     python = venv_python()
     if not python.exists():
@@ -80,6 +115,8 @@ def setup() -> int:
         STAMP.write_text(requirements_hash(), encoding="utf-8")
     else:
         print("Requirements already installed.")
+    if renderer_is_stale():
+        print("Optional: `python dev.py setup-ui` builds the tools for stack discovery's UI screenshots.")
     print(f"Environment ready. To use it in your own shell — {activate_hint()}")
     return 0
 
@@ -116,12 +153,15 @@ def main(argv: list | None = None) -> int:
     run_p.add_argument("--port", type=int, default=8000)
     run_p.add_argument("--no-reload", action="store_true")
     sub.add_parser("setup", help="create .venv and install requirements")
+    sub.add_parser("setup-ui", help="also build the UI screenshot tools (Thymeleaf renderer, Chromium)")
     test_p = sub.add_parser("test", help="run the test suite")
     test_p.add_argument("pytest_args", nargs=argparse.REMAINDER)
 
     args = parser.parse_args(argv)
     if args.command == "setup":
         return setup()
+    if args.command == "setup-ui":
+        return setup_ui()
     if args.command == "test":
         return test(args.pytest_args)
     if args.command == "run":

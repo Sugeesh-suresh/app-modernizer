@@ -5,6 +5,7 @@ modernizer-backend/**/__pycache__/
 modernizer-backend/*.pyc
 modernizer-backend/*.db
 modernizer-backend/modernizer.db
+modernizer-backend/tools/thymeleaf-render/target/
 
 # Environment secrets — NEVER commit these
 modernizer-backend/.env

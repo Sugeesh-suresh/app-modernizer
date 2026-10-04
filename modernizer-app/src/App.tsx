@@ -51,6 +51,8 @@ const INITIAL_STATE: WorkflowState = {
   skillCuratorSummary: '',
   refining: false,
   companionRecommendations: [],
+  screenshotsOffer: null,
+  uiScreens: '',
   error: null,
 };
 
@@ -283,7 +285,11 @@ export default function App() {
         break; // graph is folded into technical_spec server-side; nothing to do here
 
       case 'companion-recommendations':
-        setState((s) => ({ ...s, companionRecommendations: event.companions ?? [] }));
+        setState((s) => ({
+          ...s,
+          companionRecommendations: event.companions ?? [],
+          screenshotsOffer: event.screenshots ?? null,
+        }));
         break;
 
       // stack-discovery: the dependency mapper's streamed reasoning, then its
@@ -313,6 +319,7 @@ export default function App() {
           brd: event.brd ?? s.streamingContent,
           technicalSpec: event.technical_spec ?? '',
           testInventory: event.test_inventory ?? '',
+          uiScreens: event.ui_screens ?? '',
           step: 'brd-review',
           streamingContent: '',
           refining: false,
@@ -404,11 +411,11 @@ export default function App() {
     connectSSE(sessionId);
   };
 
-  const handleSelectCompanions = async (selected: string[]) => {
+  const handleSelectCompanions = async (selected: string[], screenshots = false) => {
     if (!state.sessionId) return;
     // The backend's next step-change (reverse-engineering) advances the view,
     // same as the BRD/plan confirm flows.
-    await selectCompanions(state.sessionId, selected);
+    await selectCompanions(state.sessionId, selected, screenshots);
   };
 
   const handleConfirmBrd = async (brdContent: string, techSpecContent: string, feedback?: string) => {
@@ -544,6 +551,7 @@ export default function App() {
             recommendations={state.companionRecommendations}
             onConfirm={handleSelectCompanions}
             discovery={reOnly}
+            screenshotsOffer={reOnly ? state.screenshotsOffer : null}
           />
         )}
 
@@ -577,6 +585,7 @@ export default function App() {
             brd={state.brd}
             technicalSpec={state.technicalSpec}
             testInventory={state.testInventory}
+            uiScreens={state.uiScreens}
             refining={state.refining}
             refiningContent={state.streamingContent}
             onConfirm={handleConfirmBrd}

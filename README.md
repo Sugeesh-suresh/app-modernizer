@@ -135,6 +135,15 @@ Two tables are computed from the repository, with no model, given to the Enterpr
 
 The BRD opens with the stack table and the **Repository Fingerprint**, then the Product Owner's BRD, the Business Rules Catalog and Coverage, and the Evidence Check. The Technical Specification opens with the deterministic dependency graphs, then the Enterprise Architect's specification. **"Refine with AI" re-runs only the writer of the tab being refined** (BRD → Product Owner, Technical Specification/Test Inventory → Enterprise Architect), from the stored evidence, without reading the code again.
 
+**UI Screens (optional, per repository).** When a confirmed stack is a UI the pipeline can render (Thymeleaf today), the stack-confirmation screen shows a **Capture UI screenshots** checkbox — unticked by default (`UI_SCREENSHOTS_DEFAULT`), disabled with the reason when the tools are missing or the UI is JSP / a single-page app, and never shown with `UI_SCREENSHOTS=off` or for a repository without a UI. Ticked, the pipeline renders the pages into a separate **UI Screens** document (its own tab, and a zip download of the Markdown and images); the BRD, Technical Specification and Test Inventory are unchanged. No model is involved and the same repository gives byte-identical images:
+
+1. **Pages** (`shared/ui_screens.py`): every GET page endpoint of the Interface & Job Inventory whose view is a literal (`return "x"`, `new ModelAndView("x")`, `setViewName("x")`, early redirects skipped) and resolves to a template under `<resources>/templates` or `spring.thymeleaf.prefix`, then the page templates no controller names (layouts, fragments and mail templates excluded). A view with no Thymeleaf template (JSP) is listed as not rendered.
+2. **Sample data and states** (`shared/ui_mock_data.py`): tree-sitter reads the handler's `addAttribute`/`addObject`/`put` calls, `@ModelAttribute` parameters and methods (also in `@ControllerAdvice`), and resolves each value's type through the repository's own classes — `service.findAll()` → `List<Job>`, `JobType.values()` → every constant, `new Job()` → a blank form — then fills fields (inherited ones and records included) with fixed values by type and name (`email` → `user1@example.com`, dates → 2026-01-15, prices → 49.99, lists → three items). The template's own `${…}`/`*{…}` paths, scoped through `th:each`/`th:object`/`th:with` and the fragments and layout it includes, fill what the code does not reveal. Each condition the page tests becomes a state after the default one: an empty list, a message or flag set, a request parameter present (`?error`), signed in without the roles `sec:authorize` names, signed out — up to `UI_SCREENSHOTS_MAX_STATES` per page and `UI_SCREENSHOTS_MAX_PAGES` screens in all.
+3. **Render** (`tools/thymeleaf-render`, a small Java tool built with `python dev.py setup-ui`): Spring's Thymeleaf engine with the layout dialect, the repository's `messages*.properties`, `@{…}` links resolved without a server, `sec:authorize`/`sec:authentication` evaluated against the state's sample user, and `th:field`/`th:errors`/`#fields` filled from the sample form object. It runs on a copy of the templates (symbolic links never followed), with no inherited environment, and its expressions cannot reach Java classes: type references (`T(…)`), constructors, bean references and methods leading to classes, class loaders, reflection, processes, threads, files or the network are refused. A page it cannot render becomes a labelled static preview of the raw template.
+4. **Screenshot**: headless Chromium (Playwright), 1366 px wide, scripts off, every request answered from the module's `static/`/`public/` folders or refused — nothing leaves the machine.
+
+Each screen lists its page, handler, template, state, the business rules (`BR-` ids) whose source is that template or handler, and the sample data used (in full for the default state, then only what differs). Everything not rendered is listed with the reason, and a failure of this stage is reported in the document without affecting the others.
+
 **Large repositories and the business-rules ledger.** Two mechanisms keep discovery exhaustive where one agent run could only sample:
 
 - **Units.** A stack with more than `DISCOVERY_CHUNK_MIN_FILES` (150) of its own source files (Java, JSP, front-end, or a generic language stack) is documented in units of at most `DISCOVERY_UNIT_MAX_FILES` (40) files, directories kept together. Each unit run (`skills/stack-discovery-unit`) is given its exact file list and reads every file, noting each one as it goes; `RE_CONCURRENCY` units run at once, each in its own short-lived session. Each unit returns its own Evidence Pack, and the units' packs together are the stack's evidence. Stacks whose artifacts are not a body of source (databases, brokers, servers) stay single-run.
@@ -381,6 +390,8 @@ python dev.py setup             # Linux/macOS: python3 dev.py setup · Windows: 
 
 It creates `.venv`, installs `requirements.txt`, and on later runs reinstalls only when `requirements.txt` has changed.
 
+For stack discovery's optional UI screenshots, `python dev.py setup-ui` also builds the Thymeleaf renderer (needs Java 17+ and Maven; it downloads public Maven Central libraries) and installs Playwright's Chromium. Without it everything else works and the option is shown as unavailable, with the reason.
+
 To do it by hand instead, note that a virtual environment keeps its scripts in **`.venv/bin`** on Linux/macOS but **`.venv\Scripts`** on Windows — which is why `source .venv/bin/activate` fails there:
 
 | OS / shell | Create | Activate |
@@ -504,6 +515,7 @@ app-modernizer/
 └── modernizer-backend/
     ├── main.py                            # FastAPI app + pipeline orchestration
     ├── dev.py                             # Cross-platform setup / run / test (no activation)
+    ├── tools/thymeleaf-render/            # Java renderer for UI Screens (python dev.py setup-ui)
     ├── llm_auth.py                        # Gemini API key or Vertex AI, resolved at startup
     ├── agents/
     │   ├── __init__.py                    # PATTERN_RUNNERS / TARGET_LANGS registry
@@ -523,6 +535,8 @@ app-modernizer/
     │       ├── stack_detector.py          # Primary-less whole-stack detection
 │       ├── interfaces.py              # Endpoint / scheduled-job / listener inventory (syntax tree)
 │       ├── config_matrix.py           # Configuration keys × profiles, secrets redacted
+│       ├── ui_screens.py              # Optional UI Screens: plan, render, screenshot, document
+│       ├── ui_mock_data.py            # Sample data and page states read from controllers and templates
     │       ├── plan_tasks.py              # Stage + task parsing
     │       ├── plan_contract.py           # The six questions
     │       ├── plan_coverage.py           # Plan manifest vs. what changed
@@ -584,6 +598,13 @@ app-modernizer/
 | `RULES_BATCH_MAX_CHARS` | No | `60000` | Characters of candidate source per extraction call |
 | `RULES_CANDIDATE_MAX_LINES` | No | `250` | Lines of one candidate shown to the model; longer ones are cut and counted in the coverage report |
 | `RULES_CATALOG_MAX_IN_DOCUMENT` | No | `2000` | Rules listed in the document; the CSV always has all of them |
+| `UI_SCREENSHOTS` | No | `offer` | `offer`: show the UI-screenshots checkbox for a repository with a renderable UI; `off`: never |
+| `UI_SCREENSHOTS_DEFAULT` | No | `false` | Whether that checkbox starts ticked |
+| `UI_SCREENSHOTS_MAX_PAGES` | No | `50` | Screens per run; the rest are listed as not rendered |
+| `UI_SCREENSHOTS_MAX_STATES` | No | `4` | States per page (default, empty list, message shown, fewer roles, …) |
+| `UI_SCREENSHOTS_TIMEOUT_S` | No | `600` | Time limit for the whole screenshot stage |
+| `UI_SCREENSHOTS_CHROMIUM` | No | — | Chromium executable; default: Playwright's installed browser |
+| `UI_THYMELEAF_RENDERER` | No | `tools/thymeleaf-render/target/thymeleaf-render.jar` | The renderer built by `python dev.py setup-ui` |
 | `SEARCH_MAX_RESULTS` | No | `200` | Matches per `search_files` page (the total is always reported) |
 | `SEARCH_MAX_FILE_BYTES` | No | `2000000` | Files larger than this are skipped by `search_files`, and counted as skipped |
 | `COMMAND_OUTPUT_MAX_CHARS` | No | `40000` | Characters of build output returned (head + tail) |

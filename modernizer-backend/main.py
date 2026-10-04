@@ -49,7 +49,7 @@ from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11 import preflight as java11_preflight
 from agents.shared import (config_matrix, current_state, evidence_pack, interfaces, migration_inventory, repo_fingerprint,
-                           rule_candidates, rules_ledger)
+                           rule_candidates, rules_ledger, ui_screens)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -71,6 +71,8 @@ _sse_queues: dict[str, asyncio.Queue] = {}
 _brd_gates: dict[str, asyncio.Event] = {}
 _plan_gates: dict[str, asyncio.Event] = {}
 _companion_gates: dict[str, asyncio.Event] = {}
+# Stack discovery's optional UI-screens stage, running beside the evidence agents.
+_ui_screen_tasks: dict[str, asyncio.Task] = {}
 
 # The 4 "core" migration patterns that can participate in a companion bundle
 # (jsp-to-react-bff is excluded — it's a full architecture rewrite, not a
@@ -1015,6 +1017,14 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         "evidence_dir": "",
         "interfaces_json": "",
         "config_matrix_markdown": "",
+        # UI screens (agents/shared/ui_screens.py): what was offered at stack
+        # confirmation, whether the reviewer chose it, the capture manifest,
+        # the folder holding the images, and the document built from them.
+        "ui_screens_offer_json": "",
+        "ui_screenshots": "",
+        "ui_screens_json": "",
+        "ui_screens_dir": "",
+        "ui_screens": "",
         "evidence_count": "",
         "po_brd": "",
         "ea_spec": "",
@@ -1968,9 +1978,53 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     test_inventory = ea_tests
 
     brd, tech_spec = _with_ingestion_warning(state, brd, tech_spec)
-    await _update_state(session_id, {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory})
+    ui_md = await _ui_screens_document(session_id, ledger)
+    await _update_state(session_id, {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory,
+                                     "ui_screens": ui_md})
     if announce:
-        await _push(session_id, "brd-ready", brd=brd, technical_spec=tech_spec, test_inventory=test_inventory)
+        extra = {"ui_screens": ui_md} if ui_md else {}
+        await _push(session_id, "brd-ready", brd=brd, technical_spec=tech_spec, test_inventory=test_inventory,
+                    **extra)
+
+
+async def _run_ui_screens(session_id: str) -> None:
+    """Render the confirmed UI's pages with sample data (agents/shared/ui_screens.py).
+    Never raises: whatever goes wrong is recorded in the manifest and shown in
+    the UI Screens document, and the other documents are unaffected."""
+    state = await _get_state(session_id)
+    workspace_dir = state.get("workspace_dir", "")
+    out_dir = state.get("ui_screens_dir") or tempfile.mkdtemp(prefix="modernizer-screens-")
+    await _update_state(session_id, {"ui_screens_dir": out_dir})
+    await _push(session_id, "re-stream", content="\n\n### UI screens: rendering pages with sample data\n")
+    try:
+        inventory = await asyncio.to_thread(interfaces.scan, workspace_dir)
+        manifest = await asyncio.wait_for(ui_screens.capture(workspace_dir, inventory, out_dir),
+                                          timeout=config.UI_SCREENSHOTS_TIMEOUT_S + 60)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:                                  # noqa: BLE001 — reported in the document
+        detail = str(exc).replace(workspace_dir.rstrip("/") + "/", "")[:300] if workspace_dir else str(exc)[:300]
+        manifest = {"screens": [], "not_rendered": [], "pages": 0,
+                    "notes": [f"Screenshots could not be produced: {type(exc).__name__}: {detail}"]}
+    await _update_state(session_id, {"ui_screens_json": json.dumps(manifest)})
+    await _push(session_id, "re-stream",
+                content=f"\nUI screens: {len(manifest['screens'])} screen(s), "
+                        f"{len(manifest['not_rendered'])} not rendered.\n")
+
+
+async def _ui_screens_document(session_id: str, ledger: dict | None) -> str:
+    """The UI Screens document, once the stage has finished; "" when screenshots were not chosen.
+    Built from the stored manifest, so a refine reproduces it exactly."""
+    task = _ui_screen_tasks.pop(session_id, None)
+    if task is not None:
+        try:
+            await task
+        except Exception:                                     # noqa: BLE001 — _run_ui_screens records its own failures
+            traceback.print_exc()
+    manifest = (await _get_state(session_id)).get("ui_screens_json", "")
+    if not manifest:
+        return ""
+    return ui_screens.to_markdown(json.loads(manifest), ledger)
 
 
 async def _run_bundle_plan(session_id: str, bundle: list[str], feedback: str | None = None) -> None:
@@ -2409,8 +2463,14 @@ async def _run_stack_discovery_workflow(session_id: str) -> None:
     if stacks:
         # Same event, gate and endpoint as the companion flow — from the
         # reviewer's side it is the same decision (which of these detected
-        # things do you want worked on), so it gets the same UI.
-        await _push(session_id, "companion-recommendations", companions=stacks)
+        # things do you want worked on), so it gets the same UI. A repository
+        # with a UI the pipeline can render also gets the screenshots option.
+        offer = await asyncio.to_thread(ui_screens.offer, stacks)
+        extra = {}
+        if offer is not None:
+            await _update_state(session_id, {"ui_screens_offer_json": json.dumps(offer)})
+            extra["screenshots"] = offer
+        await _push(session_id, "companion-recommendations", companions=stacks, **extra)
         await _push(session_id, "step-change", step="companion-selection")
         await _companion_gates[session_id].wait()
     else:
@@ -2422,6 +2482,10 @@ async def _run_stack_discovery_workflow(session_id: str) -> None:
     bundle = _bundle_for(state)
 
     await _push(session_id, "step-change", step="reverse-engineering")
+    if bundle and state.get("ui_screenshots") == "true":
+        # No model calls: runs beside the evidence agents; the documents step
+        # waits for it before the review screen opens.
+        _ui_screen_tasks[session_id] = asyncio.create_task(_run_ui_screens(session_id))
     if bundle:
         await _run_rules_extraction(session_id)
     await _run_bundle_re(session_id, bundle)
@@ -2816,10 +2880,16 @@ async def select_companions(session_id: str, body: SelectCompanionsRequest = Sel
     state = await _get_state(session_id)
     recommended = {r["pattern"] for r in json.loads(state.get("companion_recommendations_json", "[]"))}
     selected = [p for p in body.selected if p in recommended]
+    # Screenshots only when they were offered as available and a UI stack they
+    # cover is among the stacks the reviewer kept.
+    offer = json.loads(state.get("ui_screens_offer_json") or "null") or {}
+    screenshots = bool(body.screenshots and offer.get("available")
+                       and any(p in selected for p in offer.get("stacks", [])))
 
-    await _update_state(session_id, {"companion_patterns_json": json.dumps(selected)})
+    await _update_state(session_id, {"companion_patterns_json": json.dumps(selected),
+                                     "ui_screenshots": "true" if screenshots else ""})
     _companion_gates[session_id].set()
-    return {"ok": True, "selected": selected}
+    return {"ok": True, "selected": selected, "screenshots": screenshots}
 
 
 @app.post("/api/sessions/{session_id}/confirm-brd")
@@ -2897,6 +2967,49 @@ async def download_business_rules(session_id: str):
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="business-rules-{session_id[:8]}.csv"'},
     )
+
+
+_SCREEN_FILE = _re.compile(r"^SCR-\d{4}\.png$")
+
+
+def _screen_files(state: dict) -> list[str]:
+    """The images this session's UI Screens document names — the only files the routes below serve."""
+    manifest = json.loads(state.get("ui_screens_json") or "{}")
+    return [s["image"] for s in manifest.get("screens", []) if _SCREEN_FILE.match(s.get("image", ""))]
+
+
+@app.get("/api/sessions/{session_id}/screens/{name}")
+async def ui_screen_image(session_id: str, name: str):
+    state = await _get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    if name not in _screen_files(state):
+        raise HTTPException(status_code=404, detail="No such screen.")
+    path = Path(state.get("ui_screens_dir", "")) / name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="No such screen.")
+    return Response(content=path.read_bytes(), media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/api/sessions/{session_id}/download/ui-screens")
+async def download_ui_screens(session_id: str):
+    """The UI Screens document with its images: ui-screens.md and screens/*.png in one zip."""
+    state = await _get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    document = state.get("ui_screens", "")
+    if not document:
+        raise HTTPException(status_code=404, detail="No UI screens for this run.")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("ui-screens.md", document)
+        folder = Path(state.get("ui_screens_dir", ""))
+        for name in _screen_files(state):
+            if (folder / name).is_file():
+                archive.write(folder / name, f"screens/{name}")
+    return Response(content=buffer.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="ui-screens-{session_id[:8]}.zip"'})
 
 
 @app.get("/api/sessions/{session_id}/download/reverse-engineering")
@@ -3124,6 +3237,7 @@ async def get_session(session_id: str):
         "brd": state.get("brd") or None,
         "technical_spec": state.get("technical_spec") or None,
         "test_inventory": state.get("test_inventory") or None,
+        "ui_screens": state.get("ui_screens") or None,
         "plan": state.get("plan") or None,
         "generated_files": files,
         "changed_files": changed_files,

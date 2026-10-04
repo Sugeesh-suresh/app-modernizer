@@ -1,15 +1,18 @@
 import { useState } from 'react';
-import { ArrowRight, CheckCircle2, Loader2, Sparkles, FileSearch } from 'lucide-react';
-import type { CompanionRecommendation } from '../types';
+import { ArrowRight, CheckCircle2, Loader2, Sparkles, FileSearch, Camera } from 'lucide-react';
+import type { CompanionRecommendation, ScreenshotsOffer } from '../types';
 
 interface Props {
   primaryLabel: string;
   recommendations: CompanionRecommendation[];
-  onConfirm: (selected: string[]) => Promise<void>;
+  onConfirm: (selected: string[], screenshots: boolean) => Promise<void>;
   /** stack-discovery: there is no primary migration these sit alongside, and
    * nothing is being migrated at all — only reverse engineered. The copy has to
    * say that, or the screen promises migrations this run will never perform. */
   discovery?: boolean;
+  /** stack-discovery: the UI screenshots option — null when the repository has no UI
+   * or the option is switched off (UI_SCREENSHOTS=off). */
+  screenshotsOffer?: ScreenshotsOffer | null;
 }
 
 export function CompanionSelection({
@@ -17,7 +20,11 @@ export function CompanionSelection({
   recommendations,
   onConfirm,
   discovery = false,
+  screenshotsOffer = null,
 }: Props) {
+  const [screenshots, setScreenshots] = useState<boolean>(
+    () => !!screenshotsOffer?.available && screenshotsOffer.default,
+  );
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(recommendations.map((r) => r.pattern)),
   );
@@ -32,10 +39,14 @@ export function CompanionSelection({
     });
   };
 
+  // Screenshots render the UI stacks below; with all of them unchecked there is nothing to render.
+  const uiStackKept = !!screenshotsOffer?.stacks.some((p) => selected.has(p));
+  const screenshotsChosen = screenshots && !!screenshotsOffer?.available && uiStackKept;
+
   const handleConfirm = async () => {
     setConfirming(true);
     try {
-      await onConfirm(Array.from(selected));
+      await onConfirm(Array.from(selected), screenshotsChosen);
     } finally {
       setConfirming(false);
     }
@@ -113,6 +124,42 @@ export function CompanionSelection({
           );
         })}
       </div>
+
+      {screenshotsOffer && (
+        <div className="glass rounded-2xl p-5 mb-8">
+          <label
+            className={`flex items-start gap-3 ${screenshotsOffer.available && uiStackKept ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}
+          >
+            <input
+              type="checkbox"
+              checked={screenshotsChosen}
+              disabled={!screenshotsOffer.available || !uiStackKept}
+              onChange={(e) => setScreenshots(e.target.checked)}
+              className="mt-0.5 w-4 h-4 accent-violet-600 cursor-pointer disabled:cursor-not-allowed"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <Camera size={14} className="text-slate-500" />
+                <span className="text-sm font-semibold text-slate-900">Capture UI screenshots</span>
+              </div>
+              <p className="mt-1 text-xs text-slate-600">
+                Renders each page from the repository's own templates with generated sample data — in
+                its default state and the states its conditions allow (empty lists, messages, roles) —
+                as a separate <strong>UI Screens</strong> document. No model is used and nothing leaves
+                the server.
+              </p>
+              {screenshotsOffer.available && !uiStackKept && (
+                <p className="mt-1 text-xs text-amber-700">Keep a UI stack checked to capture its screens.</p>
+              )}
+              {screenshotsOffer.reason && (
+                <p className={`mt-1 text-xs ${screenshotsOffer.available ? 'text-slate-500' : 'text-amber-700'}`}>
+                  {screenshotsOffer.reason}
+                </p>
+              )}
+            </div>
+          </label>
+        </div>
+      )}
 
       <button
         onClick={handleConfirm}

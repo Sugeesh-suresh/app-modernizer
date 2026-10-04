@@ -10,13 +10,17 @@ of the refined document, and that the run stops at brd-review instead of falling
 through to plan generation.
 """
 import asyncio
+import io
 import json
 import re
+import zipfile
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 import main
 from agents import APP_NAME, USER_ID, session_service
+from models.schemas import SelectCompanionsRequest
 
 PRESCAN = [
     {"pattern": "wildfly", "label": "WildFly / JBoss (app server)", "kind": "server",
@@ -120,7 +124,7 @@ def _session(prescan: list[dict]) -> str:
 _RECORDED: dict[str, list[dict]] = {}
 
 
-def _run(sid: str, selected: list[str] | None) -> None:
+def _run(sid: str, selected: list[str] | None, screenshots: bool | None = None) -> None:
     """Drive the workflow, releasing each gate the way the HTTP endpoints do.
 
     Gates are released off the step-change events the workflow itself emits
@@ -150,6 +154,11 @@ def _run(sid: str, selected: list[str] | None) -> None:
                 if event.get("type") != "step-change":
                     continue
                 if event.get("step") == "companion-selection" and selected is not None:
+                    if screenshots is not None:
+                        # Through the endpoint itself, which decides whether the choice counts.
+                        await main.select_companions(sid, SelectCompanionsRequest(
+                            selected=selected, screenshots=screenshots))
+                        continue
                     await main._update_state(
                         sid, {"companion_patterns_json": json.dumps(selected)}
                     )
@@ -307,6 +316,149 @@ class TestStackDiscoveryWorkflow:
                          "brd-review", "complete"]
         assert "plan-generation" not in steps
         assert _state(sid)["plan"] == ""
+
+
+UI_PRESCAN = PRESCAN + [{"pattern": "thymeleaf", "label": "Thymeleaf server-rendered UI", "kind": "web-tier",
+                         "evidence": ["src/main/resources/templates/home.html: present"]}]
+UI_MAPPER_REPLY = (
+    "# Technology Stack Inventory\n\n```json\n" + json.dumps({"stacks": [
+        {"pattern": s["pattern"], "label": s["label"], "evidence": s["evidence"]} for s in UI_PRESCAN],
+        "rejected": []}) + "\n```"
+)
+OFFER = {"available": True, "default": False, "stacks": ["thymeleaf"], "reason": ""}
+
+
+def _fake_capture(calls: list, fail: bool = False):
+    async def capture(workspace_dir, inventory, out_dir, **kwargs):
+        calls.append(out_dir)
+        if fail:
+            raise RuntimeError(f"browser crashed in {workspace_dir}/x")
+        (Path(out_dir) / "SCR-0001.png").write_bytes(b"\x89PNG fake")
+        return {"pages": 1, "notes": [], "not_rendered": [], "screens": [{
+            "id": "SCR-0001", "image": "SCR-0001.png", "mode": "rendered", "note": "", "state": "default",
+            "description": "signed in as sample.user", "template": "src/main/resources/templates/home.html",
+            "files": ["src/main/resources/templates/home.html"], "endpoint": None, "model": {"title": "x"}}]}
+    return capture
+
+
+class TestUiScreens:
+    def test_without_a_ui_nothing_changes(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(main.ui_screens, "capture", _fake_capture(calls))
+        _Harness(monkeypatch)
+        sid = _session(PRESCAN)
+
+        _run(sid, ["java"], screenshots=True)
+
+        recs = next(e for e in _events(sid) if e.get("type") == "companion-recommendations")
+        ready = next(e for e in _events(sid) if e.get("type") == "brd-ready")
+        assert "screenshots" not in recs and "ui_screens" not in ready
+        assert calls == [] and _state(sid)["ui_screens"] == "" and _state(sid)["ui_screenshots"] == ""
+
+    def test_offered_but_not_chosen_produces_no_screens(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(main.ui_screens, "offer", lambda stacks: OFFER)
+        monkeypatch.setattr(main.ui_screens, "capture", _fake_capture(calls))
+        _Harness(monkeypatch, mapper_reply=UI_MAPPER_REPLY)
+        sid = _session(UI_PRESCAN)
+
+        _run(sid, ["java", "thymeleaf"], screenshots=False)
+
+        recs = next(e for e in _events(sid) if e.get("type") == "companion-recommendations")
+        assert recs["screenshots"] == OFFER
+        assert calls == [] and "ui_screens" not in next(e for e in _events(sid) if e.get("type") == "brd-ready")
+
+    def test_chosen_screens_become_their_own_document(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(main.ui_screens, "offer", lambda stacks: OFFER)
+        monkeypatch.setattr(main.ui_screens, "capture", _fake_capture(calls))
+        _Harness(monkeypatch, mapper_reply=UI_MAPPER_REPLY)
+        sid = _session(UI_PRESCAN)
+
+        _run(sid, ["java", "thymeleaf"], screenshots=True)
+
+        state = _state(sid)
+        ready = next(e for e in _events(sid) if e.get("type") == "brd-ready")
+        assert len(calls) == 1 and state["ui_screenshots"] == "true"
+        assert ready["ui_screens"] == state["ui_screens"]
+        assert state["ui_screens"].startswith("## UI Screens") and "(screens/SCR-0001.png)" in state["ui_screens"]
+        # The other documents are untouched by it.
+        assert "UI Screens" not in state["brd"] + state["technical_spec"]
+        assert (Path(state["ui_screens_dir"]) / "SCR-0001.png").is_file()
+
+    def test_unchecking_the_ui_stack_turns_screenshots_off(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(main.ui_screens, "offer", lambda stacks: OFFER)
+        monkeypatch.setattr(main.ui_screens, "capture", _fake_capture(calls))
+        _Harness(monkeypatch, mapper_reply=UI_MAPPER_REPLY)
+        sid = _session(UI_PRESCAN)
+
+        _run(sid, ["java"], screenshots=True)
+
+        assert calls == [] and _state(sid)["ui_screenshots"] == ""
+
+    def test_an_unavailable_offer_cannot_be_chosen(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(main.ui_screens, "offer", lambda stacks: {**OFFER, "available": False,
+                                                                      "reason": "no browser"})
+        monkeypatch.setattr(main.ui_screens, "capture", _fake_capture(calls))
+        _Harness(monkeypatch, mapper_reply=UI_MAPPER_REPLY)
+        sid = _session(UI_PRESCAN)
+
+        _run(sid, ["java", "thymeleaf"], screenshots=True)
+
+        assert calls == [] and _state(sid)["ui_screens"] == ""
+
+    def test_a_capture_failure_is_reported_and_the_documents_still_arrive(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(main.ui_screens, "offer", lambda stacks: OFFER)
+        monkeypatch.setattr(main.ui_screens, "capture", _fake_capture(calls, fail=True))
+        _Harness(monkeypatch, mapper_reply=UI_MAPPER_REPLY)
+        sid = _session(UI_PRESCAN)
+
+        _run(sid, ["java", "thymeleaf"], screenshots=True)
+
+        state = _state(sid)
+        assert "## Executive Summary" in state["brd"] and state["technical_spec"]
+        assert "Screenshots could not be produced: RuntimeError: browser crashed in x" in state["ui_screens"]
+        assert "/tmp/ws-discovery" not in state["ui_screens"]
+
+    def test_a_refine_keeps_the_same_screens_document(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(main.ui_screens, "offer", lambda stacks: OFFER)
+        monkeypatch.setattr(main.ui_screens, "capture", _fake_capture(calls))
+        _Harness(monkeypatch, mapper_reply=UI_MAPPER_REPLY)
+        sid = _session(UI_PRESCAN)
+        _run(sid, ["java", "thymeleaf"], screenshots=True)
+        before = _state(sid)["ui_screens"]
+
+        asyncio.run(main._run_discovery_documents(sid, ["java", "thymeleaf"], feedback="shorter", target="brd"))
+
+        assert _state(sid)["ui_screens"] == before and len(calls) == 1
+
+    def test_screen_images_and_zip_are_served_only_for_listed_screens(self, tmp_path):
+        sid = _session(PRESCAN)
+        (tmp_path / "SCR-0001.png").write_bytes(b"\x89PNG one")
+        (tmp_path / "SCR-0002.png").write_bytes(b"\x89PNG not listed")
+        asyncio.run(main._update_state(sid, {
+            "ui_screens_dir": str(tmp_path), "ui_screens": "## UI Screens\n\n![SCR-0001](screens/SCR-0001.png)\n",
+            "ui_screens_json": json.dumps({"screens": [{"id": "SCR-0001", "image": "SCR-0001.png"}]})}))
+
+        with TestClient(main.app) as client:
+            ok = client.get(f"/api/sessions/{sid}/screens/SCR-0001.png")
+            unlisted = client.get(f"/api/sessions/{sid}/screens/SCR-0002.png")
+            traversal = client.get(f"/api/sessions/{sid}/screens/..%2F..%2Fetc%2Fpasswd")
+            archive = client.get(f"/api/sessions/{sid}/download/ui-screens")
+
+        assert ok.status_code == 200 and ok.content == b"\x89PNG one" and ok.headers["content-type"] == "image/png"
+        assert unlisted.status_code == 404 and traversal.status_code == 404
+        names = zipfile.ZipFile(io.BytesIO(archive.content)).namelist()
+        assert archive.status_code == 200 and names == ["ui-screens.md", "screens/SCR-0001.png"]
+
+    def test_no_zip_without_screens(self):
+        sid = _session(PRESCAN)
+        with TestClient(main.app) as client:
+            assert client.get(f"/api/sessions/{sid}/download/ui-screens").status_code == 404
 
 
 class TestPlanEndpointsRejected:

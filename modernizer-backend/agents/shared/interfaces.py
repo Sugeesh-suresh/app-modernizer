@@ -5,7 +5,8 @@ model involved.
 - HTTP endpoints: Spring MVC/REST (`@RequestMapping` on the class joined with
   `@GetMapping`/`@PostMapping`/… or `@RequestMapping(method=…)` on the method)
   and JAX-RS (`@Path` + `@GET`/`@POST`/…). For a page controller the view name it
-  returns is recorded when it is a literal.
+  returns is recorded when it is a literal (`return "x"`, `new ModelAndView("x")`,
+  `setViewName("x")`).
 - Scheduled jobs: `@Scheduled` (cron / fixedRate / fixedDelay / initialDelay,
   property placeholders kept as written).
 - Message listeners: `@JmsListener`, `@KafkaListener`, `@RabbitListener`,
@@ -118,9 +119,14 @@ def scan(workspace_dir: str) -> dict:
                     if jaxrs:
                         verbs, mpaths = jaxrs, (_paths(ann["Path"]) if "Path" in ann else [""])
                     if verbs:
-                        returns = re.search(r"return\s+\"([^\"]+)\"\s*;", _text(member, src))
+                        # The page's view: the first literal that is not an early redirect / forward.
+                        literals = [next(g for g in m.groups() if g) for m in re.finditer(
+                            r"return\s+\"([^\"]+)\"\s*;|new\s+ModelAndView\(\s*\"([^\"]+)\"|"
+                            r"setViewName\(\s*\"([^\"]+)\"\s*\)", _text(member, src))]
+                        returns = next((v for v in literals if not v.startswith(("redirect:", "forward:"))),
+                                       literals[0] if literals else "")
                         api = rest or "ResponseBody" in ann or bool(jaxrs)
-                        view = "" if api or not returns else returns.group(1)
+                        view = "" if api else returns
                         for base in bases:
                             for mp in mpaths:
                                 for verb in verbs:

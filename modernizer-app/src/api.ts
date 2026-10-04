@@ -77,11 +77,13 @@ export async function confirmBrd(
   if (!res.ok) throw await apiError(res, 'Failed to confirm BRD');
 }
 
-export async function selectCompanions(sessionId: string, selected: string[]): Promise<void> {
+export async function selectCompanions(
+  sessionId: string, selected: string[], screenshots = false,
+): Promise<void> {
   const res = await fetch(`${BASE}/api/sessions/${sessionId}/select-companions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ selected }),
+    body: JSON.stringify({ selected, screenshots }),
   });
   if (!res.ok) throw await apiError(res, 'Failed to confirm companion migrations');
 }
@@ -146,6 +148,14 @@ export const reverseEngineeringDownloadUrl = (sessionId: string) =>
  * candidate with its classification) as CSV — the document lists up to a limit. */
 export const businessRulesDownloadUrl = (sessionId: string) =>
   `${BASE}/api/sessions/${sessionId}/download/business-rules`;
+
+/** stack-discovery: the UI Screens document and its images, as one zip. */
+export const uiScreensDownloadUrl = (sessionId: string) =>
+  `${BASE}/api/sessions/${sessionId}/download/ui-screens`;
+
+/** One rendered screen of the UI Screens document (`screens/SCR-0001.png` in its Markdown). */
+export const uiScreenUrl = (sessionId: string, name: string) =>
+  `${BASE}/api/sessions/${sessionId}/screens/${encodeURIComponent(name)}`;
 
 export const planDownloadUrl = (sessionId: string) =>
   `${BASE}/api/sessions/${sessionId}/download/plan`;

@@ -75,6 +75,9 @@ class RefineRequest(BaseModel):
 
 class SelectCompanionsRequest(BaseModel):
     selected: List[str] = []
+    # Stack discovery: render the UI's pages as a "UI Screens" document. Honoured
+    # only when the pipeline offered it for this repository.
+    screenshots: bool = False
 
 
 class ChangedFile(BaseModel):

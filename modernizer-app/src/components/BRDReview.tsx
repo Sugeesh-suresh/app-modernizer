@@ -1,11 +1,13 @@
 import { useRef, useState } from 'react';
 import {
   CheckCircle2, MessageSquare, FileText, Loader2, Pencil, Eye,
-  Download, Paperclip, X, AlertCircle, Network, Sparkles, ClipboardList,
+  Download, Paperclip, X, AlertCircle, Network, Sparkles, ClipboardList, Camera,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { brdDownloadUrl, businessRulesDownloadUrl, uploadContextFiles } from '../api';
+import {
+  brdDownloadUrl, businessRulesDownloadUrl, uiScreenUrl, uiScreensDownloadUrl, uploadContextFiles,
+} from '../api';
 
 // ── Plain-text diagram renderer ──────────────────────────────────────────────
 // Diagrams (class trees, business flows, the dependency graph) arrive as fenced
@@ -44,12 +46,26 @@ const PROSE_CLS = `prose prose-invert prose-sm max-w-none
   prose-table:text-slate-700 prose-th:text-slate-800
   prose-td:border-slate-900/10 prose-th:border-slate-900/15`;
 
-function MarkdownWithDiagrams({ content }: { content: string }) {
+/** `screenSessionId`: the UI Screens document — its `screens/SCR-0001.png` images
+ * are served by the backend for that session. Any other image is not loaded. */
+function MarkdownWithDiagrams({ content, screenSessionId }: { content: string; screenSessionId?: string }) {
   return (
     <div className={PROSE_CLS}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          img({ src, alt }) {
+            const name = typeof src === 'string' ? /^screens\/(SCR-\d{4}\.png)$/.exec(src)?.[1] : undefined;
+            if (!screenSessionId || !name) return <span className="text-xs text-slate-500">[image: {alt}]</span>;
+            return (
+              <img
+                src={uiScreenUrl(screenSessionId, name)}
+                alt={alt ?? name}
+                loading="lazy"
+                className="not-prose max-w-full border border-slate-900/10 rounded-lg shadow-sm my-3"
+              />
+            );
+          },
           pre({ node, children }) {
             const code = node?.children[0];
             if (code?.type === 'element' && code.tagName === 'code') {
@@ -96,6 +112,8 @@ interface Props {
   brd: string;
   technicalSpec: string;
   testInventory: string;
+  /** stack-discovery with screenshots chosen: the UI Screens document ('' otherwise — no tab) */
+  uiScreens?: string;
   refining: boolean;
   refiningContent: string;
   onConfirm: (brdContent: string, techSpecContent: string, feedback?: string) => Promise<void>;
@@ -108,11 +126,11 @@ interface Props {
   reOnly?: boolean;
 }
 
-type ActiveTab = 'brd' | 'techspec' | 'tests';
+type ActiveTab = 'brd' | 'techspec' | 'tests' | 'screens';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refining, refiningContent, onConfirm, onRefine, reOnly = false }: Props) {
+export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScreens = '', refining, refiningContent, onConfirm, onRefine, reOnly = false }: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('brd');
   // Reset the editable drafts whenever freshly (re)generated content arrives —
   // adjusting state during render per https://react.dev/learn/you-might-not-need-an-effect
@@ -219,6 +237,17 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
           <ClipboardList size={14} />
           Existing Test Cases
         </button>
+        {uiScreens && (
+          <button
+            onClick={() => setActiveTab('screens')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'screens' ? 'bg-amber-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Camera size={14} />
+            UI Screens
+          </button>
+        )}
       </div>
 
       {/* BRD Panel */}
@@ -322,6 +351,31 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
               ? <MarkdownWithDiagrams content={testInventory} />
               : <p className="text-slate-600 text-sm italic">No existing test inventory was generated for this repository.</p>
             }
+          </div>
+        </div>
+      )}
+
+      {/* UI Screens Panel — built by the pipeline, not a model: nothing to refine */}
+      {activeTab === 'screens' && uiScreens && (
+        <div className="glass rounded-2xl overflow-hidden mb-6">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-900/10 glass-inset">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-slate-600">ui-screens.md</span>
+              <span className="text-[10px] text-amber-700 bg-amber-400/10 border border-amber-400/20 rounded-full px-2 py-0.5">
+                Sample data
+              </span>
+            </div>
+            <a
+              href={uiScreensDownloadUrl(sessionId)}
+              download
+              className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 bg-slate-900/5 hover:bg-slate-900/10 border border-slate-900/10 rounded-lg px-2.5 py-1 transition-colors"
+            >
+              <Download size={12} />
+              Download (zip)
+            </a>
+          </div>
+          <div className="p-6 max-h-[62vh] overflow-y-auto">
+            <MarkdownWithDiagrams content={uiScreens} screenSessionId={sessionId} />
           </div>
         </div>
       )}
@@ -450,7 +504,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
         </button>
         <button
           onClick={handleRefine}
-          disabled={confirming || refining || anyUploading || !feedback.trim()}
+          disabled={confirming || refining || anyUploading || !feedback.trim() || activeTab === 'screens'}
           title={!feedback.trim() ? 'Add feedback above first' : undefined}
           className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-900/5 disabled:text-slate-500 text-white font-semibold px-5 py-3 rounded-xl transition-colors text-sm cursor-pointer disabled:cursor-not-allowed"
         >
@@ -461,7 +515,9 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, refini
           {anyUploading
             ? 'Waiting for file uploads to finish…'
             : reOnly
-              ? 'Refine re-writes the document on this tab from the gathered evidence, with your feedback; Confirm finishes the run — this pattern produces no plan or code.'
+              ? activeTab === 'screens'
+                ? 'The UI Screens document is rendered from the code, not written by a model, so it has nothing to refine; Confirm finishes the run.'
+                : 'Refine re-writes the document on this tab from the gathered evidence, with your feedback; Confirm finishes the run — this pattern produces no plan or code.'
               : 'Refine re-runs the planner with your feedback; Confirm advances to plan generation.'}
         </p>
       </div>

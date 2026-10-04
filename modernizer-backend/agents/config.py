@@ -144,6 +144,26 @@ RULES_CANDIDATE_MAX_LINES: int = max(10, _int("RULES_CANDIDATE_MAX_LINES", 250))
 # Rules listed in the document itself; the CSV download always has all of them.
 RULES_CATALOG_MAX_IN_DOCUMENT: int = max(1, _int("RULES_CATALOG_MAX_IN_DOCUMENT", 2_000))
 
+# UI screenshots (agents/shared/ui_screens.py): pages rendered from the
+# repository's templates with generated sample data, as a separate "UI Screens"
+# document. `off`: never offered, nothing runs. `offer`: when a confirmed stack
+# is a UI the pipeline can render (Thymeleaf), the stack-confirmation screen
+# shows a checkbox; the reviewer decides per repository.
+UI_SCREENSHOTS: str = (os.getenv("UI_SCREENSHOTS", "offer") or "offer").strip().lower()
+# Whether that checkbox starts ticked.
+UI_SCREENSHOTS_DEFAULT: bool = (os.getenv("UI_SCREENSHOTS_DEFAULT", "false") or "false").strip().lower() in (
+    "1", "true", "yes", "on")
+# Screens per run, and page states (default, empty list, message shown, fewer roles, ...) per page.
+UI_SCREENSHOTS_MAX_PAGES: int = max(1, _int("UI_SCREENSHOTS_MAX_PAGES", 50))
+UI_SCREENSHOTS_MAX_STATES: int = max(1, _int("UI_SCREENSHOTS_MAX_STATES", 4))
+# Wall-clock limit for the whole stage; what is not done by then is listed as not rendered.
+UI_SCREENSHOTS_TIMEOUT_S: int = max(30, _int("UI_SCREENSHOTS_TIMEOUT_S", 600))
+# Chromium for Playwright; empty: Playwright's own installed browser.
+UI_SCREENSHOTS_CHROMIUM: str = (os.getenv("UI_SCREENSHOTS_CHROMIUM", "") or "").strip()
+# The Thymeleaf renderer (tools/thymeleaf-render, built by `python dev.py setup-ui`).
+UI_THYMELEAF_RENDERER: str = (os.getenv("UI_THYMELEAF_RENDERER", "") or str(
+    Path(__file__).resolve().parent.parent / "tools" / "thymeleaf-render" / "target" / "thymeleaf-render.jar")).strip()
+
 # Matches one search_files call returns before it paginates. The total is always
 # reported, so a capped page never reads as the whole answer.
 SEARCH_MAX_RESULTS: int = _int("SEARCH_MAX_RESULTS", 200)

@@ -52,6 +52,18 @@ export interface JavaMigrationOptions {
  * Reused verbatim for stack-discovery's detected stacks: same shape, same
  * confirmation screen, same endpoint — from the reviewer's side it is the same
  * decision about which detected things to work on. */
+/** stack-discovery: whether UI screenshots can be produced for this repository,
+ * sent with companion-recommendations only when the repository has a UI. */
+export interface ScreenshotsOffer {
+  available: boolean;
+  /** Whether the checkbox starts ticked (UI_SCREENSHOTS_DEFAULT). */
+  default: boolean;
+  /** The UI stacks the screens are rendered for; unticking all of them turns screenshots off. */
+  stacks: string[];
+  /** Why the option is unavailable, or a note about what will be produced. */
+  reason: string;
+}
+
 export interface CompanionRecommendation {
   /** A PatternId for a companion migration; for stack-discovery, a stack id found
    * in the repository (`java`, `backbone`, `python`, or any id the mapper chose). */
@@ -164,6 +176,10 @@ export interface WorkflowState {
   refining: boolean;
   /** Auto-detected companion migrations, set when companion-recommendations fires (java-8-to-25 only) */
   companionRecommendations: CompanionRecommendation[];
+  /** stack-discovery: the UI screenshots option, when the repository has a UI */
+  screenshotsOffer: ScreenshotsOffer | null;
+  /** stack-discovery: the UI Screens document, when screenshots were chosen */
+  uiScreens: string;
   error: string | null;
 }
 
@@ -174,6 +190,10 @@ export interface SSEEvent {
   brd?: string;
   technical_spec?: string;
   test_inventory?: string;
+  /** stack-discovery with screenshots chosen: the UI Screens document */
+  ui_screens?: string;
+  /** Sent with stack-discovery's companion-recommendations when the repository has a UI */
+  screenshots?: ScreenshotsOffer;
   progress?: number;
   message?: string;
   files?: GeneratedFile[];
