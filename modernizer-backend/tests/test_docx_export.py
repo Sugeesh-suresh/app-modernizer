@@ -198,11 +198,11 @@ def test_a_section_does_not_repeat_its_own_title():
 def test_a_wide_rules_table_gets_a_landscape_page_sized_columns_and_whole_rows():
     from docx.enum.section import WD_ORIENT
     from docx.oxml.ns import qn
-    md = ("| Rule ID | Business rule | Use case | Negative scenario | Edge cases | Observed or inferred | Confidence |\n"
+    md = ("| Rule ID | Business rule | Use cases | Negative scenarios | Edge cases | Observed or inferred | Confidence |\n"
           "|---|---|---|---|---|---|---|\n"
           "| BR-CLAIMS-001 | A claim may be auto-approved only when the amount is below the threshold. | A claim of "
           "200 is approved at once. | A claim of 800 waits for an adjuster. | • A claim of exactly 500 is not "
-          "auto-approved. | Observed | High |\n")
+          "auto-approved. • A claim with no amount is rejected. | Observed | High |\n")
     doc = _doc(dx.to_docx("BRD", [(None, md)]))
     assert doc.sections[0].orientation == WD_ORIENT.LANDSCAPE
     widths = [c.width.inches for c in doc.tables[0].columns]
@@ -212,5 +212,8 @@ def test_a_wide_rules_table_gets_a_landscape_page_sized_columns_and_whole_rows()
     rows = doc.tables[0]._tbl.tr_lst
     assert all(tr.trPr.find(qn("w:cantSplit")) is not None for tr in rows)
     assert rows[0].trPr.find(qn("w:tblHeader")) is not None and rows[1].trPr.find(qn("w:tblHeader")) is None
+    edges = doc.tables[0].rows[1].cells[4].paragraphs
+    assert [p.text for p in edges] == ["• A claim of exactly 500 is not auto-approved.",
+                                       "• A claim with no amount is rejected."]          # one line per entry
     narrow = _doc(dx.to_docx("Spec", [(None, "| a | b |\n|---|---|\n| 1 | 2 |\n")]))
     assert narrow.sections[0].orientation == WD_ORIENT.PORTRAIT

@@ -103,6 +103,16 @@ def _rule(paragraph) -> None:
     _insert_ordered(paragraph._p.get_or_add_pPr(), border, _PPR_ORDER)
 
 
+def _bullet_items(children) -> list[str]:
+    """The entries of a cell written as "• a • b" (plain text only), else []."""
+    if any(tok.type not in ("text", "softbreak") for tok in children or []):
+        return []
+    text = "".join(tok.content if tok.type == "text" else " " for tok in children or []).strip()
+    if not text.startswith("• "):
+        return []
+    return [i.strip() for i in re.split(r"(?:^|\s)•\s+", text) if i.strip()]
+
+
 def _text_of(children) -> str:
     return "".join(tok.content for tok in children or [] if tok.type in ("text", "code_inline"))
 
@@ -270,7 +280,15 @@ class _Writer:
                 cell.width = widths[c]
                 p = cell.paragraphs[0]
                 if c < len(cells):
-                    self.inline(p, cells[c], size=Pt(8.5), bold=header)
+                    items = _bullet_items(cells[c])
+                    if items and not header:
+                        # "• a • b": one paragraph per entry.
+                        for k, item in enumerate(items):
+                            para = p if k == 0 else cell.add_paragraph()
+                            run = para.add_run(_clean(f"• {item}"))
+                            run.font.size = Pt(8.5)
+                    else:
+                        self.inline(p, cells[c], size=Pt(8.5), bold=header)
                 if header:
                     _shade(cell._tc, "E8EDF5")
         self.doc.add_paragraph()

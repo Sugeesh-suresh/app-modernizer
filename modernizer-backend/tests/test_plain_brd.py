@@ -90,8 +90,10 @@ def _finalized(raw_rules):
 def test_every_rule_is_a_table_row_with_its_scenarios_by_capability():
     claims = _raw("C1", "A claim may be auto-approved only when the amount is below the configured threshold and "
                         "no fraud flag exists.", "Claims")
-    claims.update(use_case="A claim of 200 under a 500 threshold with no fraud flag is approved at once.",
-                  negative_scenario="A claim with a fraud flag waits for an adjuster.",
+    claims.update(use_cases=["A claim of 200 under a 500 threshold with no fraud flag is approved at once.",
+                             "A corrected claim of 300 is approved at once."],
+                  negative_scenarios=["A claim with a fraud flag waits for an adjuster.",
+                                      "A claim of 800 waits for an adjuster."],
                   edge_cases=["A claim of exactly 500 is not auto-approved.", "A claim with no amount is rejected."])
     ledger = _finalized([
         claims,
@@ -103,13 +105,14 @@ def test_every_rule_is_a_table_row_with_its_scenarios_by_capability():
     md = rules_ledger.business_rules_markdown(ledger, 100)
     assert md.startswith("## Business Rules by Capability")
     assert md.index("### Claims") < md.index("### Order entry")
-    header = ("| Rule ID | Business rule | Use case | Negative scenario | Edge cases | Observed or inferred "
+    header = ("| Rule ID | Business rule | Use cases | Negative scenarios | Edge cases | Observed or inferred "
               "| Confidence |")
     assert md.count(header) == 2
     assert ("| BR-CLAIMS-001 | A claim may be auto-approved only when the amount is below the configured threshold "
-            "and no fraud flag exists. | A claim of 200 under a 500 threshold with no fraud flag is approved at once. "
-            "| A claim with a fraud flag waits for an adjuster. | • A claim of exactly 500 is not auto-approved. • A "
-            "claim with no amount is rejected. | Observed | High |") in md
+            "and no fraud flag exists. | • A claim of 200 under a 500 threshold with no fraud flag is approved at once. "
+            "• A corrected claim of 300 is approved at once. | • A claim with a fraud flag waits for an adjuster. "
+            "• A claim of 800 waits for an adjuster. | • A claim of exactly 500 is not auto-approved. • A claim "
+            "with no amount is rejected. | Observed | High |") in md
     assert ("| BR-CLAIMS-002 | Only managers can reopen a closed claim. | None identified | None identified "
             "| None identified | Inferred | Medium |") in md
     # No reference to the audit file, no code, no locations.
@@ -119,15 +122,17 @@ def test_every_rule_is_a_table_row_with_its_scenarios_by_capability():
 def test_scenarios_are_cleaned_merged_and_sent_back_when_worded_in_code():
     from agents.shared.rule_candidates import Candidate
     rule = _raw("C1", "Orders above 100 units need a manager's approval.", "Orders")
-    rule.update(use_case="An order of 20 units goes straight through.",
-                negative_scenario="`OrderService.hold()` is called.",
+    rule.update(use_cases=["An order of 20 units goes straight through."],
+                negative_scenarios=["`OrderService.hold()` is called.", "An order of 500 units waits for a manager."],
                 edge_cases=["An order of exactly 100 units needs no approval.", "`qty == null`"])
     twin = _raw("C2", "Orders above 100 units need a manager's approval.", "Orders")
-    twin.update(edge_cases=["An order with no quantity is rejected."])
+    twin.update(use_cases=["An order of 20 units goes straight through.", "A repeat order of 50 units goes through."],
+                edge_cases=["An order with no quantity is rejected."])
     ledger = _finalized([rule, twin])
     [merged] = ledger["rules"]
-    assert merged["use_case"] == "An order of 20 units goes straight through."
-    assert merged["negative_scenario"] == ""                                 # nothing readable left
+    assert merged["use_cases"] == ["An order of 20 units goes straight through.",
+                                   "A repeat order of 50 units goes through."]            # merged, no duplicates
+    assert merged["negative_scenarios"] == ["An order of 500 units waits for a manager."]   # code-only entry gone
     assert merged["edge_cases"] == ["An order of exactly 100 units needs no approval.",
                                     "An order with no quantity is rejected."]
     c = Candidate(id="C00001", path="src/A.java", start=1, end=3, kind="method", symbol="A.f", language="Java",
@@ -135,8 +140,12 @@ def test_scenarios_are_cleaned_merged_and_sent_back_when_worded_in_code():
     led = {"candidates": {"C00001": {"status": "pending"}}, "raw_rules": [], "rules": []}
     rules_ledger.apply_answer([c], [{"candidate": "C00001", "rules": [
         {"statement": "Requests with more than five items are refused.", "lines": "1",
-         "negative_scenario": "Throws `TooManyItems`.", "edge_cases": "Exactly five items pass; `x == 6` fails"}]}], led)
-    assert led["raw_rules"][0]["edge_cases"] == ["Exactly five items pass", "`x == 6` fails"]
+         "use_case": "A request of three items is accepted.",                    # one text still accepted
+         "negative_scenarios": ["Throws `TooManyItems`.", "A request of nine items is refused."],
+         "edge_cases": "Exactly five items pass; `x == 6` fails"}]}], led)
+    raw = led["raw_rules"][0]
+    assert raw["use_cases"] == ["A request of three items is accepted."]
+    assert raw["edge_cases"] == ["Exactly five items pass", "`x == 6` fails"]
     assert rules_ledger.needs_rewording([c], led) == {"C00001": ["Throws `TooManyItems`.", "`x == 6` fails"]}
 
 

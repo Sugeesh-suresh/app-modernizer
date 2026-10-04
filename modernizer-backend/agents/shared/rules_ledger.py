@@ -63,7 +63,7 @@ def render_batch(batch: list[Candidate], reword: dict[str, list[str]] | None = N
         note = ""
         if reword and reword.get(c.id):
             note = ("\n**Restate in plain English.** Your earlier rule statements for this candidate contained code; "
-                    "a business reader cannot use them. Give every rule again — statement, use case, negative scenario "
+                    "a business reader cannot use them. Give every rule again — statement, use cases, negative scenarios "
                     "and edge cases — as sentences with no code, names, expressions or backticks:\n" + "\n".join(f"- {s}" for s in reword[c.id][:5]))
         parts.append(
             f"### {c.id} — {c.kind} `{c.symbol}`\n"
@@ -149,9 +149,9 @@ def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict, repl
             ledger["raw_rules"].append({
                 "statement": str(r["statement"]).strip()[:600],
                 "capability": re.sub(r"\s+", " ", str(r.get("capability") or "")).strip()[:60],
-                "use_case": str(r.get("use_case") or "").strip()[:400],
-                "negative_scenario": str(r.get("negative_scenario") or "").strip()[:400],
-                "edge_cases": _edge_list(r.get("edge_cases")),
+                "use_cases": _scenario_list(r.get("use_cases", r.get("use_case"))),
+                "negative_scenarios": _scenario_list(r.get("negative_scenarios", r.get("negative_scenario"))),
+                "edge_cases": _scenario_list(r.get("edge_cases", r.get("edge_case"))),
                 "type": rtype if rtype in RULE_TYPES else "other",
                 "condition": str(r.get("condition") or "").strip()[:400],
                 "outcome": str(r.get("outcome") or "").strip()[:400],
@@ -167,19 +167,27 @@ def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict, repl
     return [c for c in batch if c.id not in answered]
 
 
-def _edge_list(value) -> list[str]:
+MAX_SCENARIOS = 8          # per kind, per rule
+
+
+def _scenario_list(value) -> list[str]:
+    """Scenarios as a list, whether the agent gave a list or one text ("a; b")."""
     items = value if isinstance(value, list) else re.split(r"\s*;\s*|\n+", str(value or ""))
-    return [str(i).strip()[:300] for i in items if str(i).strip()][:6]
+    out = []
+    for i in items:
+        text = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", str(i)).strip()[:400]
+        if text and text not in out:
+            out.append(text)
+    return out[:MAX_SCENARIOS]
 
 
-#: The scenario fields every rule carries besides its statement.
-SCENARIO_FIELDS = ("use_case", "negative_scenario", "edge_cases")
+#: The scenario lists every rule carries besides its statement, each holding as many as the code shows.
+SCENARIO_FIELDS = ("use_cases", "negative_scenarios", "edge_cases")
 
 
 def _texts(rule: dict) -> list[str]:
     """The rule's statement and its scenario texts, as written."""
-    return [rule["statement"], rule.get("use_case", ""), rule.get("negative_scenario", ""),
-            *rule.get("edge_cases", [])]
+    return [rule["statement"], *(s for key in SCENARIO_FIELDS for s in rule.get(key, []))]
 
 
 def is_business_language(statement: str) -> bool:
@@ -267,10 +275,9 @@ def finalize(ledger: dict, workspace_dir: str, test_files: list[str]) -> None:
         else:
             target["sources"] += [s for s in rule["sources"] if s not in target["sources"]]
             target["flags"] += [f for f in rule["flags"] if f not in target["flags"]]
-            for key in ("use_case", "negative_scenario"):
-                target[key] = target.get(key) or rule.get(key, "")
-            target["edge_cases"] = (target.get("edge_cases", []) + [e for e in rule.get("edge_cases", [])
-                                                                    if e not in target.get("edge_cases", [])])[:6]
+            for key in SCENARIO_FIELDS:
+                target[key] = (target.get(key, []) + [s for s in rule.get(key, [])
+                                                      if s not in target.get(key, [])])[:MAX_SCENARIOS]
             if rule["basis"] == "explicit":
                 target["basis"] = "explicit"
     index = _test_index(workspace_dir, test_files)
@@ -329,11 +336,9 @@ def _business_wording(rule: dict) -> None:
     The agent's original wording is kept as `statement_original` for the audit file."""
     from .plain_language import humanize, is_plain, phrase
     # Scenario texts: kept when plain, else with the code taken out, else left out.
-    for key in ("use_case", "negative_scenario"):
-        text = rule.get(key, "")
-        rule[key] = text if not text or is_plain(text) else phrase(text)
-    rule["edge_cases"] = [e if is_plain(e) else phrase(e) for e in rule.get("edge_cases", [])]
-    rule["edge_cases"] = [e for e in rule["edge_cases"] if e]
+    for key in SCENARIO_FIELDS:
+        cleaned = [s if is_plain(s) else phrase(s) for s in rule.get(key, [])]
+        rule[key] = [s for s in dict.fromkeys(cleaned) if s]
     original = rule["statement"]
     if is_business_language(original):
         return
@@ -474,9 +479,16 @@ BUSINESS_RULES_HEADING = "## Business Rules by Capability"
 NONE_IDENTIFIED = "None identified"
 
 
+def bullets(items: list[str]) -> str:
+    """Several entries in one table cell: "• a • b" (the review screen and Word
+    show each on its own line); "None identified" when there are none."""
+    return " ".join(f"• {i}" for i in items) if items else NONE_IDENTIFIED
+
+
 def business_rules_markdown(ledger: dict | None, max_rules: int) -> str:
     """The BRD's business rules: one table per capability, one row per rule — rule id,
-    the rule, its use case, negative scenario and edge cases, observed or inferred,
+    the rule, its use cases, negative scenarios and edge cases (as many of each as
+    the code shows, one "•" entry each), observed or inferred,
     confidence. Plain English only; where a rule is implemented is never shown here."""
     rules = (ledger or {}).get("rules") or []
     lines = [BUSINESS_RULES_HEADING]
@@ -491,12 +503,11 @@ def business_rules_markdown(ledger: dict | None, max_rules: int) -> str:
         if rule.get("capability") != capability:
             capability = rule.get("capability")
             lines += ["", f"### {capability}", "",
-                      "| Rule ID | Business rule | Use case | Negative scenario | Edge cases | Observed or inferred "
-                      "| Confidence |", "|---|---|---|---|---|---|---|"]
-        edges = " ".join(f"• {e}" for e in rule.get("edge_cases") or []) or NONE_IDENTIFIED
+                      "| Rule ID | Business rule | Use cases | Negative scenarios | Edge cases | "
+                      "Observed or inferred | Confidence |", "|---|---|---|---|---|---|---|"]
         lines.append(" | ".join([
-            f"| {rule['id']}", _cell(rule["statement"]), _cell(rule.get("use_case") or NONE_IDENTIFIED),
-            _cell(rule.get("negative_scenario") or NONE_IDENTIFIED), _cell(edges),
+            f"| {rule['id']}", _cell(rule["statement"]),
+            *(_cell(bullets(rule.get(key) or [])) for key in SCENARIO_FIELDS),
             "Observed" if rule.get("basis") == "explicit" else "Inferred",
             str(rule.get("confidence") or "medium").capitalize()]) + " |")
     return "\n".join(lines)
@@ -507,14 +518,13 @@ def to_csv(ledger: dict) -> str:
     w = csv.writer(out)
     w.writerow(["record", "id", "statement_or_symbol", "type_or_kind", "condition", "outcome", "basis",
                 "confidence", "area", "sources", "tests", "flags_or_reason", "status", "capability",
-                "statement_as_extracted", "use_case", "negative_scenario", "edge_cases"])
+                "statement_as_extracted", "use_cases", "negative_scenarios", "edge_cases"])
     for r in ledger["rules"]:
         w.writerow(["rule", r["id"], r["statement"], r["type"], r["condition"], r["outcome"], r["basis"],
                     r["confidence"], r["area"],
                     "; ".join(f"{s['path']}:{s['start']}-{s['end']}" for s in r["sources"]),
                     "; ".join(r["tests"]), "; ".join(r["flags"]), "rule", r.get("capability", ""),
-                    r.get("statement_original", ""), r.get("use_case", ""), r.get("negative_scenario", ""),
-                    "; ".join(r.get("edge_cases", []))])
+                    r.get("statement_original", ""), *("; ".join(r.get(k, [])) for k in SCENARIO_FIELDS)])
     for cid, c in ledger["candidates"].items():
         w.writerow(["candidate", cid, c["symbol"], c["kind"], "", "", "", "", c["area"],
                     f"{c['path']}:{c['start']}-{c['end']}", "", c.get("reason", ""),

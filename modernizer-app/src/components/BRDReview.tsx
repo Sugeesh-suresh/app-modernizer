@@ -71,6 +71,15 @@ function MarkdownWithDiagrams({ content, screenSessionId }: { content: string; s
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          td({ children }) {
+            // "• a • b" in a cell (a rule's use cases, negative scenarios, edge cases): one per line.
+            const text = Array.isArray(children) ? children.join('') : children;
+            if (typeof text === 'string' && text.startsWith('• ')) {
+              const items = text.split(/(?:^|\s)•\s+/).filter((s) => s.trim());
+              return <td>{items.map((item, i) => <div key={i} className="mb-1">• {item}</div>)}</td>;
+            }
+            return <td>{children}</td>;
+          },
           img({ src, alt }) {
             const name = typeof src === 'string' ? /^screens\/(SCR-\d{4}\.png)$/.exec(src)?.[1] : undefined;
             if (!screenSessionId || !name) return <span className="text-xs text-slate-500">[image: {alt}]</span>;
