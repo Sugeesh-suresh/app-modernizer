@@ -146,7 +146,10 @@ def test_scenarios_are_cleaned_merged_and_sent_back_when_worded_in_code():
     raw = led["raw_rules"][0]
     assert raw["use_cases"] == ["A request of three items is accepted."]
     assert raw["edge_cases"] == ["Exactly five items pass", "`x == 6` fails"]
-    assert rules_ledger.needs_rewording([c], led) == {"C00001": ["Throws `TooManyItems`.", "`x == 6` fails"]}
+    reasons = rules_ledger.needs_rewording([c], led)["C00001"]
+    assert "not plain English: “Throws `TooManyItems`.”" in reasons and "not plain English: “`x == 6` fails”" in reasons
+    # Nine is not in this code (it compares with 5): the scenario cannot be traced.
+    assert any("“A request of nine items is refused.”: the value 9 does not appear in the code" in r for r in reasons)
 
 
 def test_a_technical_statement_is_reworded_never_referred_elsewhere():
@@ -178,9 +181,10 @@ def test_a_rule_worded_in_code_is_sent_back_once_with_its_wording():
     rules_ledger.apply_answer([c], [{"candidate": "C00001", "rules": [
         {"statement": "Returns early when `x > 5`.", "lines": "1"}]}], ledger)
     reword = rules_ledger.needs_rewording([c], ledger)
-    assert reword == {"C00001": ["Returns early when `x > 5`."]}
+    assert reword == {"C00001": ["not plain English: “Returns early when `x > 5`.”"]}
     request = rules_ledger.render_batch([c], reword)
-    assert "Restate in plain English" in request and "- Returns early when `x > 5`." in request
+    assert "Restate from this code, in plain English" in request
+    assert "- not plain English: “Returns early when `x > 5`.”" in request
     rules_ledger.apply_answer([c], [{"candidate": "C00001", "rules": [
         {"statement": "A request with more than five items is not processed.", "capability": "Requests",
          "lines": "1"}]}], ledger, replace=True)

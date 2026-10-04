@@ -43,6 +43,12 @@ translate it. The BRD contains **no code and no code references** of any kind:
   rule ids stay, because they point at the BRD's own rules catalog. A statement
   you cannot trace does not go in — put the gap under Open Questions instead.
   Never cite an id you were not given.
+- **Only what you were given — it is checked.** Every number, limit, status,
+  message and name you write must appear in the evidence items or rules you cite
+  for that statement; do not invent example values, counts or dates. A statement
+  that cites nothing, or whose values are not in what it cites, is removed from
+  the BRD. A numbered scenario counts as one statement: cite its evidence on the
+  steps it rests on.
 - **Describe the system as it is, not intent.** Write "the system rejects orders
   with more than 50 items", never "the business requires…". When the evidence
   marks intent as inferred, say *Inferred*.

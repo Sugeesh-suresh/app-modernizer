@@ -499,6 +499,8 @@ def _rules_for(screen: dict, ledger: dict | None) -> list[str]:
         handler_line = int(line) if line.isdigit() else 0
     out = []
     for rule in ledger.get("rules", []):
+        if not rule.get("verified", True):
+            continue
         for s in rule.get("sources", []):
             if s["path"] in files or (s["path"] == handler_file and s["start"] <= handler_line + 1
                                       and handler_line <= s["end"]):

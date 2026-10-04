@@ -11,6 +11,7 @@ through to plan generation.
 """
 import asyncio
 import io
+import sys
 import json
 import re
 import zipfile
@@ -80,7 +81,7 @@ class _Harness:
             first_ev = (re.findall(r"\[(EV-[^\]]+)\]", request) or [""])[0]
             if step == "po_brd":
                 return (f"## Executive Summary\nThe system serves orders ({first_ev}{cite}).\n"
-                        "## Business Journeys\n" + "".join(f"- journey through {label}\n" for label in labels))
+                        "## Business Journeys\n" + "".join(f"- journey through {label} ({first_ev})\n" for label in labels))
             return ("<!-- SECTION: TECHNICAL_SPECIFICATION -->\n## Architecture Overview\noverview "
                     f"({first_ev})\n## Per-Stack Detail\n" + "".join(f"### {label}\ncomponents\n" for label in labels)
                     + "<!-- SECTION: TEST_INVENTORY -->\nNo tests found.\n<!-- SECTION: END -->")
@@ -346,6 +347,29 @@ def _fake_capture(calls: list, fail: bool = False):
             "description": "signed in as sample.user", "template": "src/main/resources/templates/home.html",
             "files": ["src/main/resources/templates/home.html"], "endpoint": None, "model": {"title": "x"}}]}
     return capture
+
+
+class TestGrounding:
+    def test_evidence_that_cannot_be_traced_never_reaches_the_writers(self, monkeypatch, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src/OrderService.java").write_text("class OrderService {\n  boolean ok(int n) { return n < 50; }\n}\n")
+        monkeypatch.setattr(sys.modules[__name__], "_evidence", lambda stack: (
+            "### Data\n- `src/OrderService.java:2` — `return n < 50;`: orders under 50 items are accepted\n"
+            "- `src/RefundService.java:9` — refunds are paid within 5 days\n"
+            "### Business Behaviour\n- Loyalty points expire after a year\n### Tests\nNone found.\n"))
+        h = _Harness(monkeypatch)
+        sid = _session(PRESCAN)
+        asyncio.run(main._update_state(sid, {"workspace_dir": str(tmp_path)}))
+
+        _run(sid, ["java"])
+
+        for writer in ("po_brd", "ea_spec"):
+            request = h.request(writer)
+            assert "orders under 50 items" in request
+            assert "RefundService" not in request and "Loyalty" not in request
+        evidence = Path(_state(sid)["evidence_path"]).read_text()
+        assert "## Grounding Checks" in evidence and "**Evidence items withheld from the writers:** 2" in evidence
+        assert "RefundService.java" in evidence and "cites no file of the repository" in evidence
 
 
 class TestUiScreens:

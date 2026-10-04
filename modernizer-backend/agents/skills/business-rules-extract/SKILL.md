@@ -44,21 +44,28 @@ can contain both rules and plumbing — report only the rules.
   standardization", "Access". Rules of the same capability use the same words;
   the rule's id is built from them (BR-CLAIMS-042).
 - `use_cases` — a list of every distinct normal situation in which the rule
-  applies and what the user sees, one entry each, e.g. ["A customer submits a
-  claim of 200 under a 500 auto-approval threshold; it is approved at once.",
-  "An adjuster re-submits a corrected claim of 300; it is approved at once."].
+  applies and what the user sees, one entry each, e.g. ["A claim below the 500
+  threshold with no fraud flag is approved at once."].
 - `negative_scenarios` — a list of every distinct way the rule's condition can
   fail or the input be invalid, with the system's own outcome (the message shown,
-  the status set), one entry each, e.g. ["A claim of 800 is not auto-approved; it
-  waits for an adjuster.", "A claim with a fraud flag is not auto-approved,
-  whatever its amount."].
+  the status set), one entry each, e.g. ["A claim of 500 or more is not
+  auto-approved; it waits for an adjuster.", "A claim with a fraud flag is not
+  auto-approved, whatever its amount."].
 - `edge_cases` — a list of the limits the code shows, one entry each: the exact
   boundary values (an amount equal to the threshold), missing or empty values
   the code checks, alternative branches, maximums and minimums, e.g. ["A claim of
-  exactly 500 is not auto-approved: the amount must be below the threshold.",
-  "A claim with no amount is rejected."].
+  exactly 500 is not auto-approved: the amount must be below 500.", "A claim with
+  no amount is rejected with the message “Amount is required”."].
   Each list holds as many entries as the code shows (up to 8) and only those —
   an empty list when it shows none. All entries in plain English, no code.
+
+**Only what the code shows — every answer is checked against it.** Every number
+must be one the code uses (or one either side of it, for a boundary); do not
+invent example amounts, counts or dates. Quote a message only as the code (or
+its message file) writes it. A missing-value case needs a null or empty check in
+the code, a boundary case a comparison, an access case a role or sign-in check,
+a date case date or schedule logic. A rule or case the code does not support is
+sent back to you once, and then left out of the document.
 - `type` — one of: validation, calculation, eligibility, state-transition,
   authorization, constraint, default, workflow, notification, data-integrity, other
 - `condition` — when it applies, in words ("the order has more than 50 items");
@@ -84,8 +91,8 @@ appears exactly once:
     {"candidate": "C00012", "rules": [
       {"statement": "An order with more than 50 items is rejected and the customer is asked to split it.",
        "capability": "Order entry",
-       "use_cases": ["A customer places an order of 20 items; it is accepted."],
-       "negative_scenarios": ["A customer places an order of 60 items; it is rejected with a request to split it."],
+       "use_cases": ["An order of up to 50 items is accepted."],
+       "negative_scenarios": ["An order of more than 50 items is rejected with a request to split it."],
        "edge_cases": ["An order of exactly 50 items is accepted: only more than 50 is rejected.",
                       "An order with no items cannot be placed."],
        "type": "validation", "condition": "the order has more than 50 items", "outcome": "the order is rejected",

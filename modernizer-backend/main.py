@@ -48,8 +48,9 @@ from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11 import preflight as java11_preflight
-from agents.shared import (config_matrix, current_state, docx_export, evidence_pack, interfaces, migration_inventory,
-                           plain_language, repo_fingerprint, rule_candidates, rules_ledger, ui_screens)
+from agents.shared import (config_matrix, current_state, docx_export, evidence_pack, grounding, interfaces,
+                           migration_inventory, plain_language, repo_fingerprint, rule_candidates, rules_ledger,
+                           ui_screens)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -1884,6 +1885,20 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
             text = evidence_pack.assign_ids(raw, stack_id)
             path.write_text(text, encoding="utf-8")
         packs.append((stack_id, label, text))
+    # Grounding: the writers get only evidence items traceable to the repository —
+    # the file each cites exists (and the line), and the code it quotes is in it.
+    withheld: list[tuple[str, str]] = []
+    if packs and Path(workspace_dir or "/nonexistent").is_dir():
+        files = await asyncio.to_thread(grounding.files_index, workspace_dir)
+        checked = []
+        for stack_id, label, text in packs:
+            kept, rejected = await asyncio.to_thread(grounding.verify_pack, text, workspace_dir, files)
+            checked.append((stack_id, label, kept))
+            withheld += rejected
+        packs = checked
+        if withheld:
+            print(f"[discovery] grounding: withheld {len(withheld)} evidence item(s) not traceable to the code",
+                  flush=True)
     evidence_ids = set().union(*(evidence_pack.ids(text) for _, _, text in packs)) if packs else set()
     await _update_state(session_id, {"evidence_dir": str(evidence_dir),
                                      "evidence_count": str(len(evidence_ids))})
@@ -1903,7 +1918,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
 
     po_brd, ea_spec, ea_tests = state.get("po_brd", ""), state.get("ea_spec", ""), state.get("ea_tests", "")
     ledger = _load_ledger(state)
-    rule_ids = {r["id"] for r in (ledger or {}).get("rules", [])}
+    rule_ids = {r["id"] for r in rules_ledger.verified_rules(ledger)}
     if packs:
         budget = max(config.RE_SYNTHESIS_MAX_CHARS, 2)
         stacks = "\n".join(f"- {label} (id `{sid}`, kind {stack_info.get(sid, {}).get('kind') or 'unspecified'})"
@@ -1955,7 +1970,19 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     # each BRD statement — goes to evidence.md beside the evidence packs. The
     # dependency graphs lead the specification.
     inventory = _current_state_only(state.get("stack_inventory_markdown", ""), "inventory", keep)
-    business_brd, citations, removed = plain_language.business_only(po_brd) if po_brd else ("", [], 0)
+    # Grounding: every BRD statement cites evidence or a rule that passed the checks,
+    # and its values appear in what it cites; anything else is removed.
+    evidence_text: dict[str, str] = {}
+    for _, _, text in packs:
+        evidence_text.update(evidence_pack.items(text))
+    rules_text = {r["id"]: " ".join([r["statement"], *(s for key in rules_ledger.SCENARIO_FIELDS
+                                                      for s in r.get(key, []))])
+                  for r in rules_ledger.verified_rules(ledger)}
+    checked_brd, untraced = grounding.check_brd(po_brd, evidence_text, rules_text, {float(len(packs))}) \
+        if po_brd else ("", [])
+    if untraced:
+        print(f"[discovery] grounding: removed {len(untraced)} BRD statement(s) not traceable to the code", flush=True)
+    business_brd, citations, removed = plain_language.business_only(checked_brd) if checked_brd else ("", [], 0)
     if removed:
         print(f"[discovery] BRD: moved {removed} code reference(s) out of the business document", flush=True)
     check_md = ""
@@ -1977,7 +2004,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     brd = "\n\n---\n\n".join(p for p in parts if p)
     evidence_md = evidence_pack.evidence_markdown(
         _discovery_title(state), inventory, citations, packs, state.get("rules_markdown", ""), check_md,
-        state.get("ingestion_warning", ""))
+        state.get("ingestion_warning", ""), grounding.report_markdown(withheld, ledger, untraced))
     evidence_file = evidence_dir / EVIDENCE_FILE
     evidence_file.write_text(evidence_md, encoding="utf-8")
 
@@ -2286,6 +2313,8 @@ async def _run_rules_extraction(session_id: str) -> None:
     excluded = [c for c in scanned.candidates if c.language not in languages]
     candidates = [c for c in scanned.candidates if c.language in languages]
     ledger = rules_ledger.new_ledger(candidates)
+    # The repository's message texts: a rule may quote what a user is shown.
+    repo_text = await asyncio.to_thread(grounding.repo_text, workspace_dir)
     pending = [c for c in candidates if c.status == "pending"]
     batches = rules_ledger.batches(pending, config.RULES_BATCH_MAX_CANDIDATES, config.RULES_BATCH_MAX_CHARS)
     await _push(session_id, "re-stream", content=(
@@ -2307,7 +2336,8 @@ async def _run_rules_extraction(session_id: str) -> None:
                         {"workspace_dir": workspace_dir, "rule_batch": rules_ledger.render_batch(missing)},
                         "Classify every candidate and extract its business rules.", "rule_batch_result",
                     )
-                    missing = rules_ledger.apply_answer(missing, rules_ledger.parse_answer(raw), ledger)
+                    missing = rules_ledger.apply_answer(missing, rules_ledger.parse_answer(raw), ledger,
+                                                        repo_text=repo_text)
                 except Exception as exc:
                     traceback.print_exc()
                     reason = f"the agent run failed: {_describe_error(exc)}"
@@ -2325,7 +2355,8 @@ async def _run_rules_extraction(session_id: str) -> None:
                         {"workspace_dir": workspace_dir, "rule_batch": rules_ledger.render_batch(again, reword)},
                         "Restate the rules of these candidates in plain English.", "rule_batch_result",
                     )
-                    rules_ledger.apply_answer(again, rules_ledger.parse_answer(raw), ledger, replace=True)
+                    rules_ledger.apply_answer(again, rules_ledger.parse_answer(raw), ledger, replace=True,
+                                              repo_text=repo_text)
                 except Exception:                              # noqa: BLE001 — the earlier answer stands
                     traceback.print_exc()
             finished += 1

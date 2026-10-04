@@ -145,7 +145,8 @@ def split_piece(text: str, limit: int) -> list[str]:
 def rules_index(ledger: dict | None, max_chars: int) -> str:
     """The business-rules catalog in brief for the Product Owner: counts by area
     and the rules themselves by id, cut at `max_chars` (and saying so)."""
-    rules = (ledger or {}).get("rules") or []
+    # Only rules traceable to the code: the writer may not build on the others.
+    rules = [r for r in (ledger or {}).get("rules") or [] if r.get("verified", True)]
     if not rules:
         return "No business-rules catalog was produced for this run."
     by_area: dict[str, list[dict]] = {}
@@ -231,7 +232,7 @@ def items(text: str) -> dict[str, str]:
 
 def evidence_markdown(title: str, inventory: str, citations: list[tuple[str, list[str]]],
                       packs: list[tuple[str, str, str]], rules_markdown: str, check_md: str,
-                      ingestion_warning: str = "") -> str:
+                      ingestion_warning: str = "", grounding_md: str = "") -> str:
     """The BRD's evidence file: what each BRD statement rests on, the technology
     inventory, the rules with their code locations and tests, and the checks."""
     known: dict[str, str] = {}
@@ -255,7 +256,7 @@ def evidence_markdown(title: str, inventory: str, citations: list[tuple[str, lis
                 lines.append(f"  - `{i}` — {found if found else '**no such evidence item** (unverified)'}")
     else:
         lines.append("The BRD cites no evidence items.")
-    for section in (inventory, rules_markdown.replace("## Business Rules Catalog",
+    for section in (grounding_md, inventory, rules_markdown.replace("## Business Rules Catalog",
                                                       "## Business Rules Catalog — Code Locations and Tests", 1)
                     if rules_markdown else "", check_md):
         if section:

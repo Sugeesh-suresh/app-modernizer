@@ -21,6 +21,12 @@ exact source of its candidates, and its answer is checked here in code:
   with `reword`); a statement still technical after that is reworded here from
   the rule's own condition and outcome, or, failing that, stated generically and
   marked inferred / low confidence for the business to confirm;
+- every rule and every scenario must be traceable to the candidate's code
+  (grounding.py): values and quoted messages present, key terms related, each
+  scenario backed by the kind of check it describes. What is not is sent back
+  once with the reasons; then an untraceable rule is left out of the BRD
+  (`verified` False, an `UV-` id, listed in the audit file) and an untraceable
+  scenario entry is dropped (kept in `dropped` for the audit file);
 - ids carry the rule's business capability: `BR-<CAPABILITY>-<nnn>`.
 """
 import csv
@@ -30,6 +36,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+from . import grounding
 from .rule_candidates import Candidate
 
 RULE_TYPES = ("validation", "calculation", "eligibility", "state-transition", "authorization", "constraint",
@@ -57,14 +64,16 @@ def batches(candidates: list[Candidate], max_candidates: int, max_chars: int) ->
 
 def render_batch(batch: list[Candidate], reword: dict[str, list[str]] | None = None) -> str:
     """The candidates as the extraction agent sees them. `reword`: {candidate id:
-    statements it gave that named code} — the candidate is asked again, with them."""
+    what was wrong with its earlier answer} — the candidate is asked again, with that."""
     parts = []
     for c in batch:
         note = ""
         if reword and reword.get(c.id):
-            note = ("\n**Restate in plain English.** Your earlier rule statements for this candidate contained code; "
-                    "a business reader cannot use them. Give every rule again — statement, use cases, negative scenarios "
-                    "and edge cases — as sentences with no code, names, expressions or backticks:\n" + "\n".join(f"- {s}" for s in reword[c.id][:5]))
+            note = ("\n**Restate from this code, in plain English.** Parts of your earlier answer for this candidate "
+                    "contained code, or could not be traced to the code below. Give every rule again — statement, "
+                    "use cases, negative scenarios and edge cases — using only what this code shows (its values, "
+                    "messages and checks), as sentences with no code, names, expressions or backticks. Leave out "
+                    "any case the code does not contain:\n" + "\n".join(f"- {s}" for s in reword[c.id][:8]))
         parts.append(
             f"### {c.id} — {c.kind} `{c.symbol}`\n"
             f"File: `{c.path}` lines {c.start}-{c.end} ({c.language}; signals: {', '.join(c.signals) or '—'})"
@@ -108,9 +117,11 @@ def _lines(spec, c: Candidate) -> tuple[int, int, bool]:
 _IDENT = re.compile(r"`([^`\s]{2,80})`")
 
 
-def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict, replace: bool = False) -> list[Candidate]:
+def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict, replace: bool = False,
+                 repo_text: str = "") -> list[Candidate]:
     """Record the answer for this batch in `ledger`; return the candidates it left out.
-    `replace`: the answer restates candidates already answered — their earlier rules go."""
+    `replace`: the answer restates candidates already answered — their earlier rules go.
+    `repo_text`: the repository's message texts, which a rule may quote."""
     by_id = {c.id: c for c in batch}
     if replace:
         restated = {str(r.get("candidate") or r.get("id") or "").strip() for r in results} & set(by_id)
@@ -162,6 +173,11 @@ def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict, repl
                 "sources": [{"candidate": cid, "path": c.path, "start": a, "end": b, "symbol": c.symbol}],
                 "flags": flags,
             })
+            raw = ledger["raw_rules"][-1]
+            raw["grounding"] = grounding.check_rule(raw, c.source, repo_text)
+            code = grounding.strip_line_numbers(c.source)
+            raw["grounding"]["condition"] = grounding.unsupported_values(raw["condition"], code, repo_text)
+            raw["grounding"]["outcome"] = grounding.unsupported_values(raw["outcome"], code, repo_text)
             entry.setdefault("rule_count", 0)
             entry["rule_count"] += 1
     return [c for c in batch if c.id not in answered]
@@ -197,7 +213,8 @@ def is_business_language(statement: str) -> bool:
 
 
 def needs_rewording(batch: list[Candidate], ledger: dict) -> dict[str, list[str]]:
-    """{candidate id: its rule statements that are not plain English} for this batch."""
+    """{candidate id: what is wrong with its rules} for this batch: texts that are
+    not plain English, and statements or scenarios that cannot be traced to its code."""
     ids = {c.id for c in batch}
     out: dict[str, list[str]] = defaultdict(list)
     from .plain_language import is_plain
@@ -206,8 +223,10 @@ def needs_rewording(batch: list[Candidate], ledger: dict) -> dict[str, list[str]
         if cid not in ids:
             continue
         if not is_business_language(r["statement"]):
-            out[cid].append(r["statement"])
-        out[cid] += [s for s in _texts(r)[1:] if s and not is_plain(s)]
+            out[cid].append(f"not plain English: “{r['statement']}”")
+        out[cid] += [f"not plain English: “{s}”" for s in _texts(r)[1:] if s and not is_plain(s)]
+        if r.get("grounding"):
+            out[cid] += [f"not in the code — {line}" for line in grounding.describe(r["grounding"], r)]
     return {k: v for k, v in out.items() if v}
 
 
@@ -255,12 +274,13 @@ def _similar(a: str, b: str) -> bool:
 
 def finalize(ledger: dict, workspace_dir: str, test_files: list[str]) -> None:
     """Merge duplicates, attach tests, assign BR ids. Idempotent on `raw_rules`."""
+    raw_rules = [_grounded(r) for r in ledger["raw_rules"]]
     merged: list[dict] = []
     exact: dict[tuple, dict] = {}
     # Near-duplicates are only looked for among rules of the same type that share
     # their first words — linear overall, where comparing every pair would not be.
     buckets: dict[tuple, list[dict]] = defaultdict(list)
-    for rule in ledger["raw_rules"]:
+    for rule in raw_rules:
         norm = _norm(rule["statement"])
         key = (rule["type"], " ".join(norm.split()[:3]))
         target = exact.get((rule["type"], norm, _facts(rule["statement"]))) or next(
@@ -278,6 +298,9 @@ def finalize(ledger: dict, workspace_dir: str, test_files: list[str]) -> None:
             for key in SCENARIO_FIELDS:
                 target[key] = (target.get(key, []) + [s for s in rule.get(key, [])
                                                       if s not in target.get(key, [])])[:MAX_SCENARIOS]
+            target["dropped"] = target.get("dropped", []) + rule.get("dropped", [])
+            if rule["verified"] and not target["verified"]:     # another place in the code supports it
+                target.update(verified=True, unverified_reasons=[])
             if rule["basis"] == "explicit":
                 target["basis"] = "explicit"
     index = _test_index(workspace_dir, test_files)
@@ -287,12 +310,17 @@ def finalize(ledger: dict, workspace_dir: str, test_files: list[str]) -> None:
         rule["capability"], rule["_code"] = name, capability_code(name)
     merged.sort(key=lambda r: (r["_code"], r["area"], r["sources"][0]["path"], r["sources"][0]["start"]))
     numbers: dict[str, int] = defaultdict(int)
+    unverified = 0
     for rule in merged:
         rule.pop("_norm", None)
         rule.pop("_facts", None)
         code = rule.pop("_code")
-        numbers[code] += 1
-        rule["id"] = f"BR-{code}-{numbers[code]:03d}"
+        if rule["verified"]:
+            numbers[code] += 1
+            rule["id"] = f"BR-{code}-{numbers[code]:03d}"
+        else:                                   # not a business rule of the document: audit id only
+            unverified += 1
+            rule["id"] = f"UV-{unverified:04d}"
         names = set()
         for s in rule["sources"]:
             names.add(Path(s["path"]).stem)
@@ -306,6 +334,34 @@ def finalize(ledger: dict, workspace_dir: str, test_files: list[str]) -> None:
     for cid, entry in ledger["candidates"].items():
         entry["rule_ids"] = sorted(set(by_candidate.get(cid, [])))
     ledger["rules"] = merged
+
+
+def _grounded(raw: dict) -> dict:
+    """A copy of the raw rule with its untraceable scenario entries dropped (kept in
+    `dropped` with the reasons) and `verified` saying whether its statement is traceable."""
+    rule = {k: v for k, v in raw.items() if k != "grounding"}
+    verdict = raw.get("grounding") or {}
+    rule["dropped"] = []
+    for key in SCENARIO_FIELDS:
+        kept = []
+        for entry, reasons in zip(raw.get(key, []), verdict.get(key, [[]] * len(raw.get(key, [])))):
+            if reasons:
+                rule["dropped"].append({"kind": key, "text": entry, "reasons": reasons})
+            else:
+                kept.append(entry)
+        rule[key] = kept
+    rule["verified"] = not verdict.get("statement")
+    rule["unverified_reasons"] = list(verdict.get("statement", []))
+    # The fallback wording may use the condition and outcome only when they are traceable too.
+    for key in ("condition", "outcome"):
+        if verdict.get(key):
+            rule[key] = ""
+    return rule
+
+
+def verified_rules(ledger: dict | None) -> list[dict]:
+    """The rules the business documents may state: those traceable to the code."""
+    return [r for r in (ledger or {}).get("rules", []) if r.get("verified", True)]
 
 
 def capability_name(capability: str, area: str) -> str:
@@ -393,6 +449,8 @@ def coverage(ledger: dict, scan_stats: dict) -> dict:
         "rules": len(rules),
         "raw_rules": len(ledger["raw_rules"]),
         "flagged": sum(1 for r in rules if r["flags"]),
+        "unverified": sum(1 for r in rules if not r.get("verified", True)),
+        "dropped_scenarios": sum(len(r.get("dropped", [])) for r in rules),
         "inferred": sum(1 for r in rules if r["basis"] == "inferred"),
         "with_tests": sum(1 for r in rules if r["tests"]),
         **scan_stats,
@@ -417,6 +475,8 @@ def coverage_markdown(cov: dict) -> str:
         f"- **Business rules:** {cov['rules']:,} (from {cov['raw_rules']:,} findings after merging duplicates); "
         f"{cov['inferred']:,} inferred, {cov['flagged']:,} with citation flags, {cov['with_tests']:,} with a "
         "test that names their class or file",
+        f"- **Not traceable to the code, left out of the BRD:** {cov.get('unverified', 0):,} rules and "
+        f"{cov.get('dropped_scenarios', 0):,} scenario entries — see Grounding Checks",
     ]
     if cov.get("excluded"):
         lines.append(f"- **Not analysed:** {cov['excluded']:,} candidates in code of stacks that were not "
@@ -446,7 +506,7 @@ def coverage_markdown(cov: dict) -> str:
 
 
 def catalog_markdown(ledger: dict, max_rules: int) -> str:
-    rules = ledger["rules"]
+    rules = verified_rules(ledger)
     lines = ["## Business Rules Catalog", ""]
     if not rules:
         return "\n".join(lines + ["No business rules were found in the analysed code."])
@@ -490,7 +550,7 @@ def business_rules_markdown(ledger: dict | None, max_rules: int) -> str:
     the rule, its use cases, negative scenarios and edge cases (as many of each as
     the code shows, one "•" entry each), observed or inferred,
     confidence. Plain English only; where a rule is implemented is never shown here."""
-    rules = (ledger or {}).get("rules") or []
+    rules = verified_rules(ledger)
     lines = [BUSINESS_RULES_HEADING]
     if not rules:
         return "\n".join(lines + ["", "No business rules were found in the analysed parts of the system."])
@@ -523,7 +583,10 @@ def to_csv(ledger: dict) -> str:
         w.writerow(["rule", r["id"], r["statement"], r["type"], r["condition"], r["outcome"], r["basis"],
                     r["confidence"], r["area"],
                     "; ".join(f"{s['path']}:{s['start']}-{s['end']}" for s in r["sources"]),
-                    "; ".join(r["tests"]), "; ".join(r["flags"]), "rule", r.get("capability", ""),
+                    "; ".join(r["tests"]), "; ".join(r["flags"] + r.get("unverified_reasons", [])
+                                                     + [f"dropped {d['kind'][:-1].replace('_', ' ')} “{d['text']}”: "
+                                                        + "; ".join(d["reasons"]) for d in r.get("dropped", [])]),
+                    "rule" if r.get("verified", True) else "unverified", r.get("capability", ""),
                     r.get("statement_original", ""), *("; ".join(r.get(k, [])) for k in SCENARIO_FIELDS)])
     for cid, c in ledger["candidates"].items():
         w.writerow(["candidate", cid, c["symbol"], c["kind"], "", "", "", "", c["area"],

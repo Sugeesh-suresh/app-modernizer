@@ -29,10 +29,13 @@ RE_DOC = ("<!-- SECTION: ANALYSIS -->\nanalysis\n<!-- SECTION: BRD -->\n# BRD\ns
           "<!-- SECTION: TECHNICAL_SPECIFICATION -->\n# Spec\nfacts\n<!-- SECTION: TEST_INVENTORY -->\n"
           "# Tests\nnone\n<!-- SECTION: END -->\n")
 # What an evidence specialist returns for the TIBCO fixture.
+# Each item cites a file of the fixture repository and quotes code that is in it:
+# the grounding check withholds evidence that does not.
 DISCOVERY_EVIDENCE = (
-    "### Components\n- `OrderPublisher` publishes each confirmed order to the `orders.q` queue\n"
-    "### Business Behaviour\n- Publishes each confirmed order.\n"
-    "### Integrations & Configuration\n- Uses `com.tibco.tibjms.TibjmsConnectionFactory`\n"
+    "### Components\n- `src/main/java/a/Svc.java` — `import javax.jms.Queue;`: publishes each confirmed order to "
+    "the orders queue\n"
+    "### Business Behaviour\n- `src/main/java/a/Svc.java` — Publishes each confirmed order.\n"
+    "### Integrations & Configuration\n- `pom.xml` — declares `tibjms`, the TibjmsConnectionFactory client\n"
     "### Tests\nNone found.\n"
 )
 
