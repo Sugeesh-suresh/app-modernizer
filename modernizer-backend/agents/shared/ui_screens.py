@@ -46,6 +46,15 @@ RENDERABLE = {"thymeleaf"}
 UI_KINDS = {"web-tier", "frontend"}
 VIEWPORT = {"width": 1366, "height": 900}
 MAX_HEIGHT = 4000
+MIN_HEIGHT = 240
+_CONTENT_BOTTOM = """() => {
+  let bottom = 0;
+  for (const el of document.body ? document.body.querySelectorAll('*') : []) {
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) bottom = Math.max(bottom, r.bottom + window.scrollY);
+  }
+  return Math.ceil(bottom);
+}"""
 BASE_URL = "http://app.local"
 _FRAGMENT_DIRS = re.compile(r"(?:^|/)(?:fragments?|layouts?|partials?|includes?|common|shared|mail|emails?)/",
                             re.I)
@@ -352,11 +361,12 @@ async def _screenshot(pages: list[tuple[str, Path, list[Path], Path]], deadline:
                 await page.route("**/*", handle)
                 try:
                     await page.goto(f"{BASE_URL}/__page", wait_until="load", timeout=20000)
-                    height = await page.evaluate("document.documentElement.scrollHeight")
-                    shot = {"path": str(png), "animations": "disabled", "type": "png", "full_page": True}
-                    if height > MAX_HEIGHT:          # a very long page: its first MAX_HEIGHT pixels
-                        shot["clip"] = {"x": 0, "y": 0, "width": VIEWPORT["width"], "height": MAX_HEIGHT}
-                    await page.screenshot(**shot)
+                    # Down to the lowest element on the page (not the window's empty
+                    # remainder), at most MAX_HEIGHT pixels.
+                    bottom = await page.evaluate(_CONTENT_BOTTOM)
+                    height = max(MIN_HEIGHT, min(MAX_HEIGHT, int(bottom) + 24))
+                    await page.screenshot(path=str(png), animations="disabled", type="png", full_page=True,
+                                          clip={"x": 0, "y": 0, "width": VIEWPORT["width"], "height": height})
                 except Exception as exc:
                     errors[sid] = f"the browser could not show the page ({type(exc).__name__})"
                 finally:

@@ -304,6 +304,11 @@ def test_capture_renders_every_state_and_is_deterministic(tmp_path):
     def digest(folder):
         return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path(folder).glob("*.png"))}
     assert digest(tmp_path / "a") == digest(tmp_path / "b") and len(digest(tmp_path / "a")) == 12
+    # Cropped to the page's content, not the 900-pixel window.
+    from agents.shared.docx_export import _png_size
+    login = next(s for s in first["screens"] if s["template"].endswith("login.html"))
+    width, height = _png_size(tmp_path / "a" / login["image"])
+    assert width == ui_screens.VIEWPORT["width"] and ui_screens.MIN_HEIGHT <= height < 600
     assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
 
 

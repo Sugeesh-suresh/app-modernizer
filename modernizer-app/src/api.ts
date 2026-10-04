@@ -135,23 +135,30 @@ export async function uploadContextFiles(
   return res.json();
 }
 
-export const brdDownloadUrl = (sessionId: string) =>
-  `${BASE}/api/sessions/${sessionId}/download/brd`;
+/** Markdown, or Word (.docx) converted from the same Markdown. */
+export type DocFormat = 'md' | 'docx';
+
+export const brdDownloadUrl = (sessionId: string, format: DocFormat = 'md') =>
+  `${BASE}/api/sessions/${sessionId}/download/brd?format=${format}`;
+
+/** The technical documentation: Technical Specification + Existing Test Inventory. */
+export const technicalSpecDownloadUrl = (sessionId: string, format: DocFormat = 'md') =>
+  `${BASE}/api/sessions/${sessionId}/download/technical-spec?format=${format}`;
 
 /** The whole reverse-engineering document (BRD + Technical Specification + Test
  * Inventory) as one file, rather than brdDownloadUrl's BRD slice. For a
  * stack-discovery run this is the deliverable. */
-export const reverseEngineeringDownloadUrl = (sessionId: string) =>
-  `${BASE}/api/sessions/${sessionId}/download/reverse-engineering`;
+export const reverseEngineeringDownloadUrl = (sessionId: string, format: DocFormat = 'md') =>
+  `${BASE}/api/sessions/${sessionId}/download/reverse-engineering?format=${format}`;
 
 /** stack-discovery: the complete business-rules ledger (every rule and every
  * candidate with its classification) as CSV — the document lists up to a limit. */
 export const businessRulesDownloadUrl = (sessionId: string) =>
   `${BASE}/api/sessions/${sessionId}/download/business-rules`;
 
-/** stack-discovery: the UI Screens document and its images, as one zip. */
-export const uiScreensDownloadUrl = (sessionId: string) =>
-  `${BASE}/api/sessions/${sessionId}/download/ui-screens`;
+/** stack-discovery: the UI Screens document — Markdown and images as one zip, or Word with the images inside. */
+export const uiScreensDownloadUrl = (sessionId: string, format: 'zip' | 'docx' = 'docx') =>
+  `${BASE}/api/sessions/${sessionId}/download/ui-screens?format=${format}`;
 
 /** One rendered screen of the UI Screens document (`screens/SCR-0001.png` in its Markdown). */
 export const uiScreenUrl = (sessionId: string, name: string) =>

@@ -11,6 +11,8 @@ python-dotenv==1.0.1
 aiofiles==24.1.0
 pypdf>=4.0.0
 python-docx>=1.1.0
+# Markdown parsing for the Word (.docx) downloads (agents/shared/docx_export.py).
+markdown-it-py>=3,<5
 pyyaml>=6.0
 # Stack discovery's business-rules extraction parses Java/JavaScript/TypeScript
 # into syntax trees (agents/shared/rule_candidates.py).

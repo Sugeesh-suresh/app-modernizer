@@ -135,12 +135,21 @@ Two tables are computed from the repository, with no model, given to the Enterpr
 
 The BRD opens with the stack table and the **Repository Fingerprint**, then the Product Owner's BRD, the Business Rules Catalog and Coverage, and the Evidence Check. The Technical Specification opens with the deterministic dependency graphs, then the Enterprise Architect's specification. **"Refine with AI" re-runs only the writer of the tab being refined** (BRD → Product Owner, Technical Specification/Test Inventory → Enterprise Architect), from the stored evidence, without reading the code again.
 
-**UI Screens (optional, per repository).** When a confirmed stack is a UI the pipeline can render (Thymeleaf today), the stack-confirmation screen shows a **Capture UI screenshots** checkbox — unticked by default (`UI_SCREENSHOTS_DEFAULT`), disabled with the reason when the tools are missing or the UI is JSP / a single-page app, and never shown with `UI_SCREENSHOTS=off` or for a repository without a UI. Ticked, the pipeline renders the pages into a separate **UI Screens** document (its own tab, and a zip download of the Markdown and images); the BRD, Technical Specification and Test Inventory are unchanged. No model is involved and the same repository gives byte-identical images:
+**Downloads: Markdown and Word.** Every document downloads as `.md` and as Word `.docx`; the Word file is converted from the same Markdown by the pipeline (`shared/docx_export.py`, markdown-it + python-docx — no model), so both say exactly the same thing. Headings, lists, tables (shaded header row), code and plain-text diagrams (monospace, spacing kept), quotes and http/https/mailto links carry over; images are embedded only from the session's own screenshots, any other image reference becomes its alt text.
+
+| Download | `.md` | `.docx` |
+|---|---|---|
+| BRD — `GET /api/sessions/{id}/download/brd?format=` | ✓ (default) | ✓ |
+| Technical documentation (Technical Specification + Existing Test Inventory) — `…/download/technical-spec?format=` | ✓ (default) | ✓ |
+| Whole reverse-engineering document — `…/download/reverse-engineering?format=` | ✓ (default) | ✓, with the UI Screens and their images as a fourth part |
+| UI Screens — `…/download/ui-screens?format=` | `zip` (default): Markdown + `screens/*.png` | ✓, images embedded |
+
+**UI Screens (optional, per repository).** When a confirmed stack is a UI the pipeline can render (Thymeleaf today), the stack-confirmation screen shows a **Capture UI screenshots** checkbox — unticked by default (`UI_SCREENSHOTS_DEFAULT`), disabled with the reason when the tools are missing or the UI is JSP / a single-page app, and never shown with `UI_SCREENSHOTS=off` or for a repository without a UI. Ticked, the pipeline renders the pages into a separate **UI Screens** document (its own tab; downloads as Word with the images embedded, or a zip of the Markdown and images); the BRD, Technical Specification and Test Inventory are unchanged. No model is involved and the same repository gives byte-identical images:
 
 1. **Pages** (`shared/ui_screens.py`): every GET page endpoint of the Interface & Job Inventory whose view is a literal (`return "x"`, `new ModelAndView("x")`, `setViewName("x")`, early redirects skipped) and resolves to a template under `<resources>/templates` or `spring.thymeleaf.prefix`, then the page templates no controller names (layouts, fragments and mail templates excluded). A view with no Thymeleaf template (JSP) is listed as not rendered.
 2. **Sample data and states** (`shared/ui_mock_data.py`): tree-sitter reads the handler's `addAttribute`/`addObject`/`put` calls, `@ModelAttribute` parameters and methods (also in `@ControllerAdvice`), and resolves each value's type through the repository's own classes — `service.findAll()` → `List<Job>`, `JobType.values()` → every constant, `new Job()` → a blank form — then fills fields (inherited ones and records included) with fixed values by type and name (`email` → `user1@example.com`, dates → 2026-01-15, prices → 49.99, lists → three items). The template's own `${…}`/`*{…}` paths, scoped through `th:each`/`th:object`/`th:with` and the fragments and layout it includes, fill what the code does not reveal. Each condition the page tests becomes a state after the default one: an empty list, a message or flag set, a request parameter present (`?error`), signed in without the roles `sec:authorize` names, signed out — up to `UI_SCREENSHOTS_MAX_STATES` per page and `UI_SCREENSHOTS_MAX_PAGES` screens in all.
 3. **Render** (`tools/thymeleaf-render`, a small Java tool built with `python dev.py setup-ui`): Spring's Thymeleaf engine with the layout dialect, the repository's `messages*.properties`, `@{…}` links resolved without a server, `sec:authorize`/`sec:authentication` evaluated against the state's sample user, and `th:field`/`th:errors`/`#fields` filled from the sample form object. It runs on a copy of the templates (symbolic links never followed), with no inherited environment, and its expressions cannot reach Java classes: type references (`T(…)`), constructors, bean references and methods leading to classes, class loaders, reflection, processes, threads, files or the network are refused. A page it cannot render becomes a labelled static preview of the raw template.
-4. **Screenshot**: headless Chromium (Playwright), 1366 px wide, scripts off, every request answered from the module's `static/`/`public/` folders or refused — nothing leaves the machine.
+4. **Screenshot**: headless Chromium (Playwright), 1366 px wide and as tall as the page's content (at most 4,000 px), scripts off, every request answered from the module's `static/`/`public/` folders or refused — nothing leaves the machine.
 
 Each screen lists its page, handler, template, state, the business rules (`BR-` ids) whose source is that template or handler, and the sample data used (in full for the default state, then only what differs). Everything not rendered is listed with the reason, and a failure of this stage is reported in the document without affecting the others.
 
@@ -484,7 +493,7 @@ Pick **Discover & Reverse Engineer My Stack** when you do not know what is in th
 2. Watch the **dependency mapper** read the build files and descriptors
 3. Confirm the **detected stacks**, each with its file evidence; uncheck anything you do not want documented
 4. Watch one reverse-engineering run per confirmed stack
-5. Review and edit the combined document, then confirm to finish — or download it from `GET /api/sessions/{id}/download/reverse-engineering`, which returns the BRD, Technical Specification and Test Inventory as one file
+5. Review and edit the combined document, then confirm to finish — or download it from `GET /api/sessions/{id}/download/reverse-engineering` (`?format=docx` for Word), which returns the BRD, Technical Specification and Test Inventory as one file
 
 ---
 
@@ -537,6 +546,7 @@ app-modernizer/
 │       ├── config_matrix.py           # Configuration keys × profiles, secrets redacted
 │       ├── ui_screens.py              # Optional UI Screens: plan, render, screenshot, document
 │       ├── ui_mock_data.py            # Sample data and page states read from controllers and templates
+│       ├── docx_export.py             # Markdown → Word (.docx) for the document downloads
     │       ├── plan_tasks.py              # Stage + task parsing
     │       ├── plan_contract.py           # The six questions
     │       ├── plan_coverage.py           # Plan manifest vs. what changed

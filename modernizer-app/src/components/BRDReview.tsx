@@ -6,8 +6,25 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  brdDownloadUrl, businessRulesDownloadUrl, uiScreenUrl, uiScreensDownloadUrl, uploadContextFiles,
+  brdDownloadUrl, businessRulesDownloadUrl, technicalSpecDownloadUrl, uiScreenUrl, uiScreensDownloadUrl,
+  uploadContextFiles,
 } from '../api';
+
+const DOWNLOAD_CLS = 'flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 bg-slate-900/5 hover:bg-slate-900/10 border border-slate-900/10 rounded-lg px-2.5 py-1 transition-colors';
+
+/** Download links for one document in several formats, e.g. `.md` and `.docx`. */
+function Downloads({ links }: { links: { href: string; label: string }[] }) {
+  return (
+    <>
+      {links.map((l) => (
+        <a key={l.label} href={l.href} download className={DOWNLOAD_CLS}>
+          <Download size={12} />
+          {l.label}
+        </a>
+      ))}
+    </>
+  );
+}
 
 // ── Plain-text diagram renderer ──────────────────────────────────────────────
 // Diagrams (class trees, business flows, the dependency graph) arrive as fenced
@@ -266,14 +283,10 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
                 {brdEditMode ? <Eye size={12} /> : <Pencil size={12} />}
                 {brdEditMode ? 'Preview' : 'Edit'}
               </button>
-              <a
-                href={brdDownloadUrl(sessionId)}
-                download
-                className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 bg-slate-900/5 hover:bg-slate-900/10 border border-slate-900/10 rounded-lg px-2.5 py-1 transition-colors"
-              >
-                <Download size={12} />
-                Download
-              </a>
+              <Downloads links={[
+                { href: brdDownloadUrl(sessionId, 'md'), label: '.md' },
+                { href: brdDownloadUrl(sessionId, 'docx'), label: '.docx' },
+              ]} />
               {reOnly && brd.includes('## Business Rules Catalog') && (
                 <a
                   href={businessRulesDownloadUrl(sessionId)}
@@ -311,13 +324,21 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
                 Includes Diagrams
               </span>
             </div>
-            <button
-              onClick={() => setTechEditMode((v) => !v)}
-              className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 bg-slate-900/5 hover:bg-slate-900/10 border border-slate-900/10 rounded-lg px-2.5 py-1 transition-colors cursor-pointer"
-            >
-              {techEditMode ? <Eye size={12} /> : <Pencil size={12} />}
-              {techEditMode ? 'Preview' : 'Edit'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setTechEditMode((v) => !v)}
+                className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 bg-slate-900/5 hover:bg-slate-900/10 border border-slate-900/10 rounded-lg px-2.5 py-1 transition-colors cursor-pointer"
+              >
+                {techEditMode ? <Eye size={12} /> : <Pencil size={12} />}
+                {techEditMode ? 'Preview' : 'Edit'}
+              </button>
+              <span title="Technical Specification and Existing Test Inventory" className="flex items-center gap-2">
+                <Downloads links={[
+                  { href: technicalSpecDownloadUrl(sessionId, 'md'), label: '.md' },
+                  { href: technicalSpecDownloadUrl(sessionId, 'docx'), label: '.docx' },
+                ]} />
+              </span>
+            </div>
           </div>
           {techEditMode ? (
             <textarea
@@ -365,14 +386,12 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
                 Sample data
               </span>
             </div>
-            <a
-              href={uiScreensDownloadUrl(sessionId)}
-              download
-              className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 bg-slate-900/5 hover:bg-slate-900/10 border border-slate-900/10 rounded-lg px-2.5 py-1 transition-colors"
-            >
-              <Download size={12} />
-              Download (zip)
-            </a>
+            <div className="flex items-center gap-2">
+              <Downloads links={[
+                { href: uiScreensDownloadUrl(sessionId, 'docx'), label: '.docx' },
+                { href: uiScreensDownloadUrl(sessionId, 'zip'), label: '.md + images (.zip)' },
+              ]} />
+            </div>
           </div>
           <div className="p-6 max-h-[62vh] overflow-y-auto">
             <MarkdownWithDiagrams content={uiScreens} screenSessionId={sessionId} />

@@ -48,8 +48,8 @@ from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11 import preflight as java11_preflight
-from agents.shared import (config_matrix, current_state, evidence_pack, interfaces, migration_inventory, repo_fingerprint,
-                           rule_candidates, rules_ledger, ui_screens)
+from agents.shared import (config_matrix, current_state, docx_export, evidence_pack, interfaces, migration_inventory,
+                           repo_fingerprint, rule_candidates, rules_ledger, ui_screens)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -2938,17 +2938,61 @@ async def refine_brd(session_id: str, body: RefineRequest):
     return await _refine(session_id, _run_bundle_re(session_id, bundle, feedback=body.feedback))
 
 
+def _download_format(value: str, allowed: tuple[str, ...]) -> str:
+    fmt = (value or allowed[0]).lower().lstrip(".")
+    if fmt not in allowed:
+        raise HTTPException(status_code=400, detail=f"format must be one of: {', '.join(allowed)}.")
+    return fmt
+
+
+def _markdown_response(text: str, name: str) -> Response:
+    return Response(content=text, media_type="text/markdown",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.md"'})
+
+
+async def _docx_response(name: str, title: str, sections: list, images: dict | None = None) -> Response:
+    """A Word document converted from the same Markdown the .md download returns (no model involved)."""
+    data = await asyncio.to_thread(docx_export.to_docx, title, sections, images)
+    return Response(content=data, media_type=docx_export.MEDIA_TYPE,
+                    headers={"Content-Disposition": f'attachment; filename="{name}.docx"'})
+
+
+def _discovery_title(state: dict) -> str:
+    pattern = state.get("pattern", "")
+    return "Technology Stack Discovery" if pattern == _STACK_DISCOVERY else _label(pattern)
+
+
 @app.get("/api/sessions/{session_id}/download/brd")
-async def download_brd(session_id: str):
+async def download_brd(session_id: str, format: str = "md"):
+    """The BRD as Markdown (default) or Word (`?format=docx`)."""
+    fmt = _download_format(format, ("md", "docx"))
     state = await _get_state(session_id)
     brd = state.get("brd", "")
     if not brd:
         raise HTTPException(status_code=404, detail="BRD not yet generated.")
-    return Response(
-        content=brd,
-        media_type="text/markdown",
-        headers={"Content-Disposition": f'attachment; filename="brd-{session_id[:8]}.md"'},
-    )
+    name = f"brd-{session_id[:8]}"
+    if fmt == "docx":
+        return await _docx_response(name, f"Business Requirements — {_discovery_title(state)}", [(None, brd)])
+    return _markdown_response(brd, name)
+
+
+@app.get("/api/sessions/{session_id}/download/technical-spec")
+async def download_technical_spec(session_id: str, format: str = "md"):
+    """The technical documentation — the Technical Specification and the Existing
+    Test Inventory — as Markdown (default) or Word (`?format=docx`)."""
+    fmt = _download_format(format, ("md", "docx"))
+    state = await _get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    spec, tests = state.get("technical_spec", ""), state.get("test_inventory", "")
+    if not (spec or tests):
+        raise HTTPException(status_code=404, detail="Technical specification not yet generated.")
+    sections = [("Technical Specification", spec.strip() or "_Not produced for this run._"),
+                ("Existing Test Inventory", tests.strip() or "_Not produced for this run._")]
+    name = f"technical-spec-{session_id[:8]}"
+    if fmt == "docx":
+        return await _docx_response(name, f"Technical Documentation — {_discovery_title(state)}", sections)
+    return _markdown_response("\n\n---\n\n".join(f"# {h}\n\n{body}" for h, body in sections), name)
 
 
 @app.get("/api/sessions/{session_id}/download/business-rules")
@@ -2992,15 +3036,26 @@ async def ui_screen_image(session_id: str, name: str):
                     headers={"Cache-Control": "private, max-age=3600"})
 
 
+def _screen_images(state: dict) -> dict[str, Path]:
+    """{"screens/SCR-0001.png": file} for the images the UI Screens document names."""
+    folder = Path(state.get("ui_screens_dir", "") or "/nonexistent")
+    return {f"screens/{name}": folder / name for name in _screen_files(state) if (folder / name).is_file()}
+
+
 @app.get("/api/sessions/{session_id}/download/ui-screens")
-async def download_ui_screens(session_id: str):
-    """The UI Screens document with its images: ui-screens.md and screens/*.png in one zip."""
+async def download_ui_screens(session_id: str, format: str = "zip"):
+    """The UI Screens document: a zip of ui-screens.md and screens/*.png (default),
+    or a Word document with the images embedded (`?format=docx`)."""
+    fmt = _download_format(format, ("zip", "docx"))
     state = await _get_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found.")
     document = state.get("ui_screens", "")
     if not document:
         raise HTTPException(status_code=404, detail="No UI screens for this run.")
+    if fmt == "docx":
+        return await _docx_response(f"ui-screens-{session_id[:8]}", f"UI Screens — {_discovery_title(state)}",
+                                    [(None, document)], _screen_images(state))
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("ui-screens.md", document)
@@ -3013,7 +3068,7 @@ async def download_ui_screens(session_id: str):
 
 
 @app.get("/api/sessions/{session_id}/download/reverse-engineering")
-async def download_reverse_engineering(session_id: str):
+async def download_reverse_engineering(session_id: str, format: str = "md"):
     """The full reverse-engineering document as one Markdown file.
 
     The existing /download/brd returns only the BRD slice, which is the right
@@ -3022,6 +3077,7 @@ async def download_reverse_engineering(session_id: str):
     per-stack detail. Available for every pattern, since a migration run's
     reviewer may want the same thing.
     """
+    fmt = _download_format(format, ("md", "docx"))
     state = await _get_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found.")
@@ -3032,8 +3088,16 @@ async def download_reverse_engineering(session_id: str):
     if not any((brd, tech_spec, test_inventory)):
         raise HTTPException(status_code=404, detail="Reverse engineering has not produced a document yet.")
 
-    pattern = state.get("pattern", "")
-    title = "Technology Stack Discovery" if pattern == _STACK_DISCOVERY else _label(pattern)
+    title = _discovery_title(state)
+    if fmt == "docx":
+        # Word can carry the screenshots, so the UI Screens document is included when there is one.
+        sections = [(heading, body.strip() or "_Not produced for this run._") for heading, body in (
+            ("Business Requirements", brd), ("Technical Specification", tech_spec),
+            ("Existing Test Inventory", test_inventory))]
+        if state.get("ui_screens"):
+            sections.append(("UI Screens", state["ui_screens"]))
+        return await _docx_response(f"reverse-engineering-{session_id[:8]}", f"Reverse Engineering — {title}",
+                                    sections, _screen_images(state))
     parts = [f"# Reverse Engineering — {title}", ""]
     for heading, body in (
         ("Business Requirements", brd),

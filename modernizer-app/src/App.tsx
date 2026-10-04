@@ -677,13 +677,22 @@ export default function App() {
                     )}
                   </p>
                   {state.sessionId && (
-                    <a
-                      href={reverseEngineeringDownloadUrl(state.sessionId)}
-                      download
-                      className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-500 text-white px-6 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer mb-3"
-                    >
-                      Download the reverse-engineering document
-                    </a>
+                    <div className="flex items-center justify-center gap-2 flex-wrap mb-3">
+                      <a
+                        href={reverseEngineeringDownloadUrl(state.sessionId, 'docx')}
+                        download
+                        className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-500 text-white px-6 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer"
+                      >
+                        Download the reverse-engineering document (.docx)
+                      </a>
+                      <a
+                        href={reverseEngineeringDownloadUrl(state.sessionId, 'md')}
+                        download
+                        className="inline-flex items-center gap-2 bg-slate-900/5 hover:bg-slate-900/10 border border-slate-900/10 text-slate-700 px-5 py-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer"
+                      >
+                        .md
+                      </a>
+                    </div>
                   )}
                   <div />
                 </>
