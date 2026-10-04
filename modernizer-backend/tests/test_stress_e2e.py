@@ -112,7 +112,7 @@ class Scripted(BaseLlm):
             # Answer every candidate in the batch, citing each one's first line.
             found = re.findall(r"### (C\d{5}) .*?\nFile: `[^`]+` lines (\d+)-", system)
             self.rule_batches.append([cid for cid, _ in found])
-            results = [{"candidate": cid, "rules": [{"statement": f"Rule found in {cid}.", "type": "validation",
+            results = [{"candidate": cid, "rules": [{"statement": f"Rule found in candidate {cid} applies.", "type": "validation",
                                                      "lines": start, "basis": "explicit"}]} for cid, start in found]
             yield self._reply("```json\n" + json.dumps({"results": results}) + "\n```")
         elif skill == "stack-discovery-unit":
@@ -619,7 +619,8 @@ def test_large_repository_discovery_with_the_business_rules_ledger(scripted, tmp
     assert sorted(f for u in scripted.units for f in u) == java_files          # each file read once
     assert all(len(u) <= 2 for u in scripted.units)
     brd, evidence = state["brd"], Path(state["evidence_path"]).read_text()
-    assert brd.index("## Executive Summary") < brd.index("## Business Rules Catalog")
-    assert "Rule found in" in brd and "## Business Rules Coverage" not in brd and "Source" not in brd
+    assert brd.index("## Executive Summary") < brd.index("## Business Rules by Capability")
+    assert "**Statement:** “Rule found in candidate" in brd and "**Rule ID:** BR-" in brd
+    assert "## Business Rules Coverage" not in brd and "Source" not in brd and "evidence file" not in brd
     assert evidence.index("## Business Rules Catalog — Code Locations and Tests") \
         < evidence.index("## Business Rules Coverage") < evidence.index("## Evidence Check")

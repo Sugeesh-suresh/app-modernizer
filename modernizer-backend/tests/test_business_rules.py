@@ -162,9 +162,9 @@ def test_duplicates_merge_tests_attach_and_ids_are_stable(tmp_path):
         {"statement": "A customer must be 18 or older!", "type": "eligibility", "lines": "5"}]}], ledger)
     rl.finalize(ledger, str(tmp_path), scan.test_files)
     [rule] = ledger["rules"]
-    assert rule["id"] == "BR-0001" and len(rule["sources"]) == 2
+    assert rule["id"] == "BR-ORDERS-001" and len(rule["sources"]) == 2      # capability from the area: orders
     assert rule["tests"] == ["src/test/java/com/acme/OrderServiceTest.java"]          # names OrderService
-    assert ledger["candidates"][place.id]["rule_ids"] == ["BR-0001"]
+    assert ledger["candidates"][place.id]["rule_ids"] == ["BR-ORDERS-001"]
 
 
 def test_reports_count_every_candidate(tmp_path):
@@ -181,10 +181,10 @@ def test_reports_count_every_candidate(tmp_path):
     md = rl.coverage_markdown(cov)
     assert "**Business rules:** 1" in md and "Go | 1 | **not analysed for rules**" in md and "**Not analysed:** 3" in md
     catalog = rl.catalog_markdown(ledger, 10)
-    assert "| BR-0001 | Orders over 1000 for non-VIP customers need approval. | workflow |" in catalog
+    assert "| BR-ORDERS-001 | Orders over 1000 for non-VIP customers need approval. | workflow |" in catalog
     assert "inferred" in catalog
     csv_text = rl.to_csv(ledger)
-    assert csv_text.count("\ncandidate,") == len(scan.candidates) and "\nrule,BR-0001," in csv_text
+    assert csv_text.count("\ncandidate,") == len(scan.candidates) and "\nrule,BR-ORDERS-001," in csv_text
 
 
 def test_the_document_lists_up_to_the_limit_and_says_so():
@@ -228,7 +228,8 @@ def _answer_every_candidate(batch_text: str) -> str:
     results = []
     for cid, start in re.findall(r"### (C\d{5}) .*?\nFile: `[^`]+` lines (\d+)-", batch_text):
         results.append({"candidate": cid, "rules": [
-            {"statement": f"Rule of {cid}.", "type": "validation", "lines": start, "basis": "explicit"}]})
+            {"statement": f"A rule applies to candidate {cid}.", "type": "validation", "lines": start,
+             "basis": "explicit"}]})
     return "```json\n" + json.dumps({"results": results}) + "\n```"
 
 
@@ -359,7 +360,7 @@ def test_the_ledger_downloads_as_csv_and_is_not_kept_in_session_state(monkeypatc
         res = client.get(f"/api/sessions/{sid}/download/business-rules")
         missing = client.get(f"/api/sessions/{_session(tmp_path, [])}/download/business-rules")
     assert res.status_code == 200 and res.headers["content-type"].startswith("text/csv")
-    assert "\nrule,BR-0001,Rule of C00001." in res.text and "\ncandidate,C00001," in res.text
+    assert "\nrule,BR-GENERAL-001,A rule applies to candidate C00001." in res.text and "\ncandidate,C00001," in res.text
     assert missing.status_code == 404
 
 

@@ -15,7 +15,13 @@ exact source of its candidates, and its answer is checked here in code:
   source; otherwise the rule is flagged (kept, so a reviewer can judge it);
 - the same rule found in several places is merged into one rule with several
   sources;
-- tests are attached by name: test files that mention the rule's class or file.
+- tests are attached by name: test files that mention the rule's class or file;
+- every statement must be plain English (no code): a candidate whose rules name
+  code is asked once more to restate them (`needs_rewording` / `render_batch`
+  with `reword`); a statement still technical after that is reworded here from
+  the rule's own condition and outcome, or, failing that, stated generically and
+  marked inferred / low confidence for the business to confirm;
+- ids carry the rule's business capability: `BR-<CAPABILITY>-<nnn>`.
 """
 import csv
 import io
@@ -49,13 +55,21 @@ def batches(candidates: list[Candidate], max_candidates: int, max_chars: int) ->
     return out
 
 
-def render_batch(batch: list[Candidate]) -> str:
+def render_batch(batch: list[Candidate], reword: dict[str, list[str]] | None = None) -> str:
+    """The candidates as the extraction agent sees them. `reword`: {candidate id:
+    statements it gave that named code} — the candidate is asked again, with them."""
     parts = []
     for c in batch:
+        note = ""
+        if reword and reword.get(c.id):
+            note = ("\n**Restate in plain English.** Your earlier rule statements for this candidate contained code; "
+                    "a business reader cannot use them. Give every rule again, as a sentence with no code, names, "
+                    "expressions or backticks:\n" + "\n".join(f"- {s}" for s in reword[c.id][:5]))
         parts.append(
             f"### {c.id} — {c.kind} `{c.symbol}`\n"
             f"File: `{c.path}` lines {c.start}-{c.end} ({c.language}; signals: {', '.join(c.signals) or '—'})"
             + ("\n**Truncated:** only the first part of this code is shown." if c.truncated else "")
+            + note
             + f"\n```\n{c.source}\n```"
         )
     return "\n\n".join(parts)
@@ -94,9 +108,18 @@ def _lines(spec, c: Candidate) -> tuple[int, int, bool]:
 _IDENT = re.compile(r"`([^`\s]{2,80})`")
 
 
-def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict) -> list[Candidate]:
-    """Record the answer for this batch in `ledger`; return the candidates it left out."""
+def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict, replace: bool = False) -> list[Candidate]:
+    """Record the answer for this batch in `ledger`; return the candidates it left out.
+    `replace`: the answer restates candidates already answered — their earlier rules go."""
     by_id = {c.id: c for c in batch}
+    if replace:
+        restated = {str(r.get("candidate") or r.get("id") or "").strip() for r in results} & set(by_id)
+        restated = {cid for cid in restated if any(isinstance(x, dict) and str(x.get("statement") or "").strip()
+                                                   for r in results if str(r.get("candidate") or r.get("id") or "").strip() == cid
+                                                   for x in (r.get("rules") or []))}
+        ledger["raw_rules"] = [r for r in ledger["raw_rules"] if r["sources"][0]["candidate"] not in restated]
+        for cid in restated:
+            ledger["candidates"][cid]["rule_count"] = 0
     answered: set[str] = set()
     for result in results:
         cid = str(result.get("candidate") or result.get("id") or "").strip()
@@ -106,8 +129,8 @@ def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict) -> l
         rules = result.get("rules") if isinstance(result.get("rules"), list) else []
         rules = [r for r in rules if isinstance(r, dict) and str(r.get("statement") or "").strip()]
         technical = str(result.get("technical") or "").strip()
-        if not rules and not technical:
-            continue
+        if not rules and (not technical or replace):
+            continue                         # a restatement without rules leaves the earlier answer standing
         answered.add(cid)
         entry = ledger["candidates"][cid]
         if not rules:
@@ -125,6 +148,7 @@ def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict) -> l
             rtype = str(r.get("type") or "other").strip().lower()
             ledger["raw_rules"].append({
                 "statement": str(r["statement"]).strip()[:600],
+                "capability": re.sub(r"\s+", " ", str(r.get("capability") or "")).strip()[:60],
                 "type": rtype if rtype in RULE_TYPES else "other",
                 "condition": str(r.get("condition") or "").strip()[:400],
                 "outcome": str(r.get("outcome") or "").strip()[:400],
@@ -138,6 +162,23 @@ def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict) -> l
             entry.setdefault("rule_count", 0)
             entry["rule_count"] += 1
     return [c for c in batch if c.id not in answered]
+
+
+def is_business_language(statement: str) -> bool:
+    """A statement the BRD can carry as written: no code, and a sentence's worth of words."""
+    from .plain_language import is_plain
+    return is_plain(statement) and len(re.findall(r"[A-Za-z]{2,}", statement)) >= 4
+
+
+def needs_rewording(batch: list[Candidate], ledger: dict) -> dict[str, list[str]]:
+    """{candidate id: its rule statements that are not plain English} for this batch."""
+    ids = {c.id for c in batch}
+    out: dict[str, list[str]] = defaultdict(list)
+    for r in ledger["raw_rules"]:
+        cid = r["sources"][0]["candidate"]
+        if cid in ids and not is_business_language(r["statement"]):
+            out[cid].append(r["statement"])
+    return dict(out)
 
 
 def new_ledger(candidates: list[Candidate]) -> dict:
@@ -207,11 +248,18 @@ def finalize(ledger: dict, workspace_dir: str, test_files: list[str]) -> None:
             if rule["basis"] == "explicit":
                 target["basis"] = "explicit"
     index = _test_index(workspace_dir, test_files)
-    merged.sort(key=lambda r: (r["area"], r["sources"][0]["path"], r["sources"][0]["start"]))
-    for i, rule in enumerate(merged, 1):
+    for rule in merged:
+        _business_wording(rule)
+        name = capability_name(rule.get("capability", ""), rule["area"])
+        rule["capability"], rule["_code"] = name, capability_code(name)
+    merged.sort(key=lambda r: (r["_code"], r["area"], r["sources"][0]["path"], r["sources"][0]["start"]))
+    numbers: dict[str, int] = defaultdict(int)
+    for rule in merged:
         rule.pop("_norm", None)
         rule.pop("_facts", None)
-        rule["id"] = f"BR-{i:04d}"
+        code = rule.pop("_code")
+        numbers[code] += 1
+        rule["id"] = f"BR-{code}-{numbers[code]:03d}"
         names = set()
         for s in rule["sources"]:
             names.add(Path(s["path"]).stem)
@@ -225,6 +273,52 @@ def finalize(ledger: dict, workspace_dir: str, test_files: list[str]) -> None:
     for cid, entry in ledger["candidates"].items():
         entry["rule_ids"] = sorted(set(by_candidate.get(cid, [])))
     ledger["rules"] = merged
+
+
+def capability_name(capability: str, area: str) -> str:
+    """The capability as the BRD heads it; from the area when the agent named none."""
+    name = re.sub(r"[^\w &/-]+", " ", capability or "").strip()
+    if not name:
+        last = re.split(r"[./]", area or "")[-1] if area and not area.startswith("(") else ""
+        from .plain_language import humanize
+        name = humanize(last) if last else "General"
+    name = " ".join(name.split())
+    return name[:1].upper() + name[1:]
+
+
+def capability_code(name: str) -> str:
+    """`Product standardization` → PRODUCT-STANDARDIZATION (two words at most), for ids."""
+    words = re.findall(r"[A-Za-z0-9]+", name.upper())[:2]
+    return "-".join(words)[:24].strip("-") or "GENERAL"
+
+
+_TYPE_WORDS = {"state-transition": "status change", "data-integrity": "data integrity",
+               "authorization": "access", "other": "business"}
+
+
+def _business_wording(rule: dict) -> None:
+    """Guarantee a plain-English statement. The agent's own wording when it is plain;
+    else its statement, or condition and outcome, with the code taken out; else a
+    generic sentence marked inferred / low for the business owner to confirm.
+    The agent's original wording is kept as `statement_original` for the audit file."""
+    from .plain_language import humanize, phrase
+    original = rule["statement"]
+    if is_business_language(original):
+        return
+    rule["statement_original"] = original
+    stripped = phrase(original)
+    cond, outcome = phrase(rule.get("condition", "")), phrase(rule.get("outcome", ""))
+    if stripped and is_business_language(stripped):
+        text = stripped
+    elif cond and outcome:
+        text = f"When {cond[:1].lower() + cond[1:]}, {outcome[:1].lower() + outcome[1:]}"
+    else:
+        symbol = rule["sources"][0].get("symbol", "")
+        where = " ".join(humanize(p) for p in symbol.replace("#", ".").split(".")[-2:] if p).lower() or "this part"
+        text = (f"The system applies a {_TYPE_WORDS.get(rule['type'], rule['type'])} rule in {where}; "
+                "its business meaning is to be confirmed with the business owner")
+        rule["basis"], rule["confidence"] = "inferred", "low"
+    rule["statement"] = text.rstrip(" .") + "."
 
 
 def _test_index(workspace_dir: str, test_files: list[str]) -> dict[str, set[str]]:
@@ -335,47 +429,41 @@ def catalog_markdown(ledger: dict, max_rules: int) -> str:
         cond = " → ".join(x for x in (rule["condition"], rule["outcome"]) if x) or "—"
         tests = "; ".join(f"`{t}`" for t in rule["tests"][:2]) or "none found"
         basis = f"{rule['basis']}, {rule['confidence']}" + (" ⚠ " + "; ".join(rule["flags"]) if rule["flags"] else "")
-        lines.append(f"| {rule['id']} | {_cell(rule['statement'])} | {rule['type']} | {_cell(cond)} | {src} | "
+        stated = rule["statement"] + (f" (as extracted: {rule['statement_original']})"
+                                      if rule.get("statement_original") else "")
+        lines.append(f"| {rule['id']} | {_cell(stated)} | {rule['type']} | {_cell(cond)} | {src} | "
                      f"{tests} | {_cell(basis)} |")
     return "\n".join(lines)
 
 
-#: Rule types as a business reader groups them, in this order.
-_TYPE_HEADINGS = {
-    "authorization": "Access and permissions", "validation": "Validation", "eligibility": "Eligibility",
-    "calculation": "Calculations", "state-transition": "Status changes", "workflow": "Workflow",
-    "default": "Defaults", "constraint": "Constraints", "data-integrity": "Data integrity",
-    "notification": "Notifications", "other": "Other rules",
-}
-TECHNICAL_ONLY = "Described only in technical terms — see the evidence file."
+BUSINESS_RULES_HEADING = "## Business Rules by Capability"
 
 
-def business_catalog_markdown(ledger: dict | None, max_rules: int) -> str:
-    """The catalog for the BRD: every rule in business words, by kind of rule, with
-    no code locations or tests (those are in the evidence file's catalog). Same ids."""
-    from .plain_language import phrase
+def business_rules_markdown(ledger: dict | None, max_rules: int) -> str:
+    """The BRD's business rules: one record per rule, by capability — Rule ID,
+    Statement, Observed or inferred, Confidence. Plain English only; where a rule
+    is implemented lives in the audit file, never here."""
     rules = (ledger or {}).get("rules") or []
-    lines = ["## Business Rules Catalog", "",
-             "_Every business rule the system was found to apply, grouped by kind. Where each one is "
-             "implemented, and the tests that cover it, are recorded in the evidence file._"]
+    lines = [BUSINESS_RULES_HEADING]
     if not rules:
-        return "\n".join(lines + ["", "No business rules were found in the analysed code."])
+        return "\n".join(lines + ["", "No business rules were found in the analysed parts of the system."])
     shown = rules[:max_rules]
     if len(rules) > max_rules:
         lines += ["", f"> Showing {max_rules:,} of {len(rules):,} rules. The business-rules download (CSV) "
-                  "has all of them."]
-    order = list(_TYPE_HEADINGS)
-    by_type: dict[str, list[dict]] = {}
-    for rule in shown:
-        kind = rule.get("type") if rule.get("type") in _TYPE_HEADINGS else "other"
-        by_type.setdefault(kind, []).append(rule)
-    for kind in sorted(by_type, key=order.index):
-        lines += ["", f"### {_TYPE_HEADINGS[kind]}", "", "| ID | Rule | When | Then | Basis |", "|---|---|---|---|---|"]
-        for rule in by_type[kind]:
-            basis = "Stated in the system" if rule.get("basis") == "explicit" else "Inferred — confirm with the business"
-            lines.append(f"| {rule['id']} | {_cell(phrase(rule.get('statement', '')) or TECHNICAL_ONLY)} | "
-                         f"{_cell(phrase(rule.get('condition', '')) or '—')} | "
-                         f"{_cell(phrase(rule.get('outcome', '')) or '—')} | {basis} |")
+                  "lists all of them."]
+    capability = None
+    for n, rule in enumerate(shown):
+        if rule.get("capability") != capability:
+            capability = rule.get("capability")
+            lines += ["", f"### {capability}"]
+        # Alternating list markers start a new list for each record, so records
+        # stay separate blocks rather than merging into one long list.
+        mark = "-" if n % 2 == 0 else "*"
+        lines += ["",
+                  f"{mark} **Rule ID:** {rule['id']}",
+                  f"{mark} **Statement:** “{_cell(rule['statement'])}”",
+                  f"{mark} **Observed or inferred:** {'Observed' if rule.get('basis') == 'explicit' else 'Inferred'}",
+                  f"{mark} **Confidence:** {str(rule.get('confidence') or 'medium').capitalize()}"]
     return "\n".join(lines)
 
 
@@ -383,12 +471,14 @@ def to_csv(ledger: dict) -> str:
     out = io.StringIO()
     w = csv.writer(out)
     w.writerow(["record", "id", "statement_or_symbol", "type_or_kind", "condition", "outcome", "basis",
-                "confidence", "area", "sources", "tests", "flags_or_reason", "status"])
+                "confidence", "area", "sources", "tests", "flags_or_reason", "status", "capability",
+                "statement_as_extracted"])
     for r in ledger["rules"]:
         w.writerow(["rule", r["id"], r["statement"], r["type"], r["condition"], r["outcome"], r["basis"],
                     r["confidence"], r["area"],
                     "; ".join(f"{s['path']}:{s['start']}-{s['end']}" for s in r["sources"]),
-                    "; ".join(r["tests"]), "; ".join(r["flags"]), "rule"])
+                    "; ".join(r["tests"]), "; ".join(r["flags"]), "rule", r.get("capability", ""),
+                    r.get("statement_original", "")])
     for cid, c in ledger["candidates"].items():
         w.writerow(["candidate", cid, c["symbol"], c["kind"], "", "", "", "", c["area"],
                     f"{c['path']}:{c['start']}-{c['end']}", "", c.get("reason", ""),

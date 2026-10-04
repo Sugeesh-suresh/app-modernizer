@@ -53,7 +53,7 @@ _ALIASES = {
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _BULLET = re.compile(r"^[-*+]\s+(?:\[EV-[^\]]*\]\s*)?")
 EV_ID = re.compile(r"\bEV-[a-z0-9]+(?:-[a-z0-9]+)*-\d{4}\b")
-BR_ID = re.compile(r"\bBR-\d{4,}\b")
+BR_ID = re.compile(r"\bBR-(?:[A-Z0-9]+-)*\d{3,}\b")       # BR-PRICING-001 (and the older BR-0001)
 _NONE = re.compile(r"^\s*[-*+]?\s*(?:none|n/a|nothing)\b.*$", re.I)
 
 
@@ -151,8 +151,9 @@ def rules_index(ledger: dict | None, max_chars: int) -> str:
     by_area: dict[str, list[dict]] = {}
     for r in rules:
         by_area.setdefault(r.get("area", ""), []).append(r)
-    lines = [f"{len(rules)} rules in {len(by_area)} areas. Reference them by id (BR-nnnn); the full catalog "
-             "is appended to the BRD, so do not re-list it."]
+    lines = [f"{len(rules)} rules in {len(by_area)} areas. Reference them by id (e.g. BR-PRICING-001) where a "
+             "rule applies; every rule is inserted into the BRD under Business Rules by Capability, so do not "
+             "re-list them."]
     shown = 0
     for area, items in by_area.items():
         lines.append(f"\n### {area or '(no area)'} — {len(items)} rules")

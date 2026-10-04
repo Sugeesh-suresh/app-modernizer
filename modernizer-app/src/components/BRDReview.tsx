@@ -287,7 +287,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
                 { href: brdDownloadUrl(sessionId, 'md'), label: '.md' },
                 { href: brdDownloadUrl(sessionId, 'docx'), label: '.docx' },
               ]} />
-              {reOnly && brd.includes('## Business Rules Catalog') && (
+              {reOnly && brd.includes('## Business Rules by Capability') && (
                 <a
                   href={businessRulesDownloadUrl(sessionId)}
                   download

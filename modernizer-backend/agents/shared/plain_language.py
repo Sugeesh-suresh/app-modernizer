@@ -20,7 +20,7 @@ What it does to a BRD (Markdown):
 """
 import re
 
-from .evidence_pack import EV_ID, REMOVED
+from .evidence_pack import BR_ID, EV_ID, REMOVED
 
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _COMMENT = re.compile(r"<!--.*?-->", re.S)
@@ -130,7 +130,7 @@ def _clean_line(line: str) -> tuple[str, list[str], int]:
 
 def _words(line: str) -> int:
     body = re.sub(r"^\s*(?:[-*+]|\d+[.)]|#{1,6}|>|\|)\s*", "", line)
-    body = re.sub(r"\bBR-\d{4,}\b", "", body)
+    body = BR_ID.sub("", body)
     return len(re.findall(r"[A-Za-z]{2,}", body))
 
 
@@ -140,7 +140,7 @@ def _keeps_meaning(line: str, lost: int) -> bool:
     return _words(line) >= (3 if lost else 1)
 
 
-EMPTIED = "_Every statement the writer made here was in technical terms; they are recorded in the evidence file._"
+EMPTIED = "_Not yet described in business terms; to be completed with the business owner._"
 
 
 def business_only(markdown: str) -> tuple[str, list[tuple[str, list[str]]], int]:
@@ -188,6 +188,24 @@ def business_only(markdown: str) -> tuple[str, list[tuple[str, list[str]]], int]
     close_section()
     text = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip() + "\n"
     return text, cited, removed
+
+
+def place_section(markdown: str, section: str, heading: str,
+                  before: tuple[str, ...] = ("## Business Data", "## External Parties", "## Observed Risks",
+                                             "## Open Questions")) -> str:
+    """`section` (starting with `heading`) in its place in the document: replacing a
+    section of that heading the writer produced, else before the first of `before`
+    present, else at the end."""
+    lines = markdown.rstrip().split("\n")
+    start = next((i for i, l in enumerate(lines) if l.strip().lower() == heading.lower()), None)
+    if start is not None:
+        end = next((i for i in range(start + 1, len(lines)) if re.match(r"^#{1,2}\s", lines[i])), len(lines))
+        lines[start:end] = section.split("\n") + [""]
+    else:
+        at = next((i for i, l in enumerate(lines) for b in before if l.strip().lower().startswith(b.lower())), None)
+        block = section.split("\n") + [""]
+        lines = (lines[:at] + block + lines[at:]) if at is not None else lines + [""] + block
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip() + "\n"
 
 
 def is_plain(text: str) -> bool:

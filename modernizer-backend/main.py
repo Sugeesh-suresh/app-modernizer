@@ -1960,9 +1960,12 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         print(f"[discovery] BRD: moved {removed} code reference(s) out of the business document", flush=True)
     check_md = ""
     if packs:
-        parts = [business_brd]
+        # Every extracted rule, as a plain-English record, in its place in the BRD.
         if ledger:
-            parts.append(rules_ledger.business_catalog_markdown(ledger, config.RULES_CATALOG_MAX_IN_DOCUMENT))
+            business_brd = plain_language.place_section(
+                business_brd, rules_ledger.business_rules_markdown(ledger, config.RULES_CATALOG_MAX_IN_DOCUMENT),
+                rules_ledger.BUSINESS_RULES_HEADING)
+        parts = [business_brd]
         check_md = evidence_pack.check_markdown(evidence_pack.check(po_brd, evidence_ids, rule_ids),
                                                 evidence_pack.check(ea_spec + "\n" + ea_tests, evidence_ids, rule_ids),
                                                 evidence_ids,
@@ -2311,6 +2314,20 @@ async def _run_rules_extraction(session_id: str) -> None:
                 if not missing:
                     break
             rules_ledger.mark_unclassified(missing, ledger, reason)
+            # Rules worded in code go back once, with their wording, to be restated
+            # in plain English; finalize() rewords whatever is still technical.
+            reword = rules_ledger.needs_rewording(batch, ledger)
+            if reword:
+                again = [c for c in batch if c.id in reword]
+                try:
+                    raw = await _run_isolated(
+                        "rules", _STACK_DISCOVERY,
+                        {"workspace_dir": workspace_dir, "rule_batch": rules_ledger.render_batch(again, reword)},
+                        "Restate the rules of these candidates in plain English.", "rule_batch_result",
+                    )
+                    rules_ledger.apply_answer(again, rules_ledger.parse_answer(raw), ledger, replace=True)
+                except Exception:                              # noqa: BLE001 — the earlier answer stands
+                    traceback.print_exc()
             finished += 1
             await _push(session_id, "progress", message=f"Business rules: batch {finished}/{len(batches)}",
                         progress=int(5 + 80 * finished / max(len(batches), 1)))

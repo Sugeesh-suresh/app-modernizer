@@ -32,11 +32,17 @@ can contain both rules and plumbing — report only the rules.
 
 ## For each rule
 
-- `statement` — the rule in plain business language a non-developer can check,
-  e.g. "An order with more than 50 items is rejected." No code: no class,
-  method, field, variable, constant, table or file names, no expressions, no
-  backticks. The statement goes into the business document as written; where
-  the rule lives is recorded separately, from `lines`.
+- `statement` — the rule as one plain-English sentence a business owner can
+  confirm or correct, carrying its condition and its outcome, e.g. "A claim may
+  be auto-approved only when the amount is below the configured threshold and
+  no fraud flag exists." No code: no class, method, field, variable, constant,
+  table or file names, no expressions, no backticks. The statement goes into the
+  business document as written; where the rule lives is recorded separately,
+  from `lines`. A statement that names code is sent back to you to restate.
+- `capability` — the business capability the rule belongs to, in one or two
+  words a business reader uses: "Claims", "Order approval", "Product
+  standardization", "Access". Rules of the same capability use the same words;
+  the rule's id is built from them (BR-CLAIMS-042).
 - `type` — one of: validation, calculation, eligibility, state-transition,
   authorization, constraint, default, workflow, notification, data-integrity, other
 - `condition` — when it applies, in words ("the order has more than 50 items");
@@ -61,7 +67,7 @@ appears exactly once:
   "results": [
     {"candidate": "C00012", "rules": [
       {"statement": "An order with more than 50 items is rejected and the customer is asked to split it.",
-       "type": "validation", "condition": "the order has more than 50 items", "outcome": "the order is rejected",
+       "capability": "Order entry", "type": "validation", "condition": "the order has more than 50 items", "outcome": "the order is rejected",
        "lines": "9-11", "basis": "explicit", "confidence": "high"}
     ]},
     {"candidate": "C00013", "rules": [], "technical": "null guard before saving; no business decision"}

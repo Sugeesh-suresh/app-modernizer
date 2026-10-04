@@ -73,28 +73,93 @@ def test_the_same_text_always_gives_the_same_brd():
     assert pl.business_only(once)[0] == once                                   # idempotent
 
 
-LEDGER = {"rules": [
-    {"id": "BR-0001", "type": "validation", "basis": "explicit", "area": "orders",
-     "statement": "An order with more than 50 items is rejected.", "condition": "the order has more than 50 items",
-     "outcome": "the order is rejected", "sources": [{"path": "src/Order.java", "start": 9, "end": 11}]},
-    {"id": "BR-0002", "type": "authorization", "basis": "inferred", "area": "web",
-     "statement": "Only managers see the refund screen in `RefundController.java`.", "condition": "", "outcome": "",
-     "sources": [{"path": "src/RefundController.java", "start": 3, "end": 4}]},
-    {"id": "BR-0003", "type": "validation", "basis": "explicit", "area": "web",
-     "statement": "The implementation applies `<div th:if=\"${param.error}\">`.", "condition": "`x > 5`",
-     "outcome": "", "sources": [{"path": "login.html", "start": 4, "end": 4}]},
-]}
+def _raw(cid, statement, capability="", rtype="validation", basis="explicit", confidence="high",
+         condition="", outcome="", area="claims", symbol="ClaimService.approve"):
+    return {"statement": statement, "capability": capability, "type": rtype, "condition": condition,
+            "outcome": outcome, "basis": basis, "confidence": confidence, "area": area, "flags": [],
+            "sources": [{"candidate": cid, "path": f"src/{cid}.java", "start": 1, "end": 5, "symbol": symbol}]}
 
 
-def test_the_brd_catalog_is_in_business_words_by_kind_of_rule():
-    md = rules_ledger.business_catalog_markdown(LEDGER, 100)
-    assert md.startswith("## Business Rules Catalog") and pl.is_plain(md.replace("BR-", "BR "))
-    assert md.index("### Access and permissions") < md.index("### Validation")
-    assert "| BR-0001 | An order with more than 50 items is rejected. | the order has more than 50 items | " \
-           "the order is rejected | Stated in the system |" in md
-    assert "| BR-0002 | Only managers see the refund screen. | — | — | Inferred — confirm with the business |" in md
-    assert f"| BR-0003 | {rules_ledger.TECHNICAL_ONLY} | — | — |" in md
-    assert "Source" not in md and "Tests" not in md and ".java" not in md
+def _finalized(raw_rules):
+    ledger = {"candidates": {r["sources"][0]["candidate"]: {} for r in raw_rules}, "raw_rules": raw_rules,
+              "rules": []}
+    rules_ledger.finalize(ledger, "/nonexistent", [])
+    return ledger
+
+
+def test_every_rule_is_a_plain_english_record_by_capability():
+    ledger = _finalized([
+        _raw("C1", "A claim may be auto-approved only when the amount is below the configured threshold and "
+                   "no fraud flag exists.", "Claims"),
+        _raw("C2", "Only managers can reopen a closed claim.", "Claims", rtype="authorization", basis="inferred",
+             confidence="medium"),
+        _raw("C3", "An order with more than 50 items is rejected.", "Order entry"),
+    ])
+    assert [r["id"] for r in ledger["rules"]] == ["BR-CLAIMS-001", "BR-CLAIMS-002", "BR-ORDER-ENTRY-001"]
+    md = rules_ledger.business_rules_markdown(ledger, 100)
+    assert md.startswith("## Business Rules by Capability")
+    assert md.index("### Claims") < md.index("### Order entry")
+    assert ("- **Rule ID:** BR-CLAIMS-001\n- **Statement:** “A claim may be auto-approved only when the amount is "
+            "below the configured threshold and no fraud flag exists.”\n- **Observed or inferred:** Observed\n"
+            "- **Confidence:** High") in md
+    assert "* **Rule ID:** BR-CLAIMS-002" in md and "* **Observed or inferred:** Inferred" in md
+    assert "* **Confidence:** Medium" in md
+    # No reference to the audit file, no code, no locations.
+    assert "evidence" not in md.lower() and ".java" not in md and "`" not in md and "Source" not in md
+
+
+def test_a_technical_statement_is_reworded_never_referred_elsewhere():
+    ledger = _finalized([
+        # Code in the statement, a plain sentence once it is taken out.
+        _raw("C1", "Orders above 100 units need a manager's approval in `OrderService.approve()`.", "Orders"),
+        # Statement unusable; the condition and outcome are plain.
+        _raw("C2", "Applies `qty > 100`.", "Orders", condition="the order has more than 100 units",
+             outcome="the order is held for approval"),
+        # Nothing usable at all.
+        _raw("C3", "The implementation applies `<div th:if=\"${param.error}\">`.", "Access", symbol="LoginPage.render"),
+    ])
+    by_cid = {r["sources"][0]["candidate"]: r for r in ledger["rules"]}
+    assert by_cid["C1"]["statement"] == "Orders above 100 units need a manager's approval."
+    assert by_cid["C2"]["statement"] == "When the order has more than 100 units, the order is held for approval."
+    assert by_cid["C3"]["statement"] == ("The system applies a validation rule in login page render; its business "
+                                         "meaning is to be confirmed with the business owner.")
+    assert (by_cid["C3"]["basis"], by_cid["C3"]["confidence"]) == ("inferred", "low")
+    assert by_cid["C1"]["statement_original"].endswith("`OrderService.approve()`.")   # kept for the audit file
+    md = rules_ledger.business_rules_markdown(ledger, 100)
+    assert "evidence" not in md.lower() and "technical terms" not in md and pl.is_plain(md.replace("“", ""))
+
+
+def test_a_rule_worded_in_code_is_sent_back_once_with_its_wording():
+    from agents.shared.rule_candidates import Candidate
+    c = Candidate(id="C00001", path="src/A.java", start=1, end=3, kind="method", symbol="A.f", language="Java", parser="tree-sitter",
+                  source="1| if (x > 5) return;", signals=["if"])
+    ledger = {"candidates": {"C00001": {"status": "pending"}}, "raw_rules": [], "rules": []}
+    rules_ledger.apply_answer([c], [{"candidate": "C00001", "rules": [
+        {"statement": "Returns early when `x > 5`.", "lines": "1"}]}], ledger)
+    reword = rules_ledger.needs_rewording([c], ledger)
+    assert reword == {"C00001": ["Returns early when `x > 5`."]}
+    request = rules_ledger.render_batch([c], reword)
+    assert "Restate in plain English" in request and "- Returns early when `x > 5`." in request
+    rules_ledger.apply_answer([c], [{"candidate": "C00001", "rules": [
+        {"statement": "A request with more than five items is not processed.", "capability": "Requests",
+         "lines": "1"}]}], ledger, replace=True)
+    assert [r["statement"] for r in ledger["raw_rules"]] == ["A request with more than five items is not processed."]
+    assert rules_ledger.needs_rewording([c], ledger) == {}
+    # A restatement that gives no rules leaves the earlier answer standing.
+    rules_ledger.apply_answer([c], [{"candidate": "C00001", "rules": [], "technical": "x"}], ledger, replace=True)
+    assert len(ledger["raw_rules"]) == 1 and ledger["candidates"]["C00001"]["status"] == "rule"
+
+
+def test_the_rules_section_takes_its_place_in_the_brd():
+    po = "## Executive Summary\nx\n## Business Scenarios\n1. y\n## Business Data\nz\n## Open Questions\n- q\n"
+    section = "## Business Rules by Capability\n\n### Claims\n\n- **Rule ID:** BR-CLAIMS-001"
+    placed = pl.place_section(po, section, "## Business Rules by Capability")
+    assert placed.index("## Business Scenarios") < placed.index("## Business Rules by Capability") \
+        < placed.index("## Business Data")
+    # A section the writer produced anyway is replaced, not duplicated.
+    written = po.replace("## Business Data", "## Business Rules by Capability\n- `x > 5`\n## Business Data")
+    replaced = pl.place_section(written, section, "## Business Rules by Capability")
+    assert replaced.count("## Business Rules by Capability") == 1 and "x > 5" not in replaced
 
 
 def test_the_evidence_file_traces_each_statement_to_its_evidence():
