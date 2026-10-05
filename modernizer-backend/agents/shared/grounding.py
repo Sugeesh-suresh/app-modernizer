@@ -24,6 +24,12 @@ Three levels, each run before anything reaches a document:
    rule that passed the checks above, and its numbers and quoted messages must
    appear in what it cites.
 
+4. **The Technical Specification's UI Interaction Contracts** (`check_ui_section`)
+   — every UI element id must be one the scan found, every `METHOD /path` a call
+   or handler it found, every name in backticks and every number or quoted
+   message must appear in the computed UI-to-Backend Contracts or in the
+   evidence items the statement cites.
+
 What fails is never shown in the business documents; the audit file lists it
 with the reason.
 """
@@ -421,6 +427,108 @@ def check_brd(markdown: str, evidence: dict[str, str], rules: dict[str, str],
     return "\n".join(out), removed
 
 
+# ── UI interaction contracts (Technical Specification) ──────────────────────
+
+UI_SECTION = re.compile(r"^##\s+(?:\d+[.)]\s*)?UI Interaction Contracts\b", re.I)
+UI_EMPTIED = ("_Nothing written here could be traced to the computed UI-to-Backend Contracts or the evidence; "
+              "use the computed section._")
+_UI_ID = re.compile(r"\bUI-\d{3,}\b")
+_HTTP_CALL = re.compile(r"\b(GET|POST|PUT|DELETE|PATCH|ANY)\s+`?(/[^\s`|),;]*)")
+_TICKED = re.compile(r"`([^`\n]{1,160})`")
+_TICK_SKIP = {"get", "post", "put", "delete", "patch", "any", "json", "query", "path", "form", "body", "header",
+              "string", "integer", "number", "boolean", "date", "time", "list", "map", "object", "null", "true",
+              "false", "id", "ids"}
+
+
+def _call_key(verb: str, path: str) -> tuple[str, str]:
+    path = re.sub(r"\{[^}/]*\}", "{}", path.split("?", 1)[0].rstrip(".:!'\"")).rstrip("/") or "/"
+    return verb.upper(), path
+
+
+def check_ui_section(markdown: str, contracts_md: str, element_ids: set[str],
+                     calls: set[tuple[str, str]], evidence: dict[str, str]) -> tuple[str, list[tuple[str, str]]]:
+    """(specification without the UI Interaction Contracts statements that cannot be
+    traced, [(statement, reason)]).
+
+    Only the `## UI Interaction Contracts` section is checked. A statement (a
+    paragraph, a list item with its continuation lines, a numbered list, a table
+    row) is removed when it names a UI element id the scan did not find, an HTTP
+    call (`POST /api/jobs`) that is neither a call the UI makes nor a handler
+    path, a name in backticks that appears neither in the computed contracts nor
+    in the evidence items it cites, or a number or quoted message that appears
+    in neither."""
+    from .evidence_pack import EV_ID
+    lines = (markdown or "").split("\n")
+    start = next((i for i, l in enumerate(lines) if UI_SECTION.match(l)), None)
+    if start is None:
+        return markdown, []
+    end = next((i for i in range(start + 1, len(lines)) if re.match(r"^#{1,2}\s", lines[i])), len(lines))
+    known_calls = {_call_key(v, p) for v, p in calls}
+    any_verb = {p for v, p in known_calls if v == "ANY"}
+    out: list[str] = lines[:start + 1]
+    removed: list[tuple[str, str]] = []
+    heading_at, emptied = start, set()
+    i = start + 1
+    while i < end:
+        line = lines[i]
+        if re.match(r"^#{3,6}\s", line):
+            out.append(line)
+            heading_at = len(out) - 1
+            i += 1
+            continue
+        if not line.strip() or re.match(r"^\s*\|?\s*:?-{2,}", line) or line.strip().startswith("<!--"):
+            out.append(line)
+            i += 1
+            continue
+        j = i + 1
+        if re.match(r"^\s*\d+[.)]\s", line):
+            while j < end and (re.match(r"^\s*\d+[.)]\s", lines[j]) or
+                               (lines[j].startswith(("   ", "\t")) and lines[j].strip())):
+                j += 1
+        elif not line.lstrip().startswith("|"):
+            while j < end and lines[j].strip() and lines[j].startswith(("  ", "\t")) \
+                    and not re.match(r"^\s*(?:[-*+]|\d+[.)])\s", lines[j]):
+                j += 1
+        block = "\n".join(lines[i:j])
+        if block.lstrip().startswith("|") and j < end and re.match(r"^\s*\|?\s*:?-{2,}", lines[j]):
+            out.extend(lines[i:j])                          # a table's header row
+            i = j
+            continue
+        cited = "\n".join(evidence[e] for e in EV_ID.findall(block) if e in evidence)
+        vocabulary = contracts_md + "\n" + cited
+        words = {w.lower() for w in re.findall(r"[A-Za-z_]\w*", vocabulary)}
+        problems = []
+        unknown_ids = sorted(set(_UI_ID.findall(block)) - element_ids)
+        if unknown_ids:
+            problems.append(f"names UI element {', '.join(unknown_ids)}, which the scan did not find")
+        for verb, path in _HTTP_CALL.findall(block):
+            key = _call_key(verb, path)
+            if key not in known_calls and key[1] not in any_verb and not (verb == "ANY" and
+                                                                          any(p == key[1] for _, p in known_calls)):
+                problems.append(f"the call {verb} {key[1]} is not one the UI makes or a handler serves")
+        for ticked in _TICKED.findall(block):
+            if _HTTP_CALL.search(ticked) or ticked.startswith("/") or EV_ID.fullmatch(ticked) or \
+                    _UI_ID.fullmatch(ticked):
+                continue
+            unknown = [w for w in re.findall(r"[A-Za-z_]\w*", ticked)
+                       if len(w) > 1 and w.lower() not in _TICK_SKIP and w.lower() not in words]
+            if unknown:
+                problems.append(f"`{ticked}` is not in the computed contracts or the evidence it cites")
+        problems += unsupported_values(_UI_ID.sub("", _without_ids(block)), vocabulary)
+        if problems:
+            removed.append((" ".join(block.split())[:300], "; ".join(dict.fromkeys(problems))))
+            emptied.add(heading_at)
+        else:
+            out.extend(lines[i:j])
+        i = j
+    tail = lines[end:]
+    for at in sorted(emptied, reverse=True):
+        nxt = next((k for k in range(at + 1, len(out)) if re.match(r"^#{1,6}\s", out[k])), len(out))
+        if not any(l.strip() and not re.match(r"^\s*\|?\s*:?-{2,}", l) for l in out[at + 1:nxt]):
+            out[at + 1:nxt] = ["", UI_EMPTIED, ""]
+    return "\n".join(out + tail), removed
+
+
 def _without_ids(text: str) -> str:
     """The statement without ids and list numbering ("1.", "2)"), which are not values."""
     from .evidence_pack import BR_ID, EV_ID
@@ -431,7 +539,7 @@ def _without_ids(text: str) -> str:
 # ── audit report ────────────────────────────────────────────────────────────
 
 def report_markdown(withheld: list[tuple[str, str]], ledger: dict | None,
-                    removed: list[tuple[str, str]]) -> str:
+                    removed: list[tuple[str, str]], spec_removed: list[tuple[str, str]] | None = None) -> str:
     """The audit file's Grounding Checks: everything kept out of the business
     documents because it could not be traced to the repository, with the reason."""
     rules = (ledger or {}).get("rules") or []
@@ -445,6 +553,9 @@ def report_markdown(withheld: list[tuple[str, str]], ledger: dict | None,
              f"- **Business rules left out of the BRD:** {len(unverified):,}",
              f"- **Scenario entries dropped from rules in the BRD:** {len(dropped):,}",
              f"- **BRD statements removed:** {len(removed):,}"]
+    if spec_removed is not None:
+        lines.append(f"- **Technical Specification statements removed (UI Interaction Contracts):** "
+                     f"{len(spec_removed):,}")
     if withheld:
         lines += ["", "### Evidence items withheld", "", "| Evidence | Reason |", "|---|---|"]
         lines += [f"| `{i}` | {_cell(reason)} |" for i, reason in withheld]
@@ -461,6 +572,10 @@ def report_markdown(withheld: list[tuple[str, str]], ledger: dict | None,
     if removed:
         lines += ["", "### BRD statements removed", "", "| Statement | Reason |", "|---|---|"]
         lines += [f"| {_cell(s)} | {_cell(reason)} |" for s, reason in removed]
+    if spec_removed:
+        lines += ["", "### Technical Specification statements removed (UI Interaction Contracts)", "",
+                  "| Statement | Reason |", "|---|---|"]
+        lines += [f"| {_cell(s)} | {_cell(reason)} |" for s, reason in spec_removed]
     return "\n".join(lines)
 
 

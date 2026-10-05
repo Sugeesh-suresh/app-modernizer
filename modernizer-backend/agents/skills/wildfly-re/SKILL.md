@@ -100,6 +100,10 @@ unit: `path` — what it is, its responsibility, what it works with.
 ### Entry Points & Interfaces
 Each route/endpoint/page/form/handler/listener/job/command/procedure: how it is
 reached, inputs, outputs, the component that serves it.
+For UI code, also each control that calls the server (form, button, link, grid,
+select, script call): the element and the user action, the call as written
+(method and URL), the data it sends, and what the screen does with the response —
+messages shown, redirects, client-side checks.
 
 ### Data
 Each entity/table/collection/payload/file: fields that matter, keys, where it is

@@ -175,7 +175,8 @@ def check(document: str, evidence_ids: set[str], rule_ids: set[str]) -> dict:
             "unknown_evidence": sorted(cited_ev - evidence_ids), "unknown_rules": sorted(cited_br - rule_ids)}
 
 
-def check_markdown(brd: dict, spec: dict, evidence_ids: set[str], uncovered: list[str] | None = None) -> str:
+def check_markdown(brd: dict, spec: dict, evidence_ids: set[str], uncovered: list[str] | None = None,
+                   ui_uncovered: list[str] | None = None) -> str:
     """The Evidence Check section: what each document cites, and any citation
     that points at nothing."""
     cited = brd["evidence"] | spec["evidence"]
@@ -205,6 +206,13 @@ def check_markdown(brd: dict, spec: dict, evidence_ids: set[str], uncovered: lis
         lines += [f"- {u}" for u in uncovered[:50]] + ([f"- …and {len(uncovered) - 50} more"] if len(uncovered) > 50 else [])
     elif uncovered is not None:
         lines += ["", "Every endpoint and scheduled job found in the code is mentioned by the Technical Specification."]
+    if ui_uncovered:
+        lines += ["", f"**UI elements the Technical Specification's UI Interaction Contracts do not describe "
+                  f"({len(ui_uncovered)}) — see the computed UI-to-Backend Contracts:** "
+                  + ", ".join(ui_uncovered[:100]) + (f" …and {len(ui_uncovered) - 100} more"
+                                                     if len(ui_uncovered) > 100 else "")]
+    elif ui_uncovered is not None:
+        lines += ["", "Every UI element found in the code is described in the Technical Specification."]
     return "\n".join(lines)
 
 
