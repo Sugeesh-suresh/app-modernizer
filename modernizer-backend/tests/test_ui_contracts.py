@@ -405,11 +405,33 @@ def test_screen_lists_the_page_endpoint_that_renders_it(result):
 def test_markdown(result):
     md = ui_contracts.to_markdown(result)
     assert md.startswith(ui_contracts.HEADING)
-    assert "| UI-001 |" in md and "#### `POST /api/jobs` — `JobApi.create`" in md
-    assert "### Calls not tied to a handler" in md
-    assert "**Request JSON body** — `CreateJobRequest`" in md
-    assert "| `JobNotFoundException` | 404 NOT_FOUND (GlobalErrors.notFound) |" in md
+    assert "| UI-001 |" in md and "### Calls not tied to a handler" in md
+    assert "### Web pages and templates (3)" in md
+    assert "| `src/main/resources/templates/jobs/detail.html` | `GET /jobs/{id} (JobController.detail)` | 1 |" in md
+    contracts = ui_contracts.contracts_markdown(result)
+    assert contracts.startswith(ui_contracts.CONTRACTS_HEADING)
+    assert "### `POST /api/jobs` — `JobApi.create`" in contracts
+    assert "**Request JSON body** — `CreateJobRequest`" in contracts
+    assert "| `JobNotFoundException` | 404 NOT_FOUND (GlobalErrors.notFound) |" in contracts
+    assert "Called from the UI by: UI-006." in contracts
+    assert "…" not in md + contracts and " more" not in md + contracts      # nothing is ever cut short
     assert ui_contracts.to_markdown({"screens": []}) == ""
+
+
+def test_every_endpoint_has_a_contract_even_if_no_ui_calls_it(repo, result):
+    inventory = interfaces.scan(str(repo))
+    assert [c["endpoint"] for c in result["contracts"]] == [f"{e['verb']} {e['path']}" for e in inventory["endpoints"]]
+
+
+def test_no_cap_on_long_schemas_or_lists(tmp_path):
+    fields = "\n".join(f"    private String field{i};" for i in range(150))
+    (tmp_path / "Big.java").write_text(f"public class Big {{\n{fields}\n}}\n")
+    rest = "\n".join(f'    @GetMapping("/r{i}") public Big r{i}() {{ return null; }}' for i in range(130))
+    (tmp_path / "Api.java").write_text(f"@RestController\npublic class Api {{\n{rest}\n}}\n")
+    result = ui_contracts.scan(str(tmp_path), interfaces.scan(str(tmp_path)))
+    assert len(result["contracts"]) == 130 and len(result["uncalled"]) == 130
+    md = ui_contracts.contracts_markdown(result)
+    assert md.count("### `GET /r") == 130 and "`field149`" in md and " more" not in md
 
 
 def test_uncovered(result):
@@ -451,7 +473,7 @@ Kept `Whatever`.
 
 
 def test_check_ui_section_removes_untraceable_statements(result):
-    contracts_md = ui_contracts.to_markdown(result)
+    contracts_md = ui_contracts.to_markdown(result) + ui_contracts.contracts_markdown(result)
     evidence = {"EV-js-0001": "jobs.js shows \"Job saved\" and toggles overdueFlag on late rows"}
     from agents.shared import grounding
     checked, removed = grounding.check_ui_section(SPEC, contracts_md, set(ui_contracts.ids(result)),
@@ -470,7 +492,8 @@ def test_check_ui_section_removes_untraceable_statements(result):
 def test_check_ui_section_names_in_backticks_must_be_known(result):
     from agents.shared import grounding
     spec = "## UI Interaction Contracts\n\n- UI-001 sends `secretToken` in the body.\n"
-    checked, removed = grounding.check_ui_section(spec, ui_contracts.to_markdown(result),
+    checked, removed = grounding.check_ui_section(spec, ui_contracts.to_markdown(result)
+                                                  + ui_contracts.contracts_markdown(result),
                                                   set(ui_contracts.ids(result)), ui_contracts.calls(result), {})
     assert removed and "`secretToken`" in removed[0][1]
     assert grounding.UI_EMPTIED in checked
@@ -485,6 +508,45 @@ def test_evidence_check_lists_undescribed_ui_elements():
     from agents.shared import evidence_pack
     empty = {"evidence": set(), "rules": set(), "unknown_evidence": [], "unknown_rules": []}
     md = evidence_pack.check_markdown(empty, empty, set(), None, ["UI-002", "UI-005"])
-    assert "do not describe (2)" in md and "UI-002, UI-005" in md
+    assert "did not describe (2)" in md and "UI-002, UI-005" in md
     assert "Every UI element found in the code is described" in evidence_pack.check_markdown(empty, empty, set(),
                                                                                              None, [])
+
+
+# ── batches and assembly ────────────────────────────────────────────────────
+
+def test_batches_hold_every_element_once_and_split_big_screens(result):
+    batches = ui_contracts.batches(result, 2, 1_000_000)
+    ids = [i for b in batches for i in ui_contracts.batch_ids(b)]
+    assert ids == ui_contracts.ids(result) and all(len(ui_contracts.batch_ids(b)) <= 2 for b in batches)
+    parts = [s.get("part") for b in batches for s in b if s["file"].endswith("jobs.js")]
+    assert parts == ["part 1 of 3", "part 2 of 3", "part 3 of 3"]
+
+
+def test_batch_request_carries_the_contracts_its_controls_call(result):
+    batch = next(b for b in ui_contracts.batches(result, 50, 1_000_000))
+    request = ui_contracts.batch_request(batch, result)
+    assert "## Screens of this batch" in request and "### `DELETE /api/jobs/{id}` — `JobApi.delete`" in request
+    assert "## Calls not tied to a handler" in request
+
+
+def test_parse_and_assemble_keep_the_screens_order_and_fill_gaps(result):
+    ids = ui_contracts.ids(result)
+    answer = (f"### Screen `frontend/src/JobPanel.tsx` — the job panel\nShows jobs.\n"
+              f"- **{ids[1]}** second\n  continued\n- **{ids[0]}** first\n- **UI-999** ghost\n")
+    intros, blocks = ui_contracts.parse_answer(answer, result)
+    assert intros == {"frontend/src/JobPanel.tsx": "Shows jobs."}
+    assert blocks[ids[1]] == f"- **{ids[1]}** second\n  continued" and "UI-999" in blocks
+    section, filled = ui_contracts.assemble(result, intros, blocks)
+    assert section.startswith(ui_contracts.SECTION_HEADING)
+    assert section.index(f"**{ids[0]}** first") < section.index(f"**{ids[1]}** second")
+    assert filled == ids[2:] and "UI-999" not in section
+    assert all(f"**{i}**" in section for i in ids)
+
+
+def test_check_ui_section_can_leave_gaps_for_the_computed_fill(result):
+    from agents.shared import grounding
+    spec = "## UI Interaction Contracts\n\n### Screen `x`\n\n- UI-001 sends `secretToken`.\n"
+    checked, removed = grounding.check_ui_section(spec, "", set(ui_contracts.ids(result)), set(), {},
+                                                  placeholder=False)
+    assert removed and grounding.UI_EMPTIED not in checked and "secretToken" not in checked

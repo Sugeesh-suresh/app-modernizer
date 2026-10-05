@@ -211,6 +211,17 @@ ea_writer_agent = LlmAgent(
     include_contents="none",
 )
 
+# One batch of screens -> the UI Interaction Contracts of every control on them.
+# Batched (main._write_ui_contracts) so no single answer has to hold every control.
+ea_ui_writer_agent = LlmAgent(
+    name="ea_ui",
+    model=_MODEL,
+    description="Enterprise Architect: describes every UI control of a batch of screens and the backend contract it uses.",
+    instruction=_writer_instruction("ui-interaction-contracts"),
+    output_key="ea_ui",
+    include_contents="none",
+)
+
 
 # One batch of business-rule candidates -> classified, with every rule extracted.
 # The skill's text is the instruction itself (no SkillToolset): a load_skill call

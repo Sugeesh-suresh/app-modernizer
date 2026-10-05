@@ -446,7 +446,8 @@ def _call_key(verb: str, path: str) -> tuple[str, str]:
 
 
 def check_ui_section(markdown: str, contracts_md: str, element_ids: set[str],
-                     calls: set[tuple[str, str]], evidence: dict[str, str]) -> tuple[str, list[tuple[str, str]]]:
+                     calls: set[tuple[str, str]], evidence: dict[str, str],
+                     placeholder: bool = True) -> tuple[str, list[tuple[str, str]]]:
     """(specification without the UI Interaction Contracts statements that cannot be
     traced, [(statement, reason)]).
 
@@ -522,11 +523,54 @@ def check_ui_section(markdown: str, contracts_md: str, element_ids: set[str],
             out.extend(lines[i:j])
         i = j
     tail = lines[end:]
-    for at in sorted(emptied, reverse=True):
+    for at in sorted(emptied if placeholder else (), reverse=True):
         nxt = next((k for k in range(at + 1, len(out)) if re.match(r"^#{1,6}\s", out[k])), len(out))
         if not any(l.strip() and not re.match(r"^\s*\|?\s*:?-{2,}", l) for l in out[at + 1:nxt]):
             out[at + 1:nxt] = ["", UI_EMPTIED, ""]
     return "\n".join(out + tail), removed
+
+
+# ── abbreviated lists ───────────────────────────────────────────────────────
+
+_NOUNS = (r"(?:web\s+)?(?:pages?|end-?\s?points?|screens?|routes?|apis?|services?|classes|interfaces|tables|jobs|"
+          r"listeners|queues|topics|fields|files|tests?|test\s+cases|controllers|components|rows|items|templates|"
+          r"properties|keys|entities|methods|handlers|operations|modules|dependencies|parameters|views|forms|"
+          r"elements|controls|rules|scenarios|columns|resources|beans|packages|stacks)")
+ELISION = re.compile(
+    r"\[\s*(?:\.{3}|…)[^\]\n]{0,80}\]"                                       # [...27 more web pages]
+    r"|(?:\.{3}|…)\s*(?:and\s+|\+\s*)?\d[\d,]*\s+(?:more|others?|additional|further)\b[^|\n.;)]{0,60}"
+    r"|\b(?:and|plus)\s+\d[\d,]*\s+(?:more|other|additional|further|remaining)\b[^|\n.;)]{0,60}"
+    r"|\(\s*(?:\+\s*)?\d[\d,]*\s+(?:more|others?)\b[^)\n]{0,60}\)"
+    r"|\b\d[\d,]*\s+(?:more|other|additional|further|remaining)\s+(?:[A-Za-z/-]+\s+){0,2}" + _NOUNS
+    + r"\b[^|\n.;)]{0,40}"
+    r"|\b(?:the\s+)?(?:rest|remaining\s+(?:ones|items|entries))\s+(?:are\s+)?(?:omitted|not\s+(?:listed|shown))"
+    r"\b[^|\n.;)]{0,40}"
+    r"|\b(?:and\s+so\s+on|etc\.?)(?=\s*(?:\||\)|\]|$))"
+    r"|^\s*[-*]?\s*(?:\.{3}|…)\s*$"                                            # a line that is only "..."
+    r"|^\s*\|(?:\s*(?:\.{3}|…)\s*\|)+\s*$",                                      # a table row of "…" cells
+    re.I | re.M)
+
+
+_BEHAVIOUR_VERBS = {"load", "loads", "loading", "fetch", "fetches", "fetching", "show", "shows", "showing",
+                    "display", "displays", "add", "adds", "adding", "return", "returns", "retry", "retries", "allow",
+                    "allows", "accept", "accepts", "request", "requests", "append", "appends", "read", "reads",
+                    "take", "takes", "wait", "waits", "need", "needs", "require", "requires", "get", "gets",
+                    "creates", "create", "send", "sends", "generate", "generates"}
+
+
+def replace_elisions(markdown: str, pointer: str) -> tuple[str, list[str]]:
+    """An agent's abbreviated list ("[...27 more web pages]", "…and 84 more REST endpoints",
+    "etc.") replaced by `pointer` — where the complete list is — with what was replaced."""
+    found: list[str] = []
+
+    def sub(m: re.Match) -> str:
+        before = re.findall(r"[A-Za-z]+", m.string[max(0, m.start() - 30):m.start()])
+        if before and before[-1].lower() in _BEHAVIOUR_VERBS:
+            return m.group(0)                     # "loads 10 more rows": what the system does, not a cut list
+        found.append(m.group(0).strip())
+        return pointer
+    out = ELISION.sub(sub, markdown or "")
+    return out, found
 
 
 def _without_ids(text: str) -> str:
@@ -539,7 +583,8 @@ def _without_ids(text: str) -> str:
 # ── audit report ────────────────────────────────────────────────────────────
 
 def report_markdown(withheld: list[tuple[str, str]], ledger: dict | None,
-                    removed: list[tuple[str, str]], spec_removed: list[tuple[str, str]] | None = None) -> str:
+                    removed: list[tuple[str, str]], spec_removed: list[tuple[str, str]] | None = None,
+                    elisions: list[str] | None = None) -> str:
     """The audit file's Grounding Checks: everything kept out of the business
     documents because it could not be traced to the repository, with the reason."""
     rules = (ledger or {}).get("rules") or []
@@ -556,6 +601,8 @@ def report_markdown(withheld: list[tuple[str, str]], ledger: dict | None,
     if spec_removed is not None:
         lines.append(f"- **Technical Specification statements removed (UI Interaction Contracts):** "
                      f"{len(spec_removed):,}")
+    if elisions is not None:
+        lines.append(f"- **Abbreviated lists replaced in the technical documents:** {len(elisions):,}")
     if withheld:
         lines += ["", "### Evidence items withheld", "", "| Evidence | Reason |", "|---|---|"]
         lines += [f"| `{i}` | {_cell(reason)} |" for i, reason in withheld]
@@ -572,6 +619,11 @@ def report_markdown(withheld: list[tuple[str, str]], ledger: dict | None,
     if removed:
         lines += ["", "### BRD statements removed", "", "| Statement | Reason |", "|---|---|"]
         lines += [f"| {_cell(s)} | {_cell(reason)} |" for s, reason in removed]
+    if elisions:
+        lines += ["", "### Abbreviated lists replaced in the technical documents", "",
+                  "_An agent shortened a list instead of giving every item; each was replaced with a pointer to the "
+                  "complete computed list._", ""]
+        lines += [f"- “{_cell(e)}”" for e in elisions]
     if spec_removed:
         lines += ["", "### Technical Specification statements removed (UI Interaction Contracts)", "",
                   "| Statement | Reason |", "|---|---|"]

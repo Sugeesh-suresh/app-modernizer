@@ -41,9 +41,9 @@ from .dependency_graph import EXCLUDED_DIRS
 from .rule_candidates import _PARSERS, _TEST_PATH, _VENDORED, VALIDATION_ANNOTATIONS
 
 MAX_FILE_BYTES = 1_000_000
-MAX_SCHEMA_ROWS = 60
-MAX_DEPTH = 4
+MAX_DEPTH = 8                # nesting levels of a schema; a cycle is cut where it repeats
 HEADING = "## UI-to-Backend Contracts (computed)"
+CONTRACTS_HEADING = "## Endpoint Contracts (computed)"
 ID_RE = re.compile(r"\bUI-\d{3,}\b")
 
 _TEMPLATE_SUFFIXES = (".html", ".htm", ".jsp", ".jspf", ".xhtml", ".ftl", ".vm")
@@ -1420,11 +1420,9 @@ def _framework_paths(root: Path) -> dict[str, str]:
 def scan(workspace_dir: str, inventory: dict) -> dict:
     """Every UI control that reaches the backend, with the contract of what it calls."""
     root = Path(workspace_dir)
-    result = {"screens": [], "contracts": [], "unmatched": [], "uncalled": []}
-    if not root.is_dir():
-        return result
+    result = {"screens": [], "contracts": [], "unmatched": [], "uncalled": [], "pages": []}
     endpoints = inventory.get("endpoints", [])
-    templates, scripts = _ui_files(root)
+    templates, scripts = _ui_files(root) if root.is_dir() else ([], [])
     template_rels = [p.relative_to(root).as_posix() for p in templates]
     script_rels = [p.relative_to(root).as_posix() for p in scripts]
     served_by = _view_files(endpoints, template_rels)
@@ -1556,13 +1554,12 @@ def scan(workspace_dir: str, inventory: dict) -> dict:
             if key not in contracts:
                 java = java or _Java(workspace_dir)
                 contracts[key] = _safe_contract(workspace_dir, e, java)
-    # The page endpoints that render each screen: their model is what server-rendered controls show.
-    for rel, eps in served_by.items():
-        for e in eps:
-            key = f"{e['verb']} {e['path']} {e['handler']}"
-            if key not in contracts:
-                java = java or _Java(workspace_dir)
-                contracts[key] = _safe_contract(workspace_dir, e, java)
+    # Every endpoint gets its contract, whether or not a UI control calls it.
+    for e in endpoints:
+        key = f"{e['verb']} {e['path']} {e['handler']}"
+        if key not in contracts:
+            java = java or _Java(workspace_dir)
+            contracts[key] = _safe_contract(workspace_dir, e, java)
 
     elements = [el for el in elements if el.url is not None or el.data or el.columns]
     elements.sort(key=lambda el: (el.file, el.line, el.kind, el.label))
@@ -1588,7 +1585,17 @@ def scan(workspace_dir: str, inventory: dict) -> dict:
             result["unmatched"].append({"id": el.id, "element": el.label, "call": f"{el.verb} {el.url.raw}",
                                         "reason": el.reason, "source": f"{el.file}:{el.line}"})
     result["screens"] = [screens[k] for k in sorted(screens)]
-    result["contracts"] = [contracts[k] for k in sorted(contracts, key=lambda k: (k.split(" ", 2)[1], k))]
+    order = {f"{e['verb']} {e['path']} {e['handler']}": i for i, e in enumerate(endpoints)}
+    for el in dedup:
+        for k in el.endpoints:
+            contracts[k].setdefault("called_by", []).append(el.id)
+    result["contracts"] = [contracts[k] for k in sorted(contracts, key=lambda k: (order.get(k, len(order)), k))]
+    counts: dict[str, int] = {}
+    for el in dedup:
+        counts[el.file] = counts.get(el.file, 0) + 1
+    result["pages"] = [{"file": rel, "served_by": [f"{e['verb']} {e['path']} ({e['handler']})"
+                                                    for e in served_by.get(rel, [])],
+                        "elements": counts.get(rel, 0)} for rel in template_rels]
     called = {k for el in dedup for k in el.endpoints} | {f"{e['verb']} {e['path']} {e['handler']}"
                                                           for eps in served_by.values() for e in eps}
     result["uncalled"] = [f"{e['verb']} {e['path']} ({e['handler']})" for k, e in by_key.items()
@@ -1616,7 +1623,7 @@ def _handler_cell(e: dict) -> str:
 
 def to_markdown(result: dict) -> str:
     screens = result.get("screens") or []
-    if not screens:
+    if not screens and not result.get("pages"):
         return ""
     count = sum(len(s["elements"]) for s in screens)
     lines = [HEADING, "",
@@ -1624,86 +1631,17 @@ def to_markdown(result: dict) -> str:
              "Each UI control that reaches the server is tied to the handler that serves it; the handler's request "
              "and response contract is read from its signature and body. `{}` marks a part of a URL built at run "
              "time. A call that could not be tied to a handler is listed at the end with the reason._", "",
-             f"**{count} UI element(s) on {len(screens)} screen(s); {len(result.get('contracts', []))} handler "
-             f"contract(s).**", ""]
-    for s in screens:
-        lines.append(f"### Screen `{s['file']}`")
+             f"**{count} UI element(s) on {len(screens)} screen(s); every handler's contract is under Endpoint "
+             f"Contracts.**", ""]
+    for screen in screens:
+        lines += screen_markdown(screen)
+    if result.get("pages"):
+        lines += [f"### Web pages and templates ({len(result['pages'])})", "",
+                  "| Template | Rendered by | UI elements |", "|---|---|---|"]
+        lines += [f"| `{_cell(p['file'])}` | "
+                  + ("; ".join(f"`{_cell(x)}`" for x in p["served_by"]) or "no handler names it as its view")
+                  + f" | {p['elements']} |" for p in result["pages"]]
         lines.append("")
-        if s["served_by"]:
-            lines.append("Rendered by: " + "; ".join(f"`{x}`" for x in s["served_by"]))
-        if s["used_by"]:
-            lines.append("Script loaded by: " + ", ".join(f"`{x}`" for x in s["used_by"]))
-        if s["served_by"] or s["used_by"]:
-            lines.append("")
-        lines += ["| Id | UI element | Event | Calls | Sends | Backend handler | Source |",
-                  "|---|---|---|---|---|---|---|"]
-        for e in s["elements"]:
-            call = f"{e['verb']} `{_cell(e['path'] or e['url'])}`" if e["url"] else (
-                f"— shows `{_cell(e['data'])}`" if e["data"] else "—")
-            sends = ", ".join(f"`{_cell(x)}`" for x in dict.fromkeys(e["sends"] + [f"{q} (query)" for q in e["query"]]))
-            label = _cell(e["label"]) + (f" ({e['kind']})" if e["kind"] not in e["label"] else "")
-            via = f" — _{_cell(e['via'])}_" if e["via"] else ""
-            lines.append(f"| {e['id']} | {label} | {_cell(e['event'])}{via} | {call} | {sends or '—'} | "
-                         f"{_cell(_handler_cell(e))} | `{e['source']}` |")
-        lines.append("")
-        for e in s["elements"]:
-            if e["fields"]:
-                lines += [f"**{e['id']} form fields** (as the UI sends them)", "",
-                          "| Field | Input | Client-side checks |", "|---|---|---|"]
-                lines += [f"| `{_cell(n)}` | {_cell(t)} | {_cell(c) or '—'} |" for n, t, c in e["fields"]]
-                lines.append("")
-            if e["columns"]:
-                lines += [f"**{e['id']} grid columns** (from `{_cell(e['data'])}`)", "",
-                          "| Column | Value shown |", "|---|---|"]
-                lines += [f"| {_cell(h) or '—'} | `{_cell(v)}` |" if v else f"| {_cell(h) or '—'} | — |"
-                          for h, v in e["columns"]]
-                lines.append("")
-            if e["client_type"]:
-                lines += [f"**{e['id']}** declares the response as `{_cell(e['client_type'])}` on the client.", ""]
-
-    if result.get("contracts"):
-        lines += ["### Handler contracts", ""]
-        for c in result["contracts"]:
-            lines += [f"#### `{c['endpoint']}` — `{c['handler']}`", "",
-                      f"Source `{c['source']}` · {'REST (JSON)' if c['kind'] == 'REST' else 'page'}"
-                      + (f" · consumes `{c['consumes']}`" if c["consumes"] else "")
-                      + (f" · produces `{c['produces']}`" if c["produces"] else "")
-                      + (f" · access {c['access']}" if c["access"] else ""), ""]
-            if c["params"]:
-                lines += ["**Request parameters**", "", "| Name | In | Type | Required | Default | Constraints |",
-                          "|---|---|---|---|---|---|"]
-                lines += [f"| `{_cell(p['name'])}` | {p['in']} | {_cell(p['type'])} | {p['required']} | "
-                          f"{_cell(p['default']) or '—'} | {_cell(p['constraints']) or '—'} |" for p in c["params"]]
-                lines.append("")
-            if c["body"]:
-                lines += [f"**Request {c['body_in']}** — `{_cell(_base(c['body_type']))}`", "",
-                          "| Field | Type | Constraints |", "|---|---|---|"]
-                lines += _rows(c["body"])
-            if c["validation"]:
-                lines += ["Validation: " + "; ".join(c["validation"]) + ".", ""]
-            if c["kind"] == "REST":
-                lines += [f"**Response** — `{_cell(c['response_type'] or 'not declared')}`", "",
-                          "| Field | Type | Constraints |", "|---|---|---|"]
-                lines += _rows(c["response"])
-            else:
-                lines.append(f"**Response** — view `{_cell(c['view'] or 'not a literal in the code')}`"
-                             + (f"; redirects: {', '.join(f'`{r}`' for r in c['redirects'])}" if c["redirects"] else ""))
-                lines.append("")
-                if c["model"]:
-                    lines += ["| Model attribute | Type |", "|---|---|"]
-                    lines += [f"| `{_cell(k)}` | {_cell(t)} |" for k, t, _ in c["model"]]
-                    lines.append("")
-                if c.get("model_fields"):
-                    lines += ["**Model fields** (what the page can show)", "", "| Field | Type | Constraints |",
-                              "|---|---|---|"]
-                    lines += _rows(c["model_fields"])
-            if c["statuses"]:
-                lines += ["HTTP statuses set in the code: " + ", ".join(f"`{s}`" for s in c["statuses"]) + ".", ""]
-            if c["errors"]:
-                lines += ["| Exception thrown | Becomes |", "|---|---|"]
-                lines += [f"| `{e}` | {_cell(s)} |" for e, s in c["errors"]]
-                lines.append("")
-
     if result.get("unmatched"):
         lines += ["### Calls not tied to a handler", "",
                   "| Id | UI element | Call as written | Reason | Source |", "|---|---|---|---|---|"]
@@ -1713,18 +1651,258 @@ def to_markdown(result: dict) -> str:
     if result.get("uncalled"):
         lines += ["### REST endpoints no UI code calls", "",
                   "_Called by other clients, or by UI code whose URL the scan could not resolve._", ""]
-        lines += [f"- `{_cell(u)}`" for u in result["uncalled"][:100]]
-        if len(result["uncalled"]) > 100:
-            lines.append(f"- …and {len(result['uncalled']) - 100} more")
+        lines += [f"- `{_cell(u)}`" for u in result["uncalled"]]
         lines.append("")
     return "\n".join(lines).rstrip()
 
 
+def screen_markdown(screen: dict) -> list[str]:
+    """One screen: its controls, form fields and grid columns."""
+    lines: list[str] = []
+    lines.append(f"### Screen `{screen['file']}`")
+    lines.append("")
+    if screen["served_by"]:
+        lines.append("Rendered by: " + "; ".join(f"`{x}`" for x in screen["served_by"]))
+    if screen["used_by"]:
+        lines.append("Script loaded by: " + ", ".join(f"`{x}`" for x in screen["used_by"]))
+    if screen["served_by"] or screen["used_by"]:
+        lines.append("")
+    lines += ["| Id | UI element | Event | Calls | Sends | Backend handler | Source |",
+              "|---|---|---|---|---|---|---|"]
+    for e in screen["elements"]:
+        call = f"{e['verb']} `{_cell(e['path'] or e['url'])}`" if e["url"] else (
+            f"— shows `{_cell(e['data'])}`" if e["data"] else "—")
+        sends = ", ".join(f"`{_cell(x)}`" for x in dict.fromkeys(e["sends"] + [f"{q} (query)" for q in e["query"]]))
+        label = _cell(e["label"]) + (f" ({e['kind']})" if e["kind"] not in e["label"] else "")
+        via = f" — _{_cell(e['via'])}_" if e["via"] else ""
+        lines.append(f"| {e['id']} | {label} | {_cell(e['event'])}{via} | {call} | {sends or '—'} | "
+                     f"{_cell(_handler_cell(e))} | `{e['source']}` |")
+    lines.append("")
+    for e in screen["elements"]:
+        if e["fields"]:
+            lines += [f"**{e['id']} form fields** (as the UI sends them)", "",
+                      "| Field | Input | Client-side checks |", "|---|---|---|"]
+            lines += [f"| `{_cell(n)}` | {_cell(t)} | {_cell(c) or '—'} |" for n, t, c in e["fields"]]
+            lines.append("")
+        if e["columns"]:
+            lines += [f"**{e['id']} grid columns** (from `{_cell(e['data'])}`)", "",
+                      "| Column | Value shown |", "|---|---|"]
+            lines += [f"| {_cell(h) or '—'} | `{_cell(v)}` |" if v else f"| {_cell(h) or '—'} | — |"
+                      for h, v in e["columns"]]
+            lines.append("")
+        if e["client_type"]:
+            lines += [f"**{e['id']}** declares the response as `{_cell(e['client_type'])}` on the client.", ""]
+    return lines
+
+
 def _rows(rows: list) -> list[str]:
-    out = [f"| `{_cell(p)}` | {_cell(t)} | {_cell(c) or '—'} |" for p, t, c in rows[:MAX_SCHEMA_ROWS]]
-    if len(rows) > MAX_SCHEMA_ROWS:
-        out.append(f"| …and {len(rows) - MAX_SCHEMA_ROWS} more field(s) | | |")
-    return out + [""]
+    return [f"| `{_cell(p)}` | {_cell(t)} | {_cell(c) or '—'} |" for p, t, c in rows] + [""]
+
+
+def contract_markdown(c: dict) -> list[str]:
+    """One endpoint's contract: request parameters, body schema, response schema, statuses, errors."""
+    lines: list[str] = []
+    lines += [f"### `{c['endpoint']}` — `{c['handler']}`", "",
+              f"Source `{c['source']}` · {'REST (JSON)' if c['kind'] == 'REST' else 'page'}"
+              + (f" · consumes `{c['consumes']}`" if c["consumes"] else "")
+              + (f" · produces `{c['produces']}`" if c["produces"] else "")
+              + (f" · access {c['access']}" if c["access"] else ""), ""]
+    if c.get("called_by"):
+        lines += ["Called from the UI by: " + ", ".join(dict.fromkeys(c["called_by"])) + ".", ""]
+    if not (c["params"] or c["body"]):
+        lines += ["**Request** — no parameters or body.", ""]
+    if c["params"]:
+        lines += ["**Request parameters**", "", "| Name | In | Type | Required | Default | Constraints |",
+                  "|---|---|---|---|---|---|"]
+        lines += [f"| `{_cell(p['name'])}` | {p['in']} | {_cell(p['type'])} | {p['required']} | "
+                  f"{_cell(p['default']) or '—'} | {_cell(p['constraints']) or '—'} |" for p in c["params"]]
+        lines.append("")
+    if c["body"]:
+        lines += [f"**Request {c['body_in']}** — `{_cell(_base(c['body_type']))}`", "",
+                  "| Field | Type | Constraints |", "|---|---|---|"]
+        lines += _rows(c["body"])
+    if c["validation"]:
+        lines += ["Validation: " + "; ".join(c["validation"]) + ".", ""]
+    if c["kind"] == "REST":
+        lines += [f"**Response** — `{_cell(c['response_type'] or 'not declared')}`", "",
+                  "| Field | Type | Constraints |", "|---|---|---|"]
+        lines += _rows(c["response"])
+    else:
+        lines.append(f"**Response** — view `{_cell(c['view'] or 'not a literal in the code')}`"
+                     + (f"; redirects: {', '.join(f'`{r}`' for r in c['redirects'])}" if c["redirects"] else ""))
+        lines.append("")
+        if c["model"]:
+            lines += ["| Model attribute | Type |", "|---|---|"]
+            lines += [f"| `{_cell(k)}` | {_cell(t)} |" for k, t, _ in c["model"]]
+            lines.append("")
+        if c.get("model_fields"):
+            lines += ["**Model fields** (what the page can show)", "", "| Field | Type | Constraints |",
+                      "|---|---|---|"]
+            lines += _rows(c["model_fields"])
+    if c["statuses"]:
+        lines += ["HTTP statuses set in the code: " + ", ".join(f"`{s}`" for s in c["statuses"]) + ".", ""]
+    if c["errors"]:
+        lines += ["| Exception thrown | Becomes |", "|---|---|"]
+        lines += [f"| `{e}` | {_cell(s)} |" for e, s in c["errors"]]
+        lines.append("")
+    return lines
+
+
+def contracts_markdown(result: dict) -> str:
+    """Every HTTP endpoint's contract, in the order of the Interface & Job Inventory."""
+    contracts = result.get("contracts") or []
+    if not contracts:
+        return ""
+    lines = [CONTRACTS_HEADING, "",
+             "_Read from each handler's signature and body by the pipeline — not generated by an agent. Every "
+             "endpoint of the Interface & Job Inventory is here: request parameters, the request body or form "
+             "object and the response, each broken down to every field with its type and constraints, the HTTP "
+             "statuses the code sets, the exceptions it throws with the status they become, and the access rule._",
+             "", f"**{len(contracts)} endpoint(s).**", ""]
+    for c in contracts:
+        lines += contract_markdown(c)
+    return "\n".join(lines).rstrip()
+
+
+def batches(result: dict, max_elements: int, max_chars: int) -> list[list[dict]]:
+    """The screens in order, cut into batches a writer can describe in full: at most
+    `max_elements` controls and about `max_chars` of input each. A screen with more
+    controls than a batch holds is split into parts."""
+    parts: list[dict] = []
+    for screen in result.get("screens", []):
+        els = screen["elements"]
+        chunks = [els[i:i + max(max_elements, 1)] for i in range(0, len(els), max(max_elements, 1))] or [[]]
+        for n, chunk in enumerate(chunks, 1):
+            parts.append(dict(screen, elements=chunk, part=f"part {n} of {len(chunks)}" if len(chunks) > 1 else ""))
+    out: list[list[dict]] = []
+    size = count = 0
+    for part in parts:
+        length = len("\n".join(screen_markdown(part)))
+        if out and (count + len(part["elements"]) > max_elements or size + length > max_chars):
+            out.append([])
+            size = count = 0
+        if not out:
+            out.append([])
+        out[-1].append(part)
+        size += length
+        count += len(part["elements"])
+    return out
+
+
+def batch_request(batch: list[dict], result: dict) -> str:
+    """A writer's input for one batch: its screens, the contracts of the handlers they
+    call and the calls among them that were not tied to a handler."""
+    ids = {e["id"] for screen in batch for e in screen["elements"]}
+    keys = {k for screen in batch for e in screen["elements"] for k in e["endpoints"]}
+    lines = ["## Screens of this batch", ""]
+    for screen in batch:
+        screen_lines = screen_markdown(screen)
+        if screen.get("part"):
+            screen_lines[0] += f" ({screen['part']})"
+        lines += screen_lines
+    called = [c for c in result.get("contracts", [])
+              if f"{c['endpoint']} {c['handler']}" in keys]
+    lines += ["## Contracts of the handlers these controls call", ""]
+    for c in called:
+        lines += contract_markdown(c)
+    if not called:
+        lines += ["None of these controls calls a handler found in the code.", ""]
+    unmatched = [u for u in result.get("unmatched", []) if u["id"] in ids]
+    if unmatched:
+        lines += ["## Calls not tied to a handler", "", "| Id | Call as written | Reason |", "|---|---|---|"]
+        lines += [f"| {u['id']} | `{_cell(u['call'])}` | {_cell(u['reason'])} |" for u in unmatched]
+    return "\n".join(lines).rstrip()
+
+
+def batch_ids(batch: list[dict]) -> list[str]:
+    return [e["id"] for screen in batch for e in screen["elements"]]
+
+
+def batch_names(batch: list[dict]) -> set[str]:
+    """Words that find a batch's evidence: its files' names and its handlers' classes and methods."""
+    names = set()
+    for screen in batch:
+        names.add(Path(screen["file"]).name)
+        for e in screen["elements"]:
+            for k in e["endpoints"]:
+                names.update(k.rsplit(" ", 1)[-1].split("."))
+    return {n for n in names if len(n) > 3}
+
+
+def fallback(element: dict) -> str:
+    """A computed line for an element the writer did not describe — so none is missing."""
+    call = f"{element['verb']} `{element['path'] or element['url']}`" if element["url"] else (
+        f"shows `{element['data']}` rendered by the page's handler" if element["data"] else "no call")
+    handler = "; ".join(f"`{k.rsplit(' ', 1)[-1]}` (`{' '.join(k.split(' ')[:2])}`)" for k in element["endpoints"]) \
+        or (f"no handler — {element['reason']}" if element["url"] else "")
+    sends = ", ".join(f"`{x}`" for x in element["sends"])
+    return (f"- **{element['id']}** — {element['label']} ({element['kind']}), on {element['event']}: {call}"
+            + (f", sending {sends}" if sends else "") + (f" → {handler}" if handler else "")
+            + ". _Computed from the code; the writer did not describe this control — its contract is under "
+              "Endpoint Contracts._")
+
+
+SECTION_HEADING = "## UI Interaction Contracts"
+_BLOCK_START = re.compile(r"^\s*[-*+]\s+(?:\*\*)?(UI-\d{3,})\b")
+_SCREEN_HEADING = re.compile(r"^#{2,4}\s+(.*)$")
+
+
+def parse_answer(text: str, result: dict) -> tuple[dict[str, str], dict[str, str]]:
+    """A writer's answer → ({screen file: its introduction}, {element id: its bullet block}).
+    The first block for an id wins; text under a heading before the first bullet is
+    that screen's introduction (the heading names the screen's file)."""
+    files = [screen["file"] for screen in result.get("screens", [])]
+    intros: dict[str, str] = {}
+    blocks: dict[str, str] = {}
+    current_file, current_id, buf = "", "", []
+
+    def flush():
+        body = "\n".join(buf).strip()
+        if current_id and body and current_id not in blocks:
+            blocks[current_id] = body
+        elif not current_id and current_file and body and current_file not in intros:
+            intros[current_file] = body
+
+    for line in (text or "").splitlines():
+        heading = _SCREEN_HEADING.match(line)
+        start = _BLOCK_START.match(line)
+        if heading:
+            flush()
+            title = heading.group(1)
+            current_file = next((f for f in files if f in title), "") or next(
+                (f for f in files if Path(f).name in title), "")
+            current_id, buf = "", []
+        elif start:
+            flush()
+            current_id, buf = start.group(1), [line.rstrip()]
+        else:
+            buf.append(line.rstrip())
+    flush()
+    return intros, blocks
+
+
+def assemble(result: dict, intros: dict[str, str], blocks: dict[str, str],
+             fill: bool = True) -> tuple[str, list[str]]:
+    """The UI Interaction Contracts section, built by the pipeline: every screen in
+    order, every element in order, each with the writer's block — or, with `fill`,
+    the computed line when the writer gave none. Returns (section, filled ids)."""
+    lines = [SECTION_HEADING, "",
+             "_Written by the Enterprise Architect agent, screen by screen, from the computed contracts and the "
+             "evidence, and checked against them. A control the agent did not describe is given here from the "
+             "computed contracts._", ""]
+    filled: list[str] = []
+    for screen in result.get("screens", []):
+        lines += [f"### Screen `{screen['file']}`", ""]
+        if intros.get(screen["file"]):
+            lines += [intros[screen["file"]], ""]
+        for e in screen["elements"]:
+            if blocks.get(e["id"]):
+                lines.append(blocks[e["id"]])
+            elif fill:
+                lines.append(fallback(e))
+                filled.append(e["id"])
+        lines.append("")
+    return "\n".join(lines).rstrip(), filled
 
 
 def calls(result: dict) -> set[tuple[str, str]]:

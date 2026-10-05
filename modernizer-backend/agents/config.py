@@ -139,6 +139,12 @@ DISCOVERY_UNIT_MAX_FILES: int = max(1, _int("DISCOVERY_UNIT_MAX_FILES", 40))
 RULES_EXTRACTION: str = (os.getenv("RULES_EXTRACTION", "on") or "on").strip().lower()
 RULES_BATCH_MAX_CANDIDATES: int = max(1, _int("RULES_BATCH_MAX_CANDIDATES", 40))
 RULES_BATCH_MAX_CHARS: int = max(2_000, _int("RULES_BATCH_MAX_CHARS", 60_000))
+
+# UI Interaction Contracts are written a batch of screens at a time, so that one
+# answer never has to describe more controls than it can write out in full.
+UI_CONTRACTS_BATCH_ELEMENTS: int = max(1, _int("UI_CONTRACTS_BATCH_ELEMENTS", 20))
+UI_CONTRACTS_BATCH_CHARS: int = max(2_000, _int("UI_CONTRACTS_BATCH_CHARS", 50_000))
+UI_CONTRACTS_EVIDENCE_CHARS: int = max(1_000, _int("UI_CONTRACTS_EVIDENCE_CHARS", 30_000))
 # Lines of one candidate shown to the model; longer ones are cut and counted.
 RULES_CANDIDATE_MAX_LINES: int = max(10, _int("RULES_CANDIDATE_MAX_LINES", 250))
 # Rules listed in the document itself; the CSV download always has all of them.

@@ -154,7 +154,8 @@ def effective(matrix: dict) -> dict[str, dict[str, tuple[str, bool]]]:
     return _inherit(matrix, matrix["values"])
 
 
-def to_markdown(matrices: list[dict], max_rows: int = 150) -> str:
+def to_markdown(matrices: list[dict], max_rows: int | None = 150) -> str:
+    """`max_rows=None`: every key."""
     multi = [m for m in matrices if m["values"]]
     if not multi:
         return ""
@@ -177,7 +178,7 @@ def to_markdown(matrices: list[dict], max_rows: int = 150) -> str:
             for k in rows[:max_rows]:
                 lines.append(f"| `{k}`{' (not in every profile)' if k in partial else ''} | "
                              + " | ".join(_shown(values[k].get(p)) for p in profiles) + " |")
-            if len(rows) > max_rows:
+            if max_rows is not None and len(rows) > max_rows:
                 lines.append(f"| …and {len(rows) - max_rows} more differing keys | " + " | " * len(profiles))
             lines += ["", f"{len(differs)} keys differ between profiles, {len(partial)} are set in only some, "
                           f"{same} are identical everywhere. \"(default)\": not set in that profile's file, so the "

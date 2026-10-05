@@ -514,7 +514,7 @@ def build_dependency_graph(workspace_dir: str, pattern: str) -> DependencyGraph:
     return extractor(root)
 
 
-def to_text(graph: DependencyGraph, max_nodes_per_group: int = 25, max_deps_per_node: int = 5,
+def to_text(graph: DependencyGraph, max_nodes_per_group: int | None = 25, max_deps_per_node: int | None = 5,
             empty: str = "No structural dependencies detected — treat as a single migration group.") -> str:
     """Render a dependency graph as a plain-text tree, one block per migration
     group (wave) in migration order, each item followed by the in-repo
@@ -533,7 +533,7 @@ def to_text(graph: DependencyGraph, max_nodes_per_group: int = 25, max_deps_per_
     for gi, group in enumerate(graph["groups"]):
         lines.append(f"Group {gi + 1}  ({len(group)} item{'s' if len(group) != 1 else ''})")
         shown = group[:max_nodes_per_group]
-        hidden = len(group) - len(shown)
+        hidden = len(group) - len(shown)                 # max_*=None: everything
         for ni, n in enumerate(shown):
             last = ni == len(shown) - 1 and not hidden
             lines.append(f"  {'└─' if last else '├─'} {n}")
@@ -541,7 +541,7 @@ def to_text(graph: DependencyGraph, max_nodes_per_group: int = 25, max_deps_per_
             deps = deps_of.get(n, [])
             for d in deps[:max_deps_per_node]:
                 lines.append(f"{stem}  → {d}  (Group {group_of[d] + 1})")
-            if len(deps) > max_deps_per_node:
+            if max_deps_per_node is not None and len(deps) > max_deps_per_node:
                 lines.append(f"{stem}  → …and {len(deps) - max_deps_per_node} more")
         if hidden:
             lines.append(f"  └─ …and {hidden} more")
@@ -564,7 +564,7 @@ def to_markdown_section(graph: DependencyGraph, pattern: str, discovery: bool = 
             "groups; `→` lists what an item depends on._",
             "",
             "```text",
-            to_text(graph, empty="No structural dependencies detected between the repository's artefacts."),
+            to_text(graph, None, None, empty="No structural dependencies detected between the repository's artefacts."),
             "```",
             "",
         ])

@@ -366,7 +366,7 @@ def fingerprint(workspace_dir: str) -> dict:
     }
 
 
-def to_markdown(fp: dict, max_deps: int = 40, max_imports: int = 25) -> str:
+def to_markdown(fp: dict, max_deps: int | None = 40, max_imports: int | None = 25) -> str:
     """The fingerprint as document sections: languages, manifests and their
     declared dependencies, the libraries the code imports, and script includes."""
     lines = ["## Repository Fingerprint", "",
@@ -388,7 +388,7 @@ def to_markdown(fp: dict, max_deps: int = 40, max_imports: int = 25) -> str:
                 lines += ["", "| Dependency | Version | Scope |", "|---|---|---|"]
                 for d in deps[:max_deps]:
                     lines.append(f"| `{d['name']}` | {d['version'] or '—'} | {d['scope'] or '—'} |")
-                if len(deps) > max_deps:
+                if max_deps is not None and len(deps) > max_deps:
                     lines.append(f"| …and {len(deps) - max_deps} more | | |")
             lines.append("")
     for eco, mods in (fp.get("imports") or {}).items():
@@ -398,7 +398,7 @@ def to_markdown(fp: dict, max_deps: int = 40, max_imports: int = 25) -> str:
                   "| Package / module | Files | Examples |", "|---|---|---|"]
         for mod, info in list(mods.items())[:max_imports]:
             lines.append(f"| `{mod}` | {info['files']} | " + ", ".join(f"`{s}`" for s in info["samples"]) + " |")
-        if len(mods) > max_imports:
+        if max_imports is not None and len(mods) > max_imports:
             lines.append(f"| …and {len(mods) - max_imports} more | | |")
         lines.append("")
     if fp.get("scripts") or fp.get("vendored"):

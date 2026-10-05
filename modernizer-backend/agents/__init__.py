@@ -73,7 +73,8 @@ from .jsp_to_react_bff.agents import (
 from .stack_discovery.agents import (
     dependency_mapper_agent as stack_mapper, wildfly_re_agent as wildfly_re,
     discovery_agent as stack_discovery_agent,
-    discover_unit_agent, discover_merge_agent, po_writer_agent, ea_writer_agent, rule_extractor_agent,
+    discover_unit_agent, discover_merge_agent, po_writer_agent, ea_writer_agent, ea_ui_writer_agent,
+    rule_extractor_agent,
 )
 
 APP_NAME = "modernizer"
@@ -174,6 +175,7 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
         "discover_merge": _runner(discover_merge_agent),
         "po_brd": _runner(po_writer_agent),
         "ea_spec": _runner(ea_writer_agent),
+        "ea_ui": _runner(ea_ui_writer_agent),
         "rules": _runner(rule_extractor_agent),
     },
     # A stack, not a migration: reachable only as one leg of a stack-discovery

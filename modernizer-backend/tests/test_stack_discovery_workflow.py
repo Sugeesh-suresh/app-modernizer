@@ -224,7 +224,9 @@ class TestStackDiscoveryWorkflow:
         assert "## Executive Summary" in state["brd"] and "journey through Java application" in state["brd"]
         assert "## Architecture Overview" in state["technical_spec"] and "Executive Summary" not in state["technical_spec"]
         assert "### WildFly / JBoss (app server)" in state["technical_spec"]
-        assert state["test_inventory"] == "No tests found."
+        # The computed list of every test file leads; the Architect's description follows.
+        assert state["test_inventory"].startswith("## Test Files (computed)")
+        assert state["test_inventory"].endswith("No tests found.")
         assert "java-8-to-25" not in state["brd"]
 
     def test_inventory_leads_and_the_evidence_check_closes_the_brd(self, monkeypatch):
@@ -259,14 +261,15 @@ class TestStackDiscoveryWorkflow:
 
         state = _state(sid)
         request = h.request("ea_spec")
-        assert "`/rest/v1/jobs/{id}`" in request and "must appear in your Interface Catalog" in request
+        assert "`/rest/v1/jobs/{id}`" in request and "do not re-list them" in request
         assert "## Configuration Matrix (computed)" in request
-        assert "## Interface & Job Inventory (computed)" in state["technical_spec"]
-        assert "## Configuration Matrix (computed)" in state["technical_spec"]
-        # The stub architect mentions neither, so the evidence check names both.
+        spec = state["technical_spec"]
+        assert "## Interface & Job Inventory (computed)" in spec and "## Configuration Matrix (computed)" in spec
+        # Every endpoint has its contract in the specification, whatever the Architect wrote.
+        assert "## Endpoint Contracts (computed)" in spec
+        assert "### `GET /rest/v1/jobs/{id}` — `JobRestController.get`" in spec
         evidence = Path(state["evidence_path"]).read_text()
-        assert "GET /rest/v1/jobs/{id} (JobRestController.get)" in evidence
-        assert "scheduled job JobController.nightly" in evidence
+        assert "does not mention" not in evidence                 # the catalog is complete by construction
 
     def test_a_citation_that_matches_no_evidence_is_reported(self, monkeypatch):
         _Harness(monkeypatch, cite=", EV-java-0999, BR-0007")
@@ -570,3 +573,64 @@ class TestRefineTargetsOneWriter:
             client.post(f"/api/sessions/{sid}/refine-brd", json={"feedback": "x"})
 
         assert sorted(w for w, _ in harness.writers) == ["ea_spec", "po_brd"] and harness.stacks == []
+
+
+class TestUiInteractionContracts:
+    """The UI Interaction Contracts are written a batch of screens at a time; a control
+    the agent leaves out is asked for again, then filled from the computed contracts —
+    every control is in the specification, in order, and nothing is abbreviated."""
+
+    def _ui_result(self, tmp_path):
+        from agents.shared import interfaces, ui_contracts
+        from test_ui_contracts import FILES
+        for rel, text in FILES.items():
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        inventory = interfaces.scan(str(tmp_path))
+        return inventory, ui_contracts.scan(str(tmp_path), inventory)
+
+    def test_batches_retry_and_fill(self, monkeypatch, tmp_path):
+        h = _Harness(monkeypatch)
+        inner = main._run_isolated
+        ui_calls: list[list[str]] = []
+
+        async def isolated(step, pattern, state, message, output_key):
+            if step != "ea_ui":
+                return await inner(step, pattern, state, message, output_key)
+            request = state["writer_request"]
+            ids = re.search(r"controls: ([^\n]+)\.", request).group(1).split(", ")
+            ui_calls.append(ids)
+            out = []
+            for i in ids:
+                if i == "UI-004" or (i == "UI-002" and len(ids) > 1):
+                    continue           # UI-004 never described; UI-002 only when asked again on its own
+                out.append(f"- **{i}** — described by the architect, see the computed row [...3 more fields]")
+            return "### Screen\n" + "\n".join(out)
+
+        monkeypatch.setattr(main, "_run_isolated", isolated)
+        monkeypatch.setattr(main.config, "UI_CONTRACTS_BATCH_ELEMENTS", 5)
+        inventory, result = self._ui_result(tmp_path)
+        sid = _session(PRESCAN)
+        asyncio.run(main._update_state(sid, {"interfaces_json": json.dumps(inventory),
+                                             "ui_contracts_json": json.dumps(result)}))
+
+        _run(sid, ["java"])
+
+        ids = [e["id"] for s in result["screens"] for e in s["elements"]]
+        assert len(ids) == 12
+        first = [c for c in ui_calls if len(c) > 1]
+        assert sum(len(c) for c in first) == 12 and all(len(c) <= 5 for c in first)   # every control, in batches
+        assert ["UI-002"] in ui_calls                                                     # asked again
+        spec = _state(sid)["technical_spec"]
+        section = spec[spec.index("## UI Interaction Contracts"):]
+        positions = [section.index(f"**{i}**") for i in ids]
+        assert positions == sorted(positions)                                             # in the screens' order
+        assert "**UI-004** — " in section and "the writer did not describe this control" in section
+        assert section.count("described by the architect") == 11
+        assert "[...3 more fields]" not in spec and "every control is listed in the computed" in spec
+        evidence = Path(_state(sid)["evidence_path"]).read_text()
+        assert "did not describe (1)" in evidence and "UI-004" in evidence
+        assert "### Abbreviated lists replaced in the technical documents" in evidence
+        assert "## Endpoint Contracts (computed)" in spec and "### Web pages and templates (3)" in spec
+        assert "Interface Overview" in h.request("ea_spec") or "do not re-list them" in h.request("ea_spec")

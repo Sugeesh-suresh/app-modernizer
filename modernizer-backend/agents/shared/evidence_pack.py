@@ -195,24 +195,21 @@ def check_markdown(brd: dict, spec: dict, evidence_ids: set[str], uncovered: lis
     if unknown:
         lines += ["", f"**Citations that match no evidence item or rule ({len(unknown)}) — treat the statements "
                   "carrying them as unverified:**"]
-        lines += [f"- {name}: `{i}`" for name, i in unknown[:50]]
-        if len(unknown) > 50:
-            lines.append(f"- …and {len(unknown) - 50} more")
+        lines += [f"- {name}: `{i}`" for name, i in unknown]
     else:
         lines += ["", "Every evidence and rule id cited by either document exists."]
     if uncovered:
         lines += ["", f"**Endpoints and jobs in the code that the Technical Specification does not mention "
                   f"({len(uncovered)}) — see the computed Interface & Job Inventory:**"]
-        lines += [f"- {u}" for u in uncovered[:50]] + ([f"- …and {len(uncovered) - 50} more"] if len(uncovered) > 50 else [])
+        lines += [f"- {u}" for u in uncovered]
     elif uncovered is not None:
         lines += ["", "Every endpoint and scheduled job found in the code is mentioned by the Technical Specification."]
     if ui_uncovered:
-        lines += ["", f"**UI elements the Technical Specification's UI Interaction Contracts do not describe "
-                  f"({len(ui_uncovered)}) — see the computed UI-to-Backend Contracts:** "
-                  + ", ".join(ui_uncovered[:100]) + (f" …and {len(ui_uncovered) - 100} more"
-                                                     if len(ui_uncovered) > 100 else "")]
+        lines += ["", f"**UI elements the Enterprise Architect agent did not describe ({len(ui_uncovered)}) — "
+                  "the specification gives each from the computed contracts:** " + ", ".join(ui_uncovered)]
     elif ui_uncovered is not None:
-        lines += ["", "Every UI element found in the code is described in the Technical Specification."]
+        lines += ["", "Every UI element found in the code is described by the Enterprise Architect agent in the "
+                  "Technical Specification."]
     return "\n".join(lines)
 
 

@@ -49,8 +49,8 @@ from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11 import preflight as java11_preflight
 from agents.shared import (config_matrix, current_state, docx_export, evidence_pack, grounding, interfaces,
-                           migration_inventory, plain_language, repo_fingerprint, rule_candidates, rules_ledger,
-                           ui_contracts, ui_screens)
+                           existing_tests, migration_inventory, plain_language, repo_fingerprint, rule_candidates,
+                           rules_ledger, ui_contracts, ui_screens)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -1426,7 +1426,7 @@ async def _run_stack_mapping(session_id: str) -> list[dict]:
         inventory += "\n\n" + prose
     if notes:
         inventory += "\n\n### Mapper Reconciliation Notes\n\n" + "\n".join(f"- {n}" for n in notes)
-    inventory += "\n\n" + repo_fingerprint.to_markdown(fingerprint)
+    inventory += "\n\n" + repo_fingerprint.to_markdown(fingerprint, None, None)     # every dependency and import
 
     await _update_state(session_id, {
         "stack_inventory_markdown": inventory,
@@ -1807,7 +1807,23 @@ def _with_ingestion_warning(state: dict, brd: str, tech_spec: str) -> tuple[str,
 # ---------------------------------------------------------------------------
 
 _WRITER_RULES_INDEX_CHARS = 40_000
-_WRITER_CONTRACTS_CHARS = 60_000
+_ELIDED_SPEC = ("(the complete list is in the computed sections of this specification: Interface & Job "
+                "Inventory, Endpoint Contracts, UI-to-Backend Contracts)")
+_ELIDED_UI = "(every control is listed in the computed UI-to-Backend Contracts)"
+_ELIDED_TESTS = "(every test file and test is listed in the computed Test Files table)"
+
+
+def _for_writer(markdown: str, limit: int) -> str:
+    """A computed section for a writer's request, cut at `limit` with a note that the
+    specification prints it in full (the writer describes it; it does not re-list it)."""
+    if not markdown:
+        return ""
+    if len(markdown) <= limit:
+        return markdown + "\n\n"
+    cut = markdown[:limit].rsplit("\n", 1)[0]
+    return cut + "\n\n(cut here for length — the specification prints this section in full)\n\n"
+
+
 #: The BRD's supporting evidence, written beside the evidence packs; not shown in the UI.
 EVIDENCE_FILE = "evidence.md"
 
@@ -1844,6 +1860,69 @@ def _load_ledger(state: dict) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
     except (OSError, ValueError):
         return None
+
+
+async def _write_ui_contracts(session_id: str, ui_result: dict, packs: list, feedback: str | None,
+                              keep: frozenset = frozenset()) -> dict:
+    """The UI Interaction Contracts, a batch of screens at a time: each batch gets its
+    screens, the contracts of the handlers they call and the evidence that names
+    them, and must describe every control; a control left out is asked for once
+    more. Returns {"intros": {file: text}, "blocks": {id: text}} — the pipeline
+    assembles the section from these in the screens' order (ui_contracts.assemble)."""
+    batches = ui_contracts.batches(ui_result, config.UI_CONTRACTS_BATCH_ELEMENTS, config.UI_CONTRACTS_BATCH_CHARS)
+    evidence: dict[str, str] = {}
+    for _, _, text in packs:
+        evidence.update(evidence_pack.items(text))
+    gate = asyncio.Semaphore(config.RE_CONCURRENCY)
+    intros: dict[str, str] = {}
+    blocks: dict[str, str] = {}
+    await _push(session_id, "re-stream", content=(
+        f"\n\n### Enterprise Architect agent: UI interaction contracts — {len(ui_contracts.ids(ui_result))} "
+        f"controls in {len(batches)} batch(es)\n"))
+
+    def request_for(batch: list, index: int) -> str:
+        names = ui_contracts.batch_names(batch)
+        related, size = [], 0
+        for eid, text in evidence.items():
+            if any(n in text for n in names) and size + len(text) <= config.UI_CONTRACTS_EVIDENCE_CHARS:
+                related.append(f"- [{eid}] {text}")
+                size += len(text)
+        request = (f"## Batch {index} of {len(batches)}\nDescribe every one of these {len(ui_contracts.batch_ids(batch))} "
+                   f"controls: {', '.join(ui_contracts.batch_ids(batch))}.\n\n"
+                   + ui_contracts.batch_request(batch, ui_result)
+                   + "\n\n## Evidence\n" + ("\n".join(related) or "No evidence item names these screens."))
+        if feedback:
+            request += f"\n\n## Reviewer Feedback\n{feedback}"
+        return request
+
+    async def one(index: int, batch: list) -> None:
+        ids = ui_contracts.batch_ids(batch)
+        async with gate:
+            for attempt in range(2):
+                part = batch if attempt == 0 else [dict(screen, elements=[e for e in screen["elements"]
+                                                                          if e["id"] in missing])
+                                                   for screen in batch]
+                part = [screen for screen in part if screen["elements"]]
+                try:
+                    text = await _run_isolated("ea_ui", _STACK_DISCOVERY,
+                                               {"writer_request": request_for(part, index)},
+                                               "Describe every control of this batch.", "ea_ui")
+                except Exception:                              # noqa: BLE001 — computed lines fill the gap
+                    traceback.print_exc()
+                    text = ""
+                text = _current_state_only(text, f"UI interaction contracts (batch {index})", keep)
+                found_intros, found_blocks = ui_contracts.parse_answer(text, ui_result)
+                for k, v in found_intros.items():
+                    intros.setdefault(k, v)
+                for k, v in found_blocks.items():
+                    if k in ids:
+                        blocks.setdefault(k, v)
+                missing = [i for i in ids if i not in blocks]
+                if not missing:
+                    break
+
+    await asyncio.gather(*(one(i, b) for i, b in enumerate(batches, 1)))
+    return {"intros": intros, "blocks": blocks}
 
 
 async def _run_discovery_documents(session_id: str, bundle: list[str], feedback: str | None = None,
@@ -1912,7 +1991,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         endpoints_jobs = json.loads(state["interfaces_json"])
     inventory_md = interfaces.to_markdown(endpoints_jobs)
     if not state.get("config_matrix_markdown"):
-        config_md = await asyncio.to_thread(lambda: config_matrix.to_markdown(config_matrix.scan(workspace_dir)))
+        config_md = await asyncio.to_thread(lambda: config_matrix.to_markdown(config_matrix.scan(workspace_dir), None))
         await _update_state(session_id, {"config_matrix_markdown": config_md or " "})
     else:
         config_md = state["config_matrix_markdown"].strip()
@@ -1927,6 +2006,15 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     else:
         ui_result = json.loads(state["ui_contracts_json"])
     contracts_md = ui_contracts.to_markdown(ui_result)
+    endpoint_contracts_md = ui_contracts.contracts_markdown(ui_result)
+    # Every test file and every test it declares, from the files.
+    if not state.get("test_files_json"):
+        test_files = await asyncio.to_thread(existing_tests.scan, workspace_dir)
+        await _update_state(session_id, {"test_files_json": json.dumps(test_files)})
+    else:
+        test_files = json.loads(state["test_files_json"])
+    test_files_md = existing_tests.to_markdown(test_files)
+    ea_ui = json.loads(state.get("ea_ui_json") or "{}")
 
     po_brd, ea_spec, ea_tests = state.get("po_brd", ""), state.get("ea_spec", ""), state.get("ea_tests", "")
     ledger = _load_ledger(state)
@@ -1959,18 +2047,18 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
                         content="\n\n### Enterprise Architect agent: writing the Technical Specification\n")
             jobs["spec"] = writer("ea_spec", evidence_pack.EA_SECTIONS,
                                   "## Repository Facts (computed by the pipeline)\n"
-                                  + state.get("stack_inventory_markdown", "")[:60000] + "\n\n"
-                                  + (inventory_md[:40000] + "\n\nEvery endpoint, job and listener above must "
-                                     "appear in your Interface Catalog.\n\n" if inventory_md else "")
-                                  + (config_md[:30000] + "\n\nUse the matrix for per-environment behaviour; never "
-                                     "print a value it shows as redacted.\n\n" if config_md else "")
-                                  + (contracts_md[:_WRITER_CONTRACTS_CHARS]
-                                     + ("\n\n(truncated here; the full contracts are in the specification)"
-                                        if len(contracts_md) > _WRITER_CONTRACTS_CHARS else "")
-                                     + "\n\nDescribe every UI element id above (UI-001 …) in your UI Interaction "
-                                       "Contracts section, using these contracts exactly.\n\n" if contracts_md
-                                     else f"{ui_contracts.HEADING}\nNo UI code that calls the backend was found.\n\n"),
+                                  "The Interface & Job Inventory, Endpoint Contracts, UI-to-Backend Contracts, "
+                                  "Configuration Matrix and Test Files are printed in the specification in full; "
+                                  "they are given here for your overview — do not re-list them.\n\n"
+                                  + _for_writer(state.get("stack_inventory_markdown", ""), 60000)
+                                  + _for_writer(inventory_md, 40000)
+                                  + (_for_writer(config_md, 30000) + "Use the matrix for per-environment behaviour; "
+                                     "never print a value it shows as redacted.\n\n" if config_md else "")
+                                  + _for_writer(contracts_md, 30000)
+                                  + _for_writer(test_files_md, 30000),
                                   ea_spec + "\n\n" + ea_tests)
+            if ui_result.get("screens"):
+                jobs["ui"] = _write_ui_contracts(session_id, ui_result, packs, feedback, keep)
         results = dict(zip(jobs, await asyncio.gather(*jobs.values())))
         if "brd" in results:
             po_brd = _current_state_only(results["brd"], "BRD (Product Owner)", keep)
@@ -1978,7 +2066,10 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
             spec, tests = evidence_pack.split_spec(results["spec"])
             ea_spec = _current_state_only(spec, "Technical Specification (Enterprise Architect)", keep)
             ea_tests = _current_state_only(tests, "Test Inventory (Enterprise Architect)", keep)
-        await _update_state(session_id, {"po_brd": po_brd, "ea_spec": ea_spec, "ea_tests": ea_tests})
+        if "ui" in results:
+            ea_ui = results["ui"]
+        await _update_state(session_id, {"po_brd": po_brd, "ea_spec": ea_spec, "ea_tests": ea_tests,
+                                         "ea_ui_json": json.dumps(ea_ui)})
 
     # Assembly. The BRD is business language only: the Product Owner's document
     # with its evidence citations and any code reference taken out (moved to the
@@ -1998,14 +2089,34 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
                   for r in rules_ledger.verified_rules(ledger)}
     checked_brd, untraced = grounding.check_brd(po_brd, evidence_text, rules_text, {float(len(packs))}) \
         if po_brd else ("", [])
-    # The Architect's UI Interaction Contracts: only what the computed contracts or the cited evidence show.
+    # The UI Interaction Contracts: the Architect's blocks, assembled by the pipeline in
+    # the screens' order, checked against the computed contracts and the cited evidence;
+    # any control left without a description gets the computed one.
     spec_untraced: list = []
-    if ea_spec:
-        ea_spec, spec_untraced = grounding.check_ui_section(ea_spec, contracts_md, set(ui_contracts.ids(ui_result)),
-                                                            ui_contracts.calls(ui_result), evidence_text)
+    ui_filled: list[str] = []
+    elisions: list[str] = []
+    if ea_spec and ui_result.get("screens"):
+        raw_section, _ = ui_contracts.assemble(ui_result, ea_ui.get("intros", {}), ea_ui.get("blocks", {}), fill=False)
+        raw_section, elisions = grounding.replace_elisions(raw_section, _ELIDED_UI)
+        checked_section, spec_untraced = grounding.check_ui_section(
+            raw_section, contracts_md + "\n" + endpoint_contracts_md, set(ui_contracts.ids(ui_result)),
+            ui_contracts.calls(ui_result), evidence_text, placeholder=False)   # the computed line fills a gap
+        intros, blocks = ui_contracts.parse_answer(checked_section, ui_result)
+        ui_section, ui_filled = ui_contracts.assemble(ui_result, intros, blocks)
+        ea_spec = plain_language.place_section(ea_spec, ui_section, ui_contracts.SECTION_HEADING,
+                                               before=("## Data Architecture", "## Integrations", "## Security",
+                                                       "## Runtime", "## Per-Stack Detail",
+                                                       "## Discovery Limitations"))
         if spec_untraced:
             print(f"[discovery] grounding: removed {len(spec_untraced)} UI contract statement(s) not traceable "
                   "to the code", flush=True)
+    # An abbreviated list ("[...27 more web pages]") points at the complete computed list instead.
+    ea_spec, cut = grounding.replace_elisions(ea_spec, _ELIDED_SPEC)
+    elisions += cut
+    ea_tests, cut = grounding.replace_elisions(ea_tests, _ELIDED_TESTS)
+    elisions += cut
+    if elisions:
+        print(f"[discovery] replaced {len(elisions)} abbreviated list(s) in the technical documents", flush=True)
     if untraced:
         print(f"[discovery] grounding: removed {len(untraced)} BRD statement(s) not traceable to the code", flush=True)
     business_brd, citations, removed = plain_language.business_only(checked_brd) if checked_brd else ("", [], 0)
@@ -2022,9 +2133,8 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         check_md = evidence_pack.check_markdown(evidence_pack.check(po_brd, evidence_ids, rule_ids),
                                                 evidence_pack.check(ea_spec + "\n" + ea_tests, evidence_ids, rule_ids),
                                                 evidence_ids,
-                                                interfaces.uncovered(endpoints_jobs, ea_spec + "\n" + ea_tests)
-                                                if inventory_md else None,
-                                                ui_contracts.uncovered(ui_result, ea_spec) if contracts_md else None)
+                                                None,
+                                                ui_filled if ui_result.get("screens") else None)
     else:
         parts = ["> **No stacks were documented.** Either nothing was detected, or every detected part of the "
                  "system was left out at the confirmation step."]
@@ -2032,7 +2142,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     evidence_md = evidence_pack.evidence_markdown(
         _discovery_title(state), inventory, citations, packs, state.get("rules_markdown", ""), check_md,
         state.get("ingestion_warning", ""),
-        grounding.report_markdown(withheld, ledger, untraced, spec_untraced if contracts_md else None))
+        grounding.report_markdown(withheld, ledger, untraced, spec_untraced if contracts_md else None, elisions))
     evidence_file = evidence_dir / EVIDENCE_FILE
     evidence_file.write_text(evidence_md, encoding="utf-8")
 
@@ -2045,9 +2155,9 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
             if section:
                 graphs.append(section.replace("## Dependency Graph & Build Order",
                                               f"## Dependency Graph & Build Order — {label}", 1))
-    tech_spec = "\n\n".join(graphs + [md for md in (inventory_md, contracts_md, config_md) if md]
+    tech_spec = "\n\n".join(graphs + [md for md in (inventory_md, endpoint_contracts_md, contracts_md, config_md) if md]
                             + ([ea_spec] if ea_spec else []))
-    test_inventory = ea_tests
+    test_inventory = "\n\n".join(md for md in (test_files_md, ea_tests) if md)
 
     if state.get("ingestion_warning"):
         # The BRD says it in business terms; the specification and the evidence file give the details.
