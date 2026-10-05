@@ -77,7 +77,12 @@ _SCALARS = {
 _WRAPPERS = {"Optional", "ResponseEntity", "Mono", "CompletableFuture", "Future", "Callable", "DeferredResult",
              "HttpEntity", "Uni", "CompletionStage", "WebAsyncTask"}
 _COLLECTIONS = {"List", "ArrayList", "LinkedList", "Set", "HashSet", "LinkedHashSet", "TreeSet", "SortedSet",
-                "Collection", "Iterable", "Flux", "Page", "Slice", "Stream", "Multi"}
+                "Collection", "Iterable", "Flux", "Stream", "Multi"}
+# Spring Data's Page / Slice as Jackson writes them: the rows under `content`, then the paging fields.
+_PAGED = {"Page": [("totalElements", "integer (64-bit)"), ("totalPages", "integer")],
+          "Slice": []}
+_PAGE_FIELDS = [("number", "integer (zero-based page index)"), ("size", "integer"),
+                ("numberOfElements", "integer"), ("first", "boolean"), ("last", "boolean"), ("empty", "boolean")]
 _MAPS = {"Map", "HashMap", "LinkedHashMap", "TreeMap", "SortedMap", "MultiValueMap"}
 _FRAMEWORK = re.compile(
     r"^(?:Model|ModelMap|RedirectAttributes|BindingResult|Errors|Principal|Authentication|HttpServletRequest|"
@@ -522,6 +527,7 @@ class Call:
     element: str = ""          # a selector the call itself names (DataTable grid, $('#x').load)
     kind: str = "script"
     client_type: str = ""
+    param_arg: int | None = None   # the payload is the enclosing function's argument n: the caller names it
 
 
 def _str_value(node, src: bytes, consts: dict) -> str | None:
@@ -537,7 +543,9 @@ def _str_value(node, src: bytes, consts: dict) -> str | None:
             if c.type == "string_fragment":
                 out += _text(c, src)
             elif c.type == "template_substitution":
-                out += "{}"
+                inner = next((g for g in c.children if g.is_named), None)
+                known = consts.get(_text(inner, src)) if inner is not None and inner.type == "identifier" else None
+                out += known if known is not None else "{}"
             elif c.type == "escape_sequence":
                 out += _text(c, src)
         return out
@@ -626,16 +634,28 @@ _JQ_EVENTS = {"click", "submit", "change", "keyup", "keydown", "keypress", "inpu
 class _Script:
     """HTTP calls in one script and what triggers each."""
 
-    def __init__(self, rel: str, code: str, grammar: str, first_line: int = 1):
+    def __init__(self, rel: str, code: str, grammar: str, first_line: int = 1, consts: dict | None = None,
+                 instances: dict | None = None, numbers: dict | None = None):
         self.rel, self.first_line = rel, first_line
         self.src = code.encode("utf-8", "replace")
         self.tree = _PARSERS[grammar].parse(self.src)
-        self.consts: dict[str, str] = {}
+        self.consts: dict[str, str] = dict(consts or {})          # imported URL constants included
+        self.numbers: dict[str, str] = dict(numbers or {})
+        self.instances: dict[str, str] = dict(instances or {})    # HTTP client -> its base URL
         self.functions: dict[str, list] = {}            # name -> function nodes
         self.triggers: dict[tuple, list] = {}           # function node span -> [(label, event, via)]
         self.calls: list[Call] = []
         self.callers: dict[str, list] = {}               # function name -> nodes of the functions calling it
         self.aliases: dict[str, str] = {}
+        self.imports: dict[str, tuple] = {}             # local name -> (module as written, imported name)
+        self.exports: dict[str, str] = {}               # exported name ("default" too) -> local name
+        self.call_nodes: list = []
+        self.setters: dict[str, str] = {}               # React: setX -> x
+        self.effects: list = []                         # React: (effect function, [dependency names])
+        self.jsx_handlers: list = []                    # (label, event, handler node, attribute)
+        self.feeds: list = []                           # (call node, state set from its result, argument text)
+        self.tables: list = []                          # JSX grids
+        self.control_lines: dict[tuple, int] = {}       # (label, event) -> the line of the control itself
         self._walk()
 
     def line(self, node) -> int:
@@ -660,7 +680,9 @@ class _Script:
             return nodes[0] if nodes else None
         return None
 
-    def _trigger(self, fn, label: str, event: str, via: str):
+    def _trigger(self, fn, label: str, event: str, via: str, at=None):
+        if at is not None:
+            self.control_lines.setdefault((label, event), self.line(at))
         if fn is None:
             return
         if isinstance(fn, tuple):                     # a function declared later: resolved in a second pass
@@ -678,11 +700,46 @@ class _Script:
             nodes.append(node)
             stack.extend(reversed(node.children))
         for node in nodes:                             # declarations first
+            if node.type == "import_statement":
+                self._import(node)
+            elif node.type == "export_statement":
+                self._export(node)
             if node.type == "function_declaration":
                 self.functions.setdefault(_text(node.child_by_field_name("name"), src), []).append(node)
             elif node.type == "variable_declarator":
                 name, value = node.child_by_field_name("name"), node.child_by_field_name("value")
                 if name is None or value is None:
+                    continue
+                if value.type == "await_expression":
+                    value = next((c for c in value.children if c.is_named), value)
+                if value.type == "call_expression":
+                    callee = _text(value.child_by_field_name("function"), src)
+                    args = [c for c in value.child_by_field_name("arguments").children if c.is_named] \
+                        if value.child_by_field_name("arguments") is not None else []
+                    if callee == "require" and args and args[0].type == "string":
+                        module = _text(args[0], src)[1:-1]
+                        if name.type == "identifier":
+                            self.imports[_text(name, src)] = (module, "default")
+                        elif name.type == "object_pattern":
+                            for prop in re.findall(r"[A-Za-z_$][\w$]*", _text(name, src)):
+                                self.imports[prop] = (module, prop)
+                        continue
+                    if callee.endswith(".create") and args and args[0].type == "object":
+                        base = _object_pairs(args[0], src).get("baseURL") or _object_pairs(args[0], src).get("baseUrl")
+                        if base is not None:                  # axios.create({ baseURL: '/api' })
+                            v = _str_value(base, src, self.consts)
+                            if v is not None:
+                                self.instances[_text(name, src)] = v
+                        else:
+                            self.instances.setdefault(_text(name, src), "")
+                        continue
+                    if callee in ("useState", "React.useState") and name.type == "array_pattern":
+                        parts = [c for c in name.children if c.is_named]
+                        if len(parts) == 2:
+                            self.setters[_text(parts[1], src)] = _text(parts[0], src)
+                        continue
+                if value.type == "number":
+                    self.numbers[_text(name, src)] = _text(value, src)
                     continue
                 if value.type in ("arrow_function", "function_expression", "function"):
                     self.functions.setdefault(_text(name, src), []).append(value)
@@ -702,7 +759,10 @@ class _Script:
                 self.functions.setdefault(_text(node.child_by_field_name("name"), src), []).append(node)
         for node in nodes:
             if node.type == "call_expression":
+                self.call_nodes.append(node)
                 self._call(node)
+            elif node.type == "jsx_element" and self._tag(node) == "table":
+                self._table(node)
             elif node.type == "assignment_expression":
                 self._assignment(node)
             elif node.type == "jsx_attribute":
@@ -717,6 +777,7 @@ class _Script:
         for name, label, event, via in self._pending:
             for fn in self.functions.get(name, []):
                 self.triggers.setdefault(self._key(fn), []).append((label, event, via))
+        self._effects_from_state()
         # Who calls each named function (one hop is enough to reach a bound handler).
         for node in nodes:
             if node.type == "call_expression":
@@ -727,6 +788,152 @@ class _Script:
                     encl = self.enclosing(node)
                     if encl:
                         self.callers.setdefault(name, []).append(encl[0])
+
+    # ── modules ──
+    def _import(self, node):
+        src = self.src
+        source = node.child_by_field_name("source")
+        if source is None:
+            return
+        module = _text(source, src)[1:-1]
+        clause = next((c for c in node.children if c.type == "import_clause"), None)
+        for c in (clause.children if clause is not None else []):
+            if c.type == "identifier":
+                self.imports[_text(c, src)] = (module, "default")
+            elif c.type == "namespace_import":
+                ident = next((g for g in c.children if g.type == "identifier"), None)
+                if ident is not None:
+                    self.imports[_text(ident, src)] = (module, "*")
+            elif c.type == "named_imports":
+                for spec in c.children:
+                    if spec.type == "import_specifier":
+                        name, alias = spec.child_by_field_name("name"), spec.child_by_field_name("alias")
+                        self.imports[_text(alias or name, src)] = (module, _text(name, src))
+
+    def _export(self, node):
+        src = self.src
+        decl, value = node.child_by_field_name("declaration"), node.child_by_field_name("value")
+        default = any(c.type == "default" for c in node.children)
+        if decl is not None:
+            names = []
+            if decl.type in ("function_declaration", "class_declaration", "generator_function_declaration"):
+                n = decl.child_by_field_name("name")
+                names = [_text(n, src)] if n is not None else []
+            else:
+                names = [_text(d.child_by_field_name("name"), src) for d in decl.children
+                         if d.type == "variable_declarator" and d.child_by_field_name("name") is not None]
+            for n in names:
+                self.exports["default" if default else n] = n
+        elif value is not None and value.type == "identifier":
+            self.exports["default"] = _text(value, src)
+        for c in node.children:
+            if c.type == "export_clause":
+                for spec in c.children:
+                    if spec.type == "export_specifier":
+                        name, alias = spec.child_by_field_name("name"), spec.child_by_field_name("alias")
+                        self.exports[_text(alias or name, src)] = _text(name, src)
+
+    # ── JSX ──
+    def _tag(self, element) -> str:
+        opening = element.children[0] if element.children else None
+        if opening is None or opening.type not in ("jsx_opening_element", "jsx_self_closing_element"):
+            opening = element if element.type == "jsx_self_closing_element" else None
+        name = opening.child_by_field_name("name") if opening is not None else None
+        return _text(name, self.src) if name is not None else ""
+
+    def _jsx_label(self, opening) -> str:
+        """A control's label: its text, else id / name / placeholder / aria-label, else its <label>'s text."""
+        src = self.src
+        name = opening.child_by_field_name("name")
+        tag = _text(name, src) if name is not None else "element"
+        attrs = {}
+        for a in opening.children:
+            if a.type == "jsx_attribute" and a.children:
+                value = a.children[-1] if len(a.children) > 1 else None
+                if value is None or value.type == "string":       # a bound value ({search}) names no control
+                    attrs[_text(a.children[0], src)] = _text(value, src).strip("'\"") if value is not None else ""
+        element = opening.parent if opening.type == "jsx_opening_element" else None
+        text = ""
+        if element is not None:
+            text = " ".join(_text(c, src).strip() for c in element.children
+                            if c.type in ("jsx_text", "jsx_expression") and _text(c, src).strip())
+        if not text:
+            for key in ("aria-label", "placeholder", "title", "value"):
+                if attrs.get(key) and not attrs[key].startswith(("(", "e =>")) and "=>" not in attrs[key]:
+                    text = attrs[key]
+                    break
+        if not text:
+            p = opening.parent
+            for _ in range(3):
+                if p is None:
+                    break
+                if p.type == "jsx_element" and self._tag(p) == "label":
+                    text = " ".join(_text(c, src).strip() for c in p.children if c.type == "jsx_text").strip()
+                    break
+                p = p.parent
+        kind = f"{tag}[{attrs['type']}]" if attrs.get("type") and tag == "input" else tag
+        ident = f"#{attrs['id']}" if attrs.get("id") else ""
+        return " ".join(x for x in (kind, ident, f"\"{_short(text)}\"" if text else "") if x)
+
+    def _table(self, element):
+        """A JSX grid: its header cells and, for `rows.map((row) => <tr>…)`, the value each cell shows."""
+        src = self.src
+        headers = [_short(" ".join(_text(c, src).strip() for c in th.children if c.type == "jsx_text"), 30)
+                   for th in self._descendants(element, "jsx_element") if self._tag(th) == "th"]
+        mapping = next((n for n in self._descendants(element, "call_expression")
+                        if _text(n.child_by_field_name("function"), src).endswith(".map")), None)
+        if mapping is None:
+            return
+        source = _text(mapping.child_by_field_name("function").child_by_field_name("object"), src)
+        args = [c for c in mapping.child_by_field_name("arguments").children if c.is_named]
+        if not args or args[0].type not in ("arrow_function", "function_expression"):
+            return
+        params = args[0].child_by_field_name("parameters") or args[0].child_by_field_name("parameter")
+        row = re.findall(r"[A-Za-z_$][\w$]*", _text(params, src))[:1] if params is not None else []
+        cells = []
+        for td in self._descendants(args[0], "jsx_element"):
+            if self._tag(td) != "td":
+                continue
+            fields = []
+            for m in re.finditer(rf"\b{re.escape(row[0])}((?:\.[A-Za-z_$][\w$]*)+)", _text(td, src)) if row else []:
+                parts = m.group(1).strip(".").split(".")
+                field = ".".join(p for p in parts if p not in ("length", "join", "map", "toString"))
+                if field and field not in fields:
+                    fields.append(field)
+            cells.append(fields)
+        ident = ""
+        opening = element.children[0]
+        for a in opening.children:
+            if a.type == "jsx_attribute" and _text(a.children[0], src) == "id" and len(a.children) > 1:
+                ident = _text(a.children[-1], src).strip("'\"")
+        self.tables.append({"node": element, "id": ident, "source": source, "headers": headers, "cells": cells})
+
+    @staticmethod
+    def _descendants(node, kind: str) -> list:
+        out, stack = [], list(reversed(node.children))
+        while stack:
+            n = stack.pop()
+            if n.type == kind:
+                out.append(n)
+            stack.extend(reversed(n.children))
+        return out
+
+    def _effects_from_state(self):
+        """A control that sets state an effect depends on (`onClick={() => setPage(page + 1)}` with
+        `useEffect(load, [page])`) triggers that effect's calls."""
+        src = self.src
+        for label, event, handler, attr in self.jsx_handlers:
+            text = _text(handler, src)
+            if handler.type == "identifier" and self.functions.get(text):
+                text = _text(self.functions[text][0], src)
+            for called in set(re.findall(r"([A-Za-z_$][\w$]*)\s*\(", text)):     # one hop: local helpers
+                if called in self.functions and called not in self.setters:
+                    text += "\n" + _text(self.functions[called][0], src)
+            states = {self.setters[s] for s in re.findall(r"\b(set[A-Z]\w*)\s*\(", text) if s in self.setters}
+            for effect, deps in self.effects:
+                for state in sorted(states & set(deps)):
+                    self.triggers.setdefault(self._key(effect), []).append(
+                        (label, event, f"JSX {attr} sets `{state}`, which re-runs the effect"))
 
     def enclosing(self, node) -> list:
         out = []
@@ -757,6 +964,10 @@ class _Script:
             v = _str_value(right, src, self.consts)
             if v is not None:
                 self.calls.append(Call(self.line(node), "GET", normalize(v), [], node, kind="navigation"))
+        elif lt.endswith(".defaults.baseURL"):                 # axios.defaults.baseURL = '/api'
+            v = _str_value(right, src, self.consts)
+            if v is not None:
+                self.instances[lt[:-len(".defaults.baseURL")]] = v
         elif lt in ("window.onload", "document.onload"):
             self._trigger(self._fn_value(right), "page", "page load", "window.onload")
         elif left.type == "member_expression":
@@ -774,16 +985,13 @@ class _Script:
         value = next((c for c in node.children if c.type == "jsx_expression"), None)
         inner = next((c for c in value.children if c.is_named), None) if value is not None else None
         el = node.parent
-        tag = _text(el.child_by_field_name("name"), src) if el is not None and el.child_by_field_name("name") else "element"
-        label = tag
-        elem = el.parent if el is not None and el.type == "jsx_opening_element" else None
-        if elem is not None:
-            text = " ".join(_text(c, src) for c in elem.children if c.type == "jsx_text").strip()
-            if text:
-                label = f"{tag} \"{_short(text)}\""
+        label = self._jsx_label(el) if el is not None and el.type in ("jsx_opening_element",
+                                                                       "jsx_self_closing_element") else "element"
         event = name[2:].lower()
         fn = self._fn_value(inner)
-        self._trigger(fn, label, event, f"JSX {name}")
+        self._trigger(fn, label, event, f"JSX {name}", at=node)
+        if inner is not None:
+            self.jsx_handlers.append((label, event, inner, name))
 
     def _backbone_events(self, obj):
         for key, value in _object_pairs(obj, self.src).items():
@@ -819,7 +1027,8 @@ class _Script:
             if len(args) >= 3 and args[1].type == "string":
                 target = _text(args[1], src).strip("'\"`")
             if target and target != "document" or (sel == "document" and len(args) >= 3):
-                self._trigger(self._fn_value(args[-1]), target, evt.split(".")[0], f"jQuery .{prop}('{evt}')")
+                self._trigger(self._fn_value(args[-1]), target, evt.split(".")[0], f"jQuery .{prop}('{evt}')",
+                              at=node)
             return
         if prop in _JQ_EVENTS and obj is not None and args:
             sel = _selector_of(obj, src, self.aliases)
@@ -838,22 +1047,47 @@ class _Script:
             if evt in ("DOMContentLoaded", "load") and sel in ("document", ""):
                 self._trigger(self._fn_value(args[1]), "page", "page load", evt)
             elif sel:
-                self._trigger(self._fn_value(args[1]), sel, evt, "addEventListener")
+                self._trigger(self._fn_value(args[1]), sel, evt, "addEventListener", at=node)
             return
         if fn in ("useEffect", "React.useEffect", "useLayoutEffect", "onMounted") and args:
-            self._trigger(self._fn_value(args[0]), "page", "page load", fn)
+            effect = self._fn_value(args[0])
+            self._trigger(effect, "page", "page load", fn)
+            if len(args) > 1 and args[1].type == "array" and effect is not None and not isinstance(effect, tuple):
+                self.effects.append((effect, re.findall(r"[A-Za-z_$][\w$]*", _text(args[1], src))))
             return
+        if fn in ("setInterval", "window.setInterval") and args:
+            ms = _text(args[1], src) if len(args) > 1 else ""
+            ms = self.numbers.get(ms, ms)
+            self._trigger(self._fn_value(args[0]), "timer", f"every {ms} ms" if ms.isdigit() else "on a timer",
+                          f"setInterval({_text(args[0], src)}, {_text(args[1], src) if len(args) > 1 else ''})",
+                          at=node)
+            return
+        if prop == "then" and obj is not None and args:
+            # `load().then((res) => setRows(res.data))`: which state the call's result fills.
+            callback = args[0]
+            for setter, value in re.findall(r"\b(set[A-Z]\w*)\s*\(\s*([^)]*)\)", _text(callback, src)):
+                if setter in self.setters:
+                    target = obj
+                    while target is not None and target.type == "call_expression" and _text(
+                            target.child_by_field_name("function"), src).endswith(".then"):
+                        target = target.child_by_field_name("function").child_by_field_name("object")
+                    self.feeds.append((target, self.setters[setter], value.strip()))
 
         # HTTP calls.
-        def add(verb, url_node, sends=None, element="", kind="script"):
+        base = self._base_for(obj, fn)
+
+        def add(verb, url_node, sends=None, element="", kind="script", param_arg=None):
             if url_node is None:
                 return
             v = _str_value(url_node, src, self.consts)
             if v is None:
                 return
-            if not (v.startswith(("/", "http", "{}", ".")) or "/" in v):
+            if not (v.startswith(("/", "http", "{}", ".")) or "/" in v or base):
                 return                                   # not a URL: map.get('x'), cache.get(key)
-            self.calls.append(Call(self.line(node), verb, normalize(v), sends or [], node, element, kind, ctype))
+            if base and not re.match(r"^(?:https?:)?//", v):
+                v = base.rstrip("/") + "/" + v.lstrip("/")     # the client's baseURL
+            self.calls.append(Call(self.line(node), verb, normalize(v), sends or [], node, element, kind, ctype,
+                                   param_arg))
 
         if fn == "fetch" and args:
             verb, sends = "GET", []
@@ -866,17 +1100,23 @@ class _Script:
                     sends = _form_data_names(self.enclosing(node)[0] if self.enclosing(node) else None, src)
             add(verb, args[0], sends)
             return
-        if prop.lower() in ("get", "post", "put", "delete", "patch", "head") and obj is not None and args and \
-                re.search(r"(?i)axios|http|api|client|\$resource|request|\$$|^jquery$", _text(obj, src)):
+        if prop.lower() in ("get", "post", "put", "delete", "patch", "head") and obj is not None and args and (
+                re.search(r"(?i)axios|http|api|client|\$resource|request|\$$|^jquery$", _text(obj, src))
+                or _text(obj, src) in self.instances):
             verb = prop.upper()
             if _text(obj, src) in ("$", "jQuery"):
                 verb = "GET" if prop == "get" else "POST"
             sends = _sent_names(args[1], src, self.consts) if len(args) > 1 and verb in ("POST", "PUT", "PATCH") or \
                 (len(args) > 1 and _text(obj, src) in ("$", "jQuery")) else []
+            param_arg = None
             if len(args) > 1 and verb == "GET" and args[1].type == "object":
                 params = _object_pairs(args[1], src).get("params")
                 sends = _sent_names(params, src, self.consts) if params is not None else sends
-            add(verb, args[0], sends)
+                if params is not None and params.type in ("identifier", "shorthand_property_identifier"):
+                    param_arg = self._param_index(node, _text(params, src))
+            elif len(args) > 1 and args[1].type == "identifier":
+                param_arg = self._param_index(node, _text(args[1], src))
+            add(verb, args[0], sends, param_arg=param_arg)
             return
         if fn in ("$.getJSON", "jQuery.getJSON") and args:
             add("GET", args[0], _sent_names(args[1], src, self.consts) if len(args) > 1 else [])
@@ -928,7 +1168,26 @@ class _Script:
                 self.calls.append(Call(self.line(node), "GET", normalize(_str_value(opts["url"], src, self.consts)),
                                        [], node, f"Backbone {model} {name}", "data model"))
 
+    def _base_for(self, obj, fn: str) -> str:
+        """The base URL of the HTTP client a call goes through (`api` from `axios.create({ baseURL })`)."""
+        name = _text(obj, self.src) if obj is not None else fn
+        return self.instances.get(name, "") or (self.instances.get("axios", "") if name == "axios" else "")
+
+    def _param_index(self, node, name: str) -> int | None:
+        """The position of `name` among the enclosing function's parameters."""
+        fn = next(iter(self.enclosing(node)), None)
+        if fn is None:
+            return None
+        params = fn.child_by_field_name("parameters") or fn.child_by_field_name("parameter")
+        names = [_text(p, self.src) for p in (params.children if params is not None else []) if p.is_named] \
+            if params is not None and params.type != "identifier" else ([_text(params, self.src)] if params is not None
+                                                                        else [])
+        return names.index(name) if name in names else None
+
     def triggers_of(self, call: Call, inline: dict[str, list]) -> list[tuple[str, str, str]]:
+        return self.triggers_for(call.node, inline)
+
+    def triggers_for(self, node, inline: dict[str, list]) -> list[tuple[str, str, str]]:
         """[(element, event, via)] for a call: the innermost bound function, its callers, inline handlers."""
         found: list = []
         seen = set()
@@ -945,7 +1204,7 @@ class _Script:
                 for caller in self.callers.get(name, []):
                     visit(caller, depth + 1)
 
-        enclosing = self.enclosing(call.node)
+        enclosing = self.enclosing(node)
         for fn in enclosing:
             visit(fn, 0)
             if found:
@@ -1120,6 +1379,8 @@ def _type_label(type_text: str, java: _Java) -> str:
         return _type_label(args[0], java)
     if base in _COLLECTIONS:
         return f"list of {_type_label(args[0], java)}" if args else "list"
+    if base in _PAGED or base == "PageImpl":
+        return f"page of {_type_label(args[0], java)}" if args else "page"
     if base in _MAPS:
         k, v = (args + ["Object", "Object"])[:2]
         return f"map of {_type_label(k, java)} → {_type_label(v, java)}"
@@ -1142,6 +1403,11 @@ def schema(type_text: str, java: _Java, prefix: str = "", depth: int = 0, seen: 
     if base in _WRAPPERS:
         return schema(args[0], java, prefix, depth, seen, json_names) if args else \
             [(prefix or "(body)", "not declared in the signature", "")]
+    if base in _PAGED or base == "PageImpl":
+        inner = args[0] if args else "Object"
+        rows = schema(inner, java, f"{prefix}.content[]" if prefix else "content[]", depth, seen, json_names)
+        return rows + [(f"{prefix}.{name}" if prefix else name, kind, "Spring Data page")
+                       for name, kind in _PAGED.get(base, _PAGED["Page"]) + _PAGE_FIELDS]
     if base in _COLLECTIONS:
         inner = args[0] if args else "Object"
         return schema(inner, java, (prefix or "") + "[]", depth, seen, json_names)
@@ -1224,6 +1490,14 @@ def contract(workspace_dir: str, endpoint: dict, java: _Java) -> dict:
         pname_node = p.child_by_field_name("name")
         pname = _text(pname_node, src) if pname_node is not None else ""
         checks = [f"@{a}{_compact(v)}" for a, v in pann.items() if a in VALIDATION_ANNOTATIONS and a != "Valid"]
+        if "DateTimeFormat" in pann:                     # how a date parameter must be written
+            fmt = pann["DateTimeFormat"]
+            pattern = _attr(fmt, "pattern")
+            iso = re.search(r"ISO\.(DATE_TIME|DATE|TIME)", fmt)
+            checks.append(f"format {pattern}" if pattern else
+                          {"DATE": "format yyyy-MM-dd", "DATE_TIME": "format ISO date-time",
+                           "TIME": "format HH:mm:ss"}.get(iso.group(1), "") if iso else "")
+            checks = [c for c in checks if c]
         optional = _base(ptype) == "Optional"
         inner_type = _args(ptype)[0] if optional and _args(ptype) else ptype
 
@@ -1422,9 +1696,9 @@ def scan(workspace_dir: str, inventory: dict) -> dict:
     root = Path(workspace_dir)
     result = {"screens": [], "contracts": [], "unmatched": [], "uncalled": [], "pages": []}
     endpoints = inventory.get("endpoints", [])
-    templates, scripts = _ui_files(root) if root.is_dir() else ([], [])
+    templates, scripts_paths = _ui_files(root) if root.is_dir() else ([], [])
     template_rels = [p.relative_to(root).as_posix() for p in templates]
-    script_rels = [p.relative_to(root).as_posix() for p in scripts]
+    script_rels = [p.relative_to(root).as_posix() for p in scripts_paths]
     served_by = _view_files(endpoints, template_rels)
 
     readers: dict[str, _TemplateReader] = {}
@@ -1459,9 +1733,65 @@ def scan(workspace_dir: str, inventory: dict) -> dict:
     for rel in template_rels:
         elements += readers[rel].elements
 
+    site_calls: dict[tuple, Call] = {}        # (file, call node span) -> the HTTP call it ends in
+
+    def remote_sites(sc: _Script, node, depth: int = 0) -> list[tuple]:
+        """Where an exported function enclosing `node` is called from other modules, with the
+        triggers found there: [(script, call-site node, [(label, event, via)])]."""
+        if depth > 3:
+            return []
+        name = next((sc.name_of(f) for f in sc.enclosing(node) if sc.name_of(f)), "")
+        exported = {e for e, local in sc.exports.items() if local == name} if name else set()
+        if not exported:
+            return []
+        found = []
+        for other in scripts.values():
+            if other is sc:
+                continue
+            for local, (module, imported) in other.imports.items():
+                if resolve(other.rel, module) != sc.rel:
+                    continue
+                if imported in exported:
+                    names = {local}
+                elif imported == "*":
+                    names = {f"{local}.{e}" for e in exported}
+                else:
+                    continue
+                for site in other.call_nodes:
+                    if _text(site.child_by_field_name("function"), other.src) not in names:
+                        continue
+                    trig = other.triggers_for(site, inline_handlers(included_by.get(other.rel, [])))
+                    if trig:
+                        found.append((other, site, [(l, e, f"{v} → {name}() in {Path(sc.rel).name}")
+                                                    for l, e, v in trig]))
+                    else:
+                        found += [(o, n, [(l, e, f"{v} → {name}() in {Path(sc.rel).name}") for l, e, v in t])
+                                  for o, n, t in remote_sites(other, site, depth + 1)]
+        return found
+
+    def add_elements(rel: str, call: Call, triggers: list, line: int, sends: list, holder: "_Script | None" = None):
+        for label, event, via in triggers[:6]:
+            at = holder.control_lines.get((label, event), line) if holder is not None else line
+            kind = call.kind if call.kind != "script" else (
+                "button" if event in ("click", "dblclick") else "form" if event == "submit" else
+                "input" if event in ("change", "keyup", "keydown", "keypress", "input", "blur") else
+                "timer" if event.startswith(("every", "on a timer")) else "script")
+            if kind == "navigation":
+                kind = "link" if event == "click" else "script"
+            if kind == "button" and re.match(r"^a\b", label):
+                kind = "link"
+            if label == "page":
+                kind, label = "page load", Path(rel).name
+            elif label == "timer":
+                label = f"timer in {Path(rel).name}"
+            elements.append(Element(rel, at, kind, label or f"code in {Path(rel).name}",
+                                    event or "—", call.verb, call.url, list(sends), via=via,
+                                    client_type=call.client_type))
+
     def script_elements(rel: str, sc: _Script, pages: list[str]):
         inline = inline_handlers(pages)
         for call in sc.calls:
+            site_calls[(rel, call.node.start_byte, call.node.end_byte)] = call
             triggers = [(call.element, "page load" if call.kind == "grid" else "", call.kind)] if call.element else []
             if call.kind in ("grid", "panel") or not call.element:
                 bound = sc.triggers_of(call, inline)
@@ -1471,21 +1801,25 @@ def scan(workspace_dir: str, inventory: dict) -> dict:
                 elif not call.element:
                     triggers = bound
             if not triggers:
+                # A service function (`export const fetchJobs = …`): the controls are where it is called.
+                sites = remote_sites(sc, call.node)
+                for other, site, trig in sites:
+                    site_calls[(other.rel, site.start_byte, site.end_byte)] = call
+                    sends = list(call.sends)
+                    args = [c for c in site.child_by_field_name("arguments").children if c.is_named]
+                    if not sends and call.param_arg is not None and call.param_arg < len(args):
+                        sends = _sent_names(args[call.param_arg], other.src, other.consts)
+                    add_elements(other.rel, call, trig, other.line(site), sends, other)
+                if sites:
+                    continue
                 fn = next((sc.name_of(f) for f in sc.enclosing(call.node) if sc.name_of(f)), "")
                 triggers = [("", "", f"called from {fn}()" if fn else "trigger not found in the code")]
-            for label, event, via in triggers[:4]:
-                kind = call.kind if call.kind != "script" else (
-                    "button" if event in ("click", "dblclick") else "form" if event == "submit" else
-                    "input" if event in ("change", "keyup", "keydown", "keypress", "input", "blur") else "script")
-                if kind == "navigation":
-                    kind = "link" if event == "click" else "script"
-                if label == "page":
-                    kind, label = "page load", Path(rel).name
-                elements.append(Element(rel, call.line, kind, label or f"code in {Path(rel).name}",
-                                        event or "—", call.verb, call.url, list(call.sends), via=via,
-                                        client_type=call.client_type))
+            add_elements(rel, call, triggers, call.line, call.sends, sc)
 
-    for path, rel in zip(scripts, script_rels):
+    # Scripts: read once for their imports, exports, constants and HTTP clients, then again
+    # with what they import resolved — a URL constant or an axios instance from another module.
+    sources: list[tuple] = []
+    for path, rel in zip(scripts_paths, script_rels):
         try:
             code = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -1515,14 +1849,93 @@ def scan(workspace_dir: str, inventory: dict) -> dict:
         if grammar == "javascript" and path.suffix.lower() == ".jsx" or (
                 grammar == "javascript" and re.search(r"<[A-Z]\w*[\s/>]|return\s*\(\s*<", code)):
             grammar = "tsx" if "tsx" in _PARSERS else grammar
-        if grammar not in _PARSERS:
+        if grammar in _PARSERS:
+            sources.append((rel, code, grammar, first))
+
+    def resolve(importer: str, module: str) -> str | None:
+        """The script a module specifier names: './x' relative to the importer, '@/x' from its src/."""
+        if module.startswith("."):
+            base = Path(importer).parent / module
+        elif module.startswith(("@/", "~/")):
+            parts = Path(importer).parts
+            if "src" not in parts:
+                return None
+            base = Path(*parts[:len(parts) - list(reversed(parts)).index("src")]) / module[2:]
+        else:
+            return None
+        norm = Path(re.sub(r"/\./", "/", base.as_posix()))
+        stack = []
+        for part in norm.parts:
+            if part == "..":
+                if stack:
+                    stack.pop()
+            elif part != ".":
+                stack.append(part)
+        target = "/".join(stack)
+        for candidate in [target] + [target + ext for ext in _SCRIPT_SUFFIXES] + \
+                [f"{target}/index{ext}" for ext in _SCRIPT_SUFFIXES]:
+            if candidate in known:
+                return candidate
+        return None
+
+    known = {rel for rel, *_ in sources}
+    first_pass: dict[str, _Script] = {}
+    for rel, code, grammar, first in sources:
+        try:
+            first_pass[rel] = _Script(rel, code, grammar, first)
+        except Exception:                                      # noqa: BLE001
             continue
+    shared_axios = next((sc.instances["axios"] for sc in first_pass.values() if sc.instances.get("axios")), "")
+    scripts: dict[str, _Script] = {}
+    for rel, code, grammar, first in sources:
+        pre = first_pass.get(rel)
+        if pre is None:
+            continue
+        consts, numbers, instances = {}, {}, ({"axios": shared_axios} if shared_axios else {})
+        for local, (module, imported) in pre.imports.items():
+            target = first_pass.get(resolve(rel, module) or "")
+            if target is None:
+                continue
+            name = target.exports.get(imported, imported)
+            if name in target.consts:
+                consts[local] = target.consts[name]
+            if name in target.numbers:
+                numbers[local] = target.numbers[name]
+            if name in target.instances:
+                instances[local] = target.instances[name]
+        try:
+            scripts[rel] = _Script(rel, code, grammar, first, consts, instances, numbers) \
+                if (consts or numbers or instances) else pre
+        except Exception:                                      # noqa: BLE001
+            scripts[rel] = pre
+    for rel, sc in scripts.items():
         try:                                                   # one unreadable script never stops the scan
-            sc = _Script(rel, code, grammar, first)
             if sc.calls:
                 script_elements(rel, sc, included_by.get(rel, []))
         except Exception:                                      # noqa: BLE001
             continue
+
+    # React grids: a table rendered from state that a call's result filled shows that call's response.
+    for rel, sc in scripts.items():
+        for table in sc.tables:
+            state_root = table["source"].split(".")[0]
+            for target, state, value in sc.feeds:
+                call = site_calls.get((rel, target.start_byte, target.end_byte))
+                if call is None or state != state_root:
+                    continue
+                parts = value.split(".")[1:] if "." in value else []
+                if parts[:1] == ["data"]:
+                    parts = parts[1:]                          # an axios response's body
+                path = ".".join(parts + table["source"].split(".")[1:])
+                prefix = f"{path}[]" if path else "[]"
+                columns = [(header, ", ".join(f"{prefix}.{f}" for f in cells) if cells else "")
+                           for header, cells in zip(table["headers"] + [""] * len(table["cells"]), table["cells"])]
+                elements.append(Element(rel, sc.line(table["node"]), "grid",
+                                        f"table #{table['id']}" if table["id"] else "table",
+                                        "shows the response", call.verb, call.url, [],
+                                        data=table["source"], columns=columns,
+                                        via=f"rows from `{table['source']}`, set from the response of the call at "
+                                            f"line {sc.line(target)}"))
 
     for rel, reader in readers.items():
         for line, code in reader.inline:
