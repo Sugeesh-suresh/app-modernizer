@@ -159,6 +159,19 @@ interface Props {
 
 type ActiveTab = 'brd' | 'techspec' | 'tests' | 'screens';
 
+/** The review screen's introduction, naming only the documents this run generated. */
+function describeDocuments(brd: boolean, technical: boolean, screens: boolean): string {
+  const written = [
+    brd && 'the BRD (written by the Product Owner agent)',
+    technical && 'the technical documents (written by the Enterprise Architect agent)',
+  ].filter(Boolean) as string[];
+  const text = written.length
+    ? `Review and edit ${written.join(' and ')}${written.length > 1 ? ' — both from the same evidence gathered from the code' : ', written from the evidence gathered from the code'}.`
+    : '';
+  const shots = screens ? 'The UI Screens were rendered from the repository\'s own templates, with no model.' : '';
+  return [text, shots].filter(Boolean).join(' ');
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScreens = '', refining, refiningContent, onConfirm, onRefine, reOnly = false }: Props) {
@@ -181,6 +194,15 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
   const [showFeedback, setShowFeedback] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [contextFiles, setContextFiles] = useState<ContextFile[]>([]);
+  // Reverse engineering generates only the documents the reviewer chose: only those get a tab.
+  const shown: Record<ActiveTab, boolean> = {
+    brd: !reOnly || !!brd,
+    techspec: !reOnly || !!technicalSpec,
+    tests: !reOnly || !!testInventory,
+    screens: !!uiScreens,
+  };
+  const firstTab = (['brd', 'techspec', 'tests', 'screens'] as const).find((t) => shown[t]) ?? 'brd';
+  const tab: ActiveTab = shown[activeTab] ? activeTab : firstTab;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFilesSelected = async (selected: FileList | null) => {
@@ -212,7 +234,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
 
   const handleRefine = async () => {
     if (!feedback.trim()) return;
-    await onRefine(feedback, activeTab === 'brd' ? 'brd' : 'technical_spec');
+    await onRefine(feedback, tab === 'brd' ? 'brd' : 'technical_spec');
     setFeedback('');
   };
 
@@ -232,7 +254,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
           <h2 className="text-xl font-bold text-slate-900">Analysis Review</h2>
           <p className="text-sm text-slate-600 mt-0.5">
             {reOnly
-              ? 'Review and edit the BRD (written by the Product Owner agent) and the technical documents (written by the Enterprise Architect agent) — both from the same evidence gathered from the code.'
+              ? describeDocuments(!!brd, !!(technicalSpec || testInventory), !!uiScreens)
               : 'Review and edit the AI-generated BRD and Technical Specification. Upload additional context files (Swagger, OpenAPI, design diagrams) to enrich the migration plan.'}
           </p>
         </div>
@@ -240,39 +262,39 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
 
       {/* Tab switcher */}
       <div className="flex gap-1 mb-4">
-        <button
+        {shown.brd && <button
           onClick={() => setActiveTab('brd')}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === 'brd' ? 'bg-blue-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
+            tab === 'brd' ? 'bg-blue-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
           }`}
         >
           <FileText size={14} />
           Business Requirements Document
-        </button>
-        <button
+        </button>}
+        {shown.techspec && <button
           onClick={() => setActiveTab('techspec')}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === 'techspec' ? 'bg-violet-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
+            tab === 'techspec' ? 'bg-violet-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
           }`}
         >
           <Network size={14} />
           Technical Specification
           {technicalSpec && <span className="text-xs opacity-70 ml-1">+ Dependency Graph</span>}
-        </button>
-        <button
+        </button>}
+        {shown.tests && <button
           onClick={() => setActiveTab('tests')}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === 'tests' ? 'bg-emerald-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
+            tab === 'tests' ? 'bg-emerald-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
           }`}
         >
           <ClipboardList size={14} />
           Existing Test Cases
-        </button>
+        </button>}
         {uiScreens && (
           <button
             onClick={() => setActiveTab('screens')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === 'screens' ? 'bg-amber-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
+              tab === 'screens' ? 'bg-amber-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
             }`}
           >
             <Camera size={14} />
@@ -282,7 +304,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
       </div>
 
       {/* BRD Panel */}
-      {activeTab === 'brd' && (
+      {tab === 'brd' && (
         <div className="glass rounded-2xl overflow-hidden mb-6">
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-900/10 glass-inset">
             <span className="text-xs font-medium text-slate-600">BRD.md</span>
@@ -329,7 +351,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
       )}
 
       {/* Technical Specification Panel */}
-      {activeTab === 'techspec' && (
+      {tab === 'techspec' && (
         <div className="glass rounded-2xl overflow-hidden mb-6">
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-900/10 glass-inset">
             <div className="flex items-center gap-2">
@@ -374,7 +396,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
       )}
 
       {/* Existing Test Inventory Panel */}
-      {activeTab === 'tests' && (
+      {tab === 'tests' && (
         <div className="glass rounded-2xl overflow-hidden mb-6">
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-900/10 glass-inset">
             <span className="text-xs font-medium text-slate-600">test-inventory.md</span>
@@ -392,7 +414,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
       )}
 
       {/* UI Screens Panel — built by the pipeline, not a model: nothing to refine */}
-      {activeTab === 'screens' && uiScreens && (
+      {tab === 'screens' && uiScreens && (
         <div className="glass rounded-2xl overflow-hidden mb-6">
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-900/10 glass-inset">
             <div className="flex items-center gap-2">
@@ -538,18 +560,18 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
         </button>
         <button
           onClick={handleRefine}
-          disabled={confirming || refining || anyUploading || !feedback.trim() || activeTab === 'screens'}
+          disabled={confirming || refining || anyUploading || !feedback.trim() || tab === 'screens'}
           title={!feedback.trim() ? 'Add feedback above first' : undefined}
           className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-900/5 disabled:text-slate-500 text-white font-semibold px-5 py-3 rounded-xl transition-colors text-sm cursor-pointer disabled:cursor-not-allowed"
         >
           {refining ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-          {refining ? 'Refining…' : reOnly ? (activeTab === 'brd' ? 'Refine BRD (Product Owner)' : 'Refine Technical Docs (Architect)') : 'Refine with Planner'}
+          {refining ? 'Refining…' : reOnly ? (tab === 'brd' ? 'Refine BRD (Product Owner)' : 'Refine Technical Docs (Architect)') : 'Refine with Planner'}
         </button>
         <p className="text-xs text-slate-500">
           {anyUploading
             ? 'Waiting for file uploads to finish…'
             : reOnly
-              ? activeTab === 'screens'
+              ? tab === 'screens'
                 ? 'The UI Screens document is rendered from the code, not written by a model, so it has nothing to refine; Confirm finishes the run.'
                 : 'Refine re-writes the document on this tab from the gathered evidence, with your feedback; Confirm finishes the run — this pattern produces no plan or code.'
               : 'Refine re-runs the planner with your feedback; Confirm advances to plan generation.'}

@@ -133,7 +133,8 @@ def _session(prescan: list[dict]) -> str:
 _RECORDED: dict[str, list[dict]] = {}
 
 
-def _run(sid: str, selected: list[str] | None, screenshots: bool | None = None) -> None:
+def _run(sid: str, selected: list[str] | None, screenshots: bool | None = None,
+         documents: list[str] | None = None) -> None:
     """Drive the workflow, releasing each gate the way the HTTP endpoints do.
 
     Gates are released off the step-change events the workflow itself emits
@@ -163,6 +164,10 @@ def _run(sid: str, selected: list[str] | None, screenshots: bool | None = None) 
                 if event.get("type") != "step-change":
                     continue
                 if event.get("step") == "companion-selection" and selected is not None:
+                    if documents is not None:
+                        await main.select_companions(sid, SelectCompanionsRequest(
+                            selected=selected, documents=documents))
+                        continue
                     if screenshots is not None:
                         # Through the endpoint itself, which decides whether the choice counts.
                         await main.select_companions(sid, SelectCompanionsRequest(
@@ -671,3 +676,96 @@ class TestArchitectureDiagrams:
             bundle = client.get(f"/api/sessions/{sid}/download/technical-spec?format=zip")
             with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
                 assert sorted(archive.namelist()) == ["diagrams/HLD-1.png", "technical-spec.md"]
+
+
+class TestChosenDocuments:
+    """Only the documents the reviewer chose are generated — and only the work they need runs."""
+
+    def _setup(self, monkeypatch, offer: bool = False):
+        h = _Harness(monkeypatch)
+        rules: list[str] = []
+
+        async def fake_rules(session_id):
+            rules.append(session_id)
+        monkeypatch.setattr(main, "_run_rules_extraction", fake_rules)
+
+        async def fake_screens(session_id):
+            await main._update_state(session_id, {"ui_screens_json": json.dumps(
+                {"screens": [], "not_rendered": [], "pages": 0, "notes": ["rendered by the stub"]})})
+        monkeypatch.setattr(main, "_run_ui_screens", fake_screens)
+        sid = _session(PRESCAN)
+        if offer:
+            asyncio.run(main._update_state(sid, {"ui_screens_offer_json": json.dumps(
+                {"available": True, "default": False, "stacks": ["java"], "reason": ""})}))
+        return h, rules, sid
+
+    def test_brd_only(self, monkeypatch):
+        h, rules, sid = self._setup(monkeypatch)
+        _run(sid, ["java"], documents=["brd"])
+        state = _state(sid)
+        assert [w for w, _ in h.writers] == ["po_brd"] and rules == [sid]
+        assert "## Executive Summary" in state["brd"]
+        assert state["technical_spec"] == "" and state["test_inventory"] == "" and state["ui_screens"] == ""
+        assert json.loads(state["documents_json"]) == ["brd"]
+
+    def test_technical_specification_only(self, monkeypatch):
+        h, rules, sid = self._setup(monkeypatch)
+        _run(sid, ["java"], documents=["technical_spec"])
+        state = _state(sid)
+        assert [w for w, _ in h.writers] == ["ea_spec", "ea_diagrams"] and rules == []    # no business rules
+        assert "Only the Existing Test Inventory" not in h.request("ea_spec")
+        assert state["brd"] == "" and state["test_inventory"] == ""
+        assert "## Architecture Overview" in state["technical_spec"]
+
+    def test_test_cases_only(self, monkeypatch):
+        h, rules, sid = self._setup(monkeypatch)
+        _run(sid, ["java"], documents=["test_inventory"])
+        state = _state(sid)
+        assert [w for w, _ in h.writers] == ["ea_spec"] and rules == []                   # no diagrams, no UI
+        assert "## Only the Existing Test Inventory is wanted" in h.request("ea_spec")
+        assert state["brd"] == "" and state["technical_spec"] == ""
+        assert state["test_inventory"].startswith("## Test Files (computed)")
+
+    def test_ui_screens_only_runs_no_agent(self, monkeypatch):
+        h, rules, sid = self._setup(monkeypatch, offer=True)
+        _run(sid, ["java"], documents=["ui_screens"])
+        state = _state(sid)
+        assert h.writers == [] and h.re_patterns == [] and rules == []                     # no model at all
+        assert state["brd"] == "" and state["technical_spec"] == "" and state["test_inventory"] == ""
+        assert "rendered by the stub" in state["ui_screens"]
+        ready = [e for e in _RECORDED[sid] if e.get("type") == "brd-ready"][-1]
+        assert ready["ui_screens"] and not ready["brd"]
+
+    def test_two_documents(self, monkeypatch):
+        h, rules, sid = self._setup(monkeypatch, offer=True)
+        _run(sid, ["java"], documents=["brd", "ui_screens"])
+        state = _state(sid)
+        assert [w for w, _ in h.writers] == ["po_brd"] and state["brd"] and state["ui_screens"]
+        assert state["technical_spec"] == "" and state["test_inventory"] == ""
+
+    def test_a_choice_is_required_and_ui_screens_needs_the_offer(self, monkeypatch):
+        _, _, sid = self._setup(monkeypatch)
+        asyncio.run(main._update_state(sid, {"companion_recommendations_json": json.dumps(
+            [{"pattern": "java", "label": "Java", "evidence": []}])}))
+        for documents in ([], ["ui_screens"]):
+            with pytest.raises(main.HTTPException) as err:
+                asyncio.run(main.select_companions(sid, SelectCompanionsRequest(selected=["java"], documents=documents)))
+            assert err.value.status_code == 400
+        assert not main._companion_gates[sid].is_set()
+
+    def test_without_a_choice_the_earlier_documents_are_produced(self, monkeypatch):
+        h, rules, sid = self._setup(monkeypatch)
+        _run(sid, ["java"], screenshots=False)
+        state = _state(sid)
+        assert json.loads(state["documents_json"]) == ["brd", "technical_spec", "test_inventory"]
+        assert state["brd"] and state["technical_spec"] and state["test_inventory"]
+
+    def test_refine_and_download_respect_the_choice(self, monkeypatch):
+        _, _, sid = self._setup(monkeypatch)
+        _run(sid, ["java"], documents=["technical_spec"])
+        main._brd_gates[sid] = asyncio.Event()
+        with TestClient(main.app) as client:
+            refused = client.post(f"/api/sessions/{sid}/refine-brd", json={"feedback": "x", "target": "brd"})
+            assert refused.status_code == 400
+            combined = client.get(f"/api/sessions/{sid}/download/reverse-engineering?format=md").text
+            assert "# Technical Specification" in combined and "# Business Requirements" not in combined

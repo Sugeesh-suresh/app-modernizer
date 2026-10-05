@@ -1825,6 +1825,20 @@ def _for_writer(markdown: str, limit: int) -> str:
     return cut + "\n\n(cut here for length — the specification prints this section in full)\n\n"
 
 
+#: The documents a stack-discovery run can produce, in the order the review screen shows them.
+DISCOVERY_DOCUMENTS = ("brd", "technical_spec", "test_inventory", "ui_screens")
+_DEFAULT_DOCUMENTS = ("brd", "technical_spec", "test_inventory")
+
+
+def _documents(state: dict) -> set[str]:
+    """The documents the reviewer chose for this run; a session from before the choice
+    existed produces what it always did."""
+    chosen = json.loads(state.get("documents_json") or "null")
+    if chosen is None:
+        chosen = list(_DEFAULT_DOCUMENTS) + (["ui_screens"] if state.get("ui_screenshots") == "true" else [])
+    return set(chosen)
+
+
 #: The BRD's supporting evidence, written beside the evidence packs; not shown in the UI.
 EVIDENCE_FILE = "evidence.md"
 
@@ -1990,8 +2004,11 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     evidence_dir = Path(state.get("evidence_dir") or tempfile.mkdtemp(prefix="modernizer-evidence-"))
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
+    documents = _documents(state)
+    # Evidence serves the written documents; UI Screens alone needs none (no model at all).
+    gather = bool(documents & {"brd", "technical_spec", "test_inventory"})
     packs: list[tuple[str, str, str]] = []          # (stack id, label, numbered pack)
-    for stack_id in bundle:
+    for stack_id in (bundle if gather else []):
         label = _label(stack_id, True, labels)
         path = evidence_dir / f"{evidence_pack.slug(stack_id)}.md"
         if feedback and path.is_file():
@@ -2034,7 +2051,9 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     else:
         config_md = state["config_matrix_markdown"].strip()
     # Each UI control, the handler it calls and that handler's contract, from the code.
-    if not state.get("ui_contracts_json"):
+    if "technical_spec" not in documents:
+        ui_result = {"screens": [], "contracts": [], "unmatched": [], "uncalled": [], "pages": []}
+    elif not state.get("ui_contracts_json"):
         try:
             ui_result = await asyncio.to_thread(ui_contracts.scan, workspace_dir, endpoints_jobs)
         except Exception as exc:                              # noqa: BLE001 — the documents do not depend on it
@@ -2046,7 +2065,9 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     contracts_md = ui_contracts.to_markdown(ui_result)
     endpoint_contracts_md = ui_contracts.contracts_markdown(ui_result)
     # Every test file and every test it declares, from the files.
-    if not state.get("test_files_json"):
+    if "test_inventory" not in documents:
+        test_files = []
+    elif not state.get("test_files_json"):
         test_files = await asyncio.to_thread(existing_tests.scan, workspace_dir)
         await _update_state(session_id, {"test_files_json": json.dumps(test_files)})
     else:
@@ -2070,8 +2091,10 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         budget = max(config.RE_SYNTHESIS_MAX_CHARS, 2)
         stacks = "\n".join(f"- {label} (id `{sid}`, kind {stack_info.get(sid, {}).get('kind') or 'unspecified'})"
                            for sid, label, _ in packs)
-        write_brd = target in ("all", "brd") or not po_brd
-        write_spec = target in ("all", "technical_spec") or not ea_spec
+        write_brd = "brd" in documents and (target in ("all", "brd") or not po_brd)
+        write_spec = bool(documents & {"technical_spec", "test_inventory"}) and (
+            target in ("all", "technical_spec") or not (ea_spec or ea_tests))
+        spec_wanted = "technical_spec" in documents
 
         async def writer(step: str, sections: tuple, extra: str, previous: str) -> str:
             view = await _merge_to_budget(evidence_pack.view(packs, sections), budget, f"{step} evidence")
@@ -2093,7 +2116,11 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
             await _push(session_id, "re-stream",
                         content="\n\n### Enterprise Architect agent: writing the Technical Specification\n")
             jobs["spec"] = writer("ea_spec", evidence_pack.EA_SECTIONS,
-                                  "## Repository Facts (computed by the pipeline)\n"
+                                  ("" if spec_wanted else
+                                   "## Only the Existing Test Inventory is wanted\nThe reviewer chose not to "
+                                   "generate the Technical Specification: under its marker write only "
+                                   "\"Not requested.\" and put your work into the Test Inventory.\n\n")
+                                  + "## Repository Facts (computed by the pipeline)\n"
                                   "The Interface & Job Inventory, Endpoint Contracts, UI-to-Backend Contracts, "
                                   "Configuration Matrix and Test Files are printed in the specification in full; "
                                   "they are given here for your overview — do not re-list them.\n\n"
@@ -2104,8 +2131,9 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
                                   + _for_writer(contracts_md, 30000)
                                   + _for_writer(test_files_md, 30000),
                                   ea_spec + "\n\n" + ea_tests)
-            if ui_result.get("screens"):
+            if ui_result.get("screens") and spec_wanted:
                 jobs["ui"] = _write_ui_contracts(session_id, ui_result, packs, feedback, keep)
+        if write_spec and spec_wanted:
             await _push(session_id, "re-stream",
                         content="\n\n### Enterprise Architect agent: architecture diagrams\n")
             diagram_facts = ("## Repository Facts (computed by the pipeline)\n"
@@ -2127,7 +2155,8 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
             po_brd = _current_state_only(results["brd"], "BRD (Product Owner)", keep)
         if "spec" in results:
             spec, tests = evidence_pack.split_spec(results["spec"])
-            ea_spec = _current_state_only(spec, "Technical Specification (Enterprise Architect)", keep)
+            ea_spec = _current_state_only(spec, "Technical Specification (Enterprise Architect)", keep) \
+                if spec_wanted else ""
             ea_tests = _current_state_only(tests, "Test Inventory (Enterprise Architect)", keep)
         if "ui" in results:
             ea_ui = results["ui"]
@@ -2219,10 +2248,12 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
                                                 evidence_ids,
                                                 None,
                                                 ui_filled if ui_result.get("screens") else None)
-    else:
+    elif gather:
         parts = ["> **No stacks were documented.** Either nothing was detected, or every detected part of the "
                  "system was left out at the confirmation step."]
-    brd = "\n\n---\n\n".join(p for p in parts if p)
+    else:
+        parts = []
+    brd = "\n\n---\n\n".join(p for p in parts if p) if "brd" in documents else ""
     evidence_md = evidence_pack.evidence_markdown(
         _discovery_title(state), inventory, citations, packs, state.get("rules_markdown", ""), check_md,
         state.get("ingestion_warning", ""),
@@ -2241,14 +2272,17 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
                 graphs.append(section.replace("## Dependency Graph & Build Order",
                                               f"## Dependency Graph & Build Order — {label}", 1))
     tech_spec = "\n\n".join(graphs + [md for md in (inventory_md, endpoint_contracts_md, contracts_md, config_md) if md]
-                            + ([ea_spec] if ea_spec else []))
-    test_inventory = "\n\n".join(md for md in (test_files_md, ea_tests) if md)
+                            + ([ea_spec] if ea_spec else [])) if "technical_spec" in documents else ""
+    test_inventory = "\n\n".join(md for md in (test_files_md, ea_tests) if md) \
+        if "test_inventory" in documents else ""
 
     if state.get("ingestion_warning"):
         # The BRD says it in business terms; the specification and the evidence file give the details.
-        brd = ("> ⚠️ **Incomplete repository.** Only part of the uploaded repository could be analysed, so this "
-               "document may leave out parts of the system.\n\n" + brd)
-        _, tech_spec = _with_ingestion_warning(state, "", tech_spec)
+        if brd:
+            brd = ("> ⚠️ **Incomplete repository.** Only part of the uploaded repository could be analysed, so "
+                   "this document may leave out parts of the system.\n\n" + brd)
+        if tech_spec:
+            _, tech_spec = _with_ingestion_warning(state, "", tech_spec)
     ui_md = await _ui_screens_document(session_id, ledger)
     await _update_state(session_id, {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory,
                                      "ui_screens": ui_md, "evidence_path": str(evidence_file)})
@@ -2775,7 +2809,7 @@ async def _run_stack_discovery_workflow(session_id: str) -> None:
         # No model calls: runs beside the evidence agents; the documents step
         # waits for it before the review screen opens.
         _ui_screen_tasks[session_id] = asyncio.create_task(_run_ui_screens(session_id))
-    if bundle:
+    if bundle and "brd" in _documents(state):               # the business rules serve the BRD only
         await _run_rules_extraction(session_id)
     await _run_bundle_re(session_id, bundle)
 
@@ -3172,13 +3206,21 @@ async def select_companions(session_id: str, body: SelectCompanionsRequest = Sel
     # Screenshots only when they were offered as available and a UI stack they
     # cover is among the stacks the reviewer kept.
     offer = json.loads(state.get("ui_screens_offer_json") or "null") or {}
-    screenshots = bool(body.screenshots and offer.get("available")
+    wanted = set(body.documents) if body.documents is not None else \
+        set(_DEFAULT_DOCUMENTS) | ({"ui_screens"} if body.screenshots else set())
+    screenshots = bool("ui_screens" in wanted and offer.get("available")
                        and any(p in selected for p in offer.get("stacks", [])))
+    documents = [d for d in DISCOVERY_DOCUMENTS if d in wanted and (d != "ui_screens" or screenshots)]
+    if state.get("pattern") == _STACK_DISCOVERY and body.documents is not None and not documents:
+        raise HTTPException(status_code=400, detail="Choose at least one document to generate"
+                            + (" — UI Screens cannot be produced for this repository." if "ui_screens" in wanted
+                               else "."))
 
     await _update_state(session_id, {"companion_patterns_json": json.dumps(selected),
-                                     "ui_screenshots": "true" if screenshots else ""})
+                                     "ui_screenshots": "true" if screenshots else "",
+                                     "documents_json": json.dumps(documents)})
     _companion_gates[session_id].set()
-    return {"ok": True, "selected": selected, "screenshots": screenshots}
+    return {"ok": True, "selected": selected, "screenshots": screenshots, "documents": documents}
 
 
 @app.post("/api/sessions/{session_id}/confirm-brd")
@@ -3186,7 +3228,7 @@ async def confirm_brd(session_id: str, body: ConfirmRequest = ConfirmRequest()):
     if session_id not in _brd_gates:
         raise HTTPException(status_code=404, detail="Session not found.")
     if body.content is None:
-        _require(await _get_state(session_id), "brd", "analysis")
+        _require_review(await _get_state(session_id))
     if session_id in _refining:
         raise HTTPException(status_code=409, detail="The analysis is being refined — wait for the new version.")
 
@@ -3218,11 +3260,15 @@ async def refine_brd(session_id: str, body: RefineRequest):
         raise HTTPException(status_code=400, detail="BRD already confirmed.")
 
     state = await _get_state(session_id)
-    _require(state, "brd", "analysis")
+    _require_review(state)
     bundle = _bundle_for(state)
     if state.get("pattern") == _STACK_DISCOVERY:
         # Only the writer of the tab being refined re-runs, from the stored evidence.
         target = body.target if body.target in ("brd", "technical_spec") else "all"
+        documents = _documents(state)
+        if target == "brd" and "brd" not in documents or target == "technical_spec" and not (
+                documents & {"technical_spec", "test_inventory"}):
+            raise HTTPException(status_code=400, detail="That document was not chosen for this run.")
         return await _refine(session_id, _run_discovery_documents(session_id, bundle, body.feedback, target))
     return await _refine(session_id, _run_bundle_re(session_id, bundle, feedback=body.feedback))
 
@@ -3431,25 +3477,24 @@ async def download_reverse_engineering(session_id: str, format: str = "md"):
     brd = state.get("brd", "")
     tech_spec = state.get("technical_spec", "")
     test_inventory = state.get("test_inventory", "")
-    if not any((brd, tech_spec, test_inventory)):
+    if not any((brd, tech_spec, test_inventory, state.get("ui_screens", ""))):
         raise HTTPException(status_code=404, detail="Reverse engineering has not produced a document yet.")
+    # Only the documents the run was asked for; one asked for but empty is named as such.
+    chosen = _documents(state) if state.get("pattern") == _STACK_DISCOVERY else set(_DEFAULT_DOCUMENTS)
+    written = [(heading, body) for key, heading, body in (
+        ("brd", "Business Requirements", brd), ("technical_spec", "Technical Specification", tech_spec),
+        ("test_inventory", "Existing Test Inventory", test_inventory)) if key in chosen]
 
     title = _discovery_title(state)
     if fmt == "docx":
         # Word can carry the screenshots, so the UI Screens document is included when there is one.
-        sections = [(heading, body.strip() or "_Not produced for this run._") for heading, body in (
-            ("Business Requirements", brd), ("Technical Specification", tech_spec),
-            ("Existing Test Inventory", test_inventory))]
+        sections = [(heading, body.strip() or "_Not produced for this run._") for heading, body in written]
         if state.get("ui_screens"):
             sections.append(("UI Screens", state["ui_screens"]))
         return await _docx_response(f"reverse-engineering-{session_id[:8]}", f"Reverse Engineering — {title}",
                                     sections, {**_screen_images(state), **_diagram_images(state)})
     parts = [f"# Reverse Engineering — {title}", ""]
-    for heading, body in (
-        ("Business Requirements", brd),
-        ("Technical Specification", tech_spec),
-        ("Existing Test Inventory", test_inventory),
-    ):
+    for heading, body in written:
         # An empty section is named rather than omitted: silence here reads as
         # "nothing to report" when it usually means a section failed to parse.
         parts.append(f"# {heading}\n\n{body.strip() or '_Not produced for this run._'}")
@@ -3489,6 +3534,16 @@ async def upload_context_files(
 
 
 _refining: set[str] = set()
+
+
+def _require_review(state: dict) -> None:
+    """Something to review: the BRD — or, in stack discovery, any document the run was asked for."""
+    if state.get("pattern") == _STACK_DISCOVERY:
+        if not any((state.get(k) or "").strip() for k in ("brd", "technical_spec", "test_inventory", "ui_screens")):
+            raise HTTPException(status_code=409, detail="There is no document to review yet — wait for it to be "
+                                                        "generated.")
+        return
+    _require(state, "brd", "analysis")
 
 
 def _require(state: dict, key: str, what: str) -> None:

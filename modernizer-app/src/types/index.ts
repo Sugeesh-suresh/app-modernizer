@@ -64,6 +64,9 @@ export interface ScreenshotsOffer {
   reason: string;
 }
 
+/** stack-discovery: a document the reviewer can choose to generate. */
+export type DiscoveryDocument = 'brd' | 'technical_spec' | 'test_inventory' | 'ui_screens';
+
 export interface CompanionRecommendation {
   /** A PatternId for a companion migration; for stack-discovery, a stack id found
    * in the repository (`java`, `backbone`, `python`, or any id the mapper chose). */

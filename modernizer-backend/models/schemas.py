@@ -78,6 +78,11 @@ class SelectCompanionsRequest(BaseModel):
     # Stack discovery: render the UI's pages as a "UI Screens" document. Honoured
     # only when the pipeline offered it for this repository.
     screenshots: bool = False
+    # Stack discovery: the documents to generate — any of "brd", "technical_spec",
+    # "test_inventory", "ui_screens". None keeps the earlier behaviour: the BRD, the
+    # Technical Specification and the Test Inventory, and UI Screens when
+    # `screenshots` is set. Only what a chosen document needs is run.
+    documents: Optional[List[str]] = None
 
 
 class ChangedFile(BaseModel):

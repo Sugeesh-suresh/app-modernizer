@@ -15,7 +15,7 @@ import {
 } from './api';
 import { PATTERNS } from './data/patterns';
 import type {
-  PatternId, JavaMigrationOptions as JavaOptions, WorkflowState, WorkflowStep, SSEEvent, StageResult,
+  DiscoveryDocument, PatternId, JavaMigrationOptions as JavaOptions, WorkflowState, WorkflowStep, SSEEvent, StageResult,
 } from './types';
 import { RE_ONLY_PATTERNS } from './types';
 
@@ -411,11 +411,11 @@ export default function App() {
     connectSSE(sessionId);
   };
 
-  const handleSelectCompanions = async (selected: string[], screenshots = false) => {
+  const handleSelectCompanions = async (selected: string[], documents?: DiscoveryDocument[]) => {
     if (!state.sessionId) return;
     // The backend's next step-change (reverse-engineering) advances the view,
     // same as the BRD/plan confirm flows.
-    await selectCompanions(state.sessionId, selected, screenshots);
+    await selectCompanions(state.sessionId, selected, documents);
   };
 
   const handleConfirmBrd = async (brdContent: string, techSpecContent: string, feedback?: string) => {
@@ -579,7 +579,9 @@ export default function App() {
           />
         )}
 
-        {state.step === 'brd-review' && state.brd && state.sessionId && (
+        {/* Reverse engineering may have been asked for other documents than the BRD. */}
+        {state.step === 'brd-review' && state.sessionId
+          && (state.brd || (reOnly && (state.technicalSpec || state.testInventory || state.uiScreens))) && (
           <BRDReview
             sessionId={state.sessionId}
             brd={state.brd}

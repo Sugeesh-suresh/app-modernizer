@@ -1,4 +1,4 @@
-import type { PatternId, JavaMigrationOptions } from './types';
+import type { DiscoveryDocument, PatternId, JavaMigrationOptions } from './types';
 
 const BASE = 'http://localhost:8000';
 
@@ -77,13 +77,16 @@ export async function confirmBrd(
   if (!res.ok) throw await apiError(res, 'Failed to confirm BRD');
 }
 
+/** `documents`: stack-discovery's chosen documents; omitted for a migration's companions. */
 export async function selectCompanions(
-  sessionId: string, selected: string[], screenshots = false,
+  sessionId: string, selected: string[], documents?: DiscoveryDocument[],
 ): Promise<void> {
   const res = await fetch(`${BASE}/api/sessions/${sessionId}/select-companions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ selected, screenshots }),
+    body: JSON.stringify(documents
+      ? { selected, documents, screenshots: documents.includes('ui_screens') }
+      : { selected }),
   });
   if (!res.ok) throw await apiError(res, 'Failed to confirm companion migrations');
 }
