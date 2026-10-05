@@ -142,7 +142,7 @@ export const brdDownloadUrl = (sessionId: string, format: DocFormat = 'md') =>
   `${BASE}/api/sessions/${sessionId}/download/brd?format=${format}`;
 
 /** The technical documentation: Technical Specification + Existing Test Inventory. */
-export const technicalSpecDownloadUrl = (sessionId: string, format: DocFormat = 'md') =>
+export const technicalSpecDownloadUrl = (sessionId: string, format: DocFormat | 'zip' = 'md') =>
   `${BASE}/api/sessions/${sessionId}/download/technical-spec?format=${format}`;
 
 /** The whole reverse-engineering document (BRD + Technical Specification + Test
@@ -163,6 +163,10 @@ export const uiScreensDownloadUrl = (sessionId: string, format: 'zip' | 'docx' =
 /** One rendered screen of the UI Screens document (`screens/SCR-0001.png` in its Markdown). */
 export const uiScreenUrl = (sessionId: string, name: string) =>
   `${BASE}/api/sessions/${sessionId}/screens/${encodeURIComponent(name)}`;
+
+/** An architecture diagram (HLD-1.png, LLD-2.png …) the pipeline drew for this session's specification. */
+export const diagramUrl = (sessionId: string, name: string) =>
+  `${BASE}/api/sessions/${sessionId}/diagrams/${encodeURIComponent(name)}`;
 
 export const planDownloadUrl = (sessionId: string) =>
   `${BASE}/api/sessions/${sessionId}/download/plan`;

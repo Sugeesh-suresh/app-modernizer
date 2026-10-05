@@ -267,7 +267,8 @@ def test_stack_discovery_still_runs_the_reverse_engineering_agents(monkeypatch, 
     # runners (wildfly keeps its own runner, which has no target either) — then
     # the two writers, once each, for the whole repository.
     assert harness.steps == [("discover", "stack-discovery")] * 5 + [("re", "wildfly")]
-    assert sorted(writers) == ["ea_spec", "po_brd"]
+    # The architect's diagrams answer here is unusable, so it is asked once more.
+    assert sorted(writers) == ["ea_diagrams", "ea_diagrams", "ea_spec", "po_brd"]
     assert {"discover", "po_brd", "ea_spec"} <= set(PATTERN_RUNNERS["stack-discovery"])
 
 

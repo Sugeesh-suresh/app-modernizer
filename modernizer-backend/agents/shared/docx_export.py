@@ -53,6 +53,17 @@ def _clean(text: str) -> str:
     return _CONTROL.sub("", text or "")
 
 
+def _png_dpi(path: Path) -> float | None:
+    """The horizontal resolution a PNG declares (its pHYs chunk), in dots per inch."""
+    with open(path, "rb") as f:
+        data = f.read(4096)
+    at = data.find(b"pHYs")
+    if at < 0 or len(data) < at + 13:
+        return None
+    x, _, unit = struct.unpack(">IIB", data[at + 4:at + 13])
+    return x * 0.0254 if unit == 1 and x else None
+
+
 def _png_size(path: Path) -> tuple[int, int] | None:
     with open(path, "rb") as f:
         head = f.read(24)
@@ -213,11 +224,15 @@ class _Writer:
             paragraph.add_run(f"[image: {_clean(alt) or src}]").italic = True
             return
         size = _png_size(path)
-        width = Inches(self.page_width_in)
+        width_in = self.page_width_in
+        dpi = _png_dpi(path)
+        if size and size[0] and dpi:                 # an image that declares its size (a diagram): no larger
+            width_in = min(width_in, size[0] / dpi)
+        width = Inches(width_in)
         if size and size[0]:
-            height_in = self.page_width_in * size[1] / size[0]
+            height_in = width_in * size[1] / size[0]
             if height_in > self.image_height_in:
-                width = Inches(self.page_width_in * self.image_height_in / height_in)
+                width = Inches(width_in * self.image_height_in / height_in)
         paragraph.add_run().add_picture(str(path), width=width)
 
     # ── blocks ──────────────────────────────────────────────────────────────

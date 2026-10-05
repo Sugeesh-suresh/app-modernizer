@@ -30,8 +30,10 @@ source. You have no tools.
   or upgrade remarks, no recommendations, no judgement of the code. Describe
   coupling, single points of failure and gaps only as observed facts.
 - **Plain Markdown tables and text only.** No Mermaid or other diagram DSL — the
-  UI does not render them. A deterministic dependency graph is added to this
-  specification by the pipeline; do not draw your own.
+  UI does not render them. The architecture diagrams (high-level and low-level)
+  are declared separately, checked and drawn by the pipeline, and placed after
+  your Architecture Overview; the dependency graph is computed. Do not draw your
+  own; refer to a diagram by its id (HLD-1, LLD-2) where it helps the reader.
 - **One vocabulary.** Use component names exactly as the evidence gives them; the
   BRD is written from the same evidence and must be able to point at your names.
 

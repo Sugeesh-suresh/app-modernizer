@@ -6,7 +6,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  brdDownloadUrl, businessRulesDownloadUrl, technicalSpecDownloadUrl, uiScreenUrl, uiScreensDownloadUrl,
+  brdDownloadUrl, businessRulesDownloadUrl, diagramUrl, technicalSpecDownloadUrl, uiScreenUrl, uiScreensDownloadUrl,
   uploadContextFiles,
 } from '../api';
 
@@ -63,8 +63,9 @@ const PROSE_CLS = `prose prose-invert prose-sm max-w-none
   prose-table:text-slate-700 prose-th:text-slate-800
   prose-td:border-slate-900/10 prose-th:border-slate-900/15`;
 
-/** `screenSessionId`: the UI Screens document — its `screens/SCR-0001.png` images
- * are served by the backend for that session. Any other image is not loaded. */
+/** `screenSessionId`: the session whose images the backend serves — the UI Screens
+ * document's `screens/SCR-0001.png` and the specification's `diagrams/HLD-1.png`.
+ * Any other image is not loaded. */
 function MarkdownWithDiagrams({ content, screenSessionId }: { content: string; screenSessionId?: string }) {
   return (
     <div className={PROSE_CLS}>
@@ -81,11 +82,15 @@ function MarkdownWithDiagrams({ content, screenSessionId }: { content: string; s
             return <td>{children}</td>;
           },
           img({ src, alt }) {
-            const name = typeof src === 'string' ? /^screens\/(SCR-\d{4}\.png)$/.exec(src)?.[1] : undefined;
+            const screen = typeof src === 'string' ? /^screens\/(SCR-\d{4}\.png)$/.exec(src)?.[1] : undefined;
+            const diagram = typeof src === 'string' ? /^diagrams\/((?:HLD|LLD)-\d{1,3}\.png)$/.exec(src)?.[1] : undefined;
+            const name = screen ?? diagram;
             if (!screenSessionId || !name) return <span className="text-xs text-slate-500">[image: {alt}]</span>;
             return (
               <img
-                src={uiScreenUrl(screenSessionId, name)}
+                src={screen ? uiScreenUrl(screenSessionId, name) : diagramUrl(screenSessionId, name)}
+                // Diagrams are drawn at twice their size for sharpness: shown at their real size.
+                onLoad={diagram ? (e) => { const i = e.currentTarget; i.style.width = `${i.naturalWidth / 2}px`; } : undefined}
                 alt={alt ?? name}
                 loading="lazy"
                 className="not-prose max-w-full border border-slate-900/10 rounded-lg shadow-sm my-3"
@@ -345,6 +350,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
                 <Downloads links={[
                   { href: technicalSpecDownloadUrl(sessionId, 'md'), label: '.md' },
                   { href: technicalSpecDownloadUrl(sessionId, 'docx'), label: '.docx' },
+                  { href: technicalSpecDownloadUrl(sessionId, 'zip'), label: '.md + diagrams (.zip)' },
                 ]} />
               </span>
             </div>
@@ -359,7 +365,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
           ) : (
             <div className="p-6 max-h-[62vh] overflow-y-auto">
               {techSpecContent
-                ? <MarkdownWithDiagrams content={techSpecContent} />
+                ? <MarkdownWithDiagrams content={techSpecContent} screenSessionId={sessionId} />
                 : <p className="text-slate-600 text-sm italic">Technical specification not available.</p>
               }
             </div>

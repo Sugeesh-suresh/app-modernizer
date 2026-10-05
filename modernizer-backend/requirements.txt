@@ -23,6 +23,9 @@ tree-sitter-typescript>=0.23,<0.24
 # Stack discovery's optional UI screenshots (agents/shared/ui_screens.py) drive
 # headless Chromium; `python dev.py setup-ui` installs the browser.
 playwright>=1.40,<2
+# The architecture diagrams of the Technical Specification are drawn as PNG
+# (agents/shared/arch_diagrams.py); 10.1+ carries its own scalable font.
+pillow>=10.1
 # Required only when DATABASE_URL is set (SQLite or Postgres backed sessions):
 # pip install "google-adk[db]" aiosqlite   # SQLite
 # pip install "google-adk[db]" asyncpg     # Postgres

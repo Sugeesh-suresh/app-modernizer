@@ -222,6 +222,18 @@ ea_ui_writer_agent = LlmAgent(
     include_contents="none",
 )
 
+# The architecture diagrams, declared as JSON (nodes, edges, steps with their
+# sources); main._run_discovery_documents checks every element and draws them
+# (agents/shared/arch_diagrams.py).
+ea_diagrams_agent = LlmAgent(
+    name="ea_diagrams",
+    model=_MODEL,
+    description="Enterprise Architect: declares the high- and low-level architecture diagrams, every element cited.",
+    instruction=_writer_instruction("architecture-diagrams"),
+    output_key="ea_diagrams",
+    include_contents="none",
+)
+
 
 # One batch of business-rule candidates -> classified, with every rule extracted.
 # The skill's text is the instruction itself (no SkillToolset): a load_skill call

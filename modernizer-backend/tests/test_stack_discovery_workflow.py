@@ -15,6 +15,8 @@ import sys
 import json
 import re
 import zipfile
+
+import pytest
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -79,6 +81,12 @@ class _Harness:
             self.writers.append((step, request))
             labels = re.findall(r"^- (.+?) \(id `", request, re.M)
             first_ev = (re.findall(r"\[(EV-[^\]]+)\]", request) or [""])[0]
+            if step == "ea_diagrams":
+                return ('```json\n{"diagrams": [{"level": "high", "kind": "context", "title": "System context", '
+                        '"nodes": [{"id": "a", "label": "Main", "type": "system", "sources": ["' + first_ev + '"]}, '
+                        '{"id": "b", "label": "Java application", "type": "container", "sources": ["stack:java"]}], '
+                        '"edges": [{"from": "a", "to": "b", "label": "component", "sources": ["' + first_ev + '"]}]}]}'
+                        '\n```')
             if step == "po_brd":
                 return (f"## Executive Summary\nThe system serves orders ({first_ev}{cite}).\n"
                         "## Business Journeys\n" + "".join(f"- journey through {label} ({first_ev})\n" for label in labels))
@@ -205,7 +213,7 @@ class TestStackDiscoveryWorkflow:
 
         _run(sid, ["java", "wildfly"])
 
-        assert [w for w, _ in harness.writers] == ["po_brd", "ea_spec"]
+        assert [w for w, _ in harness.writers] == ["po_brd", "ea_spec", "ea_diagrams"]
         for writer in ("po_brd", "ea_spec"):
             request = harness.request(writer)
             assert "WildFly / JBoss (app server) (id `wildfly`" in request and "Java application (id `java`" in request
@@ -564,7 +572,7 @@ class TestRefineTargetsOneWriter:
         with TestClient(main.app) as client:
             client.post(f"/api/sessions/{sid}/refine-brd", json={"feedback": "x", "target": "technical_spec"})
 
-        assert [w for w, _ in harness.writers] == ["ea_spec"]
+        assert [w for w, _ in harness.writers] == ["ea_spec", "ea_diagrams"]
 
     def test_a_refine_without_a_target_reruns_both_writers(self, monkeypatch):
         harness, sid = self._reviewed(monkeypatch)
@@ -572,7 +580,7 @@ class TestRefineTargetsOneWriter:
         with TestClient(main.app) as client:
             client.post(f"/api/sessions/{sid}/refine-brd", json={"feedback": "x"})
 
-        assert sorted(w for w, _ in harness.writers) == ["ea_spec", "po_brd"] and harness.stacks == []
+        assert sorted(w for w, _ in harness.writers) == ["ea_diagrams", "ea_spec", "po_brd"] and harness.stacks == []
 
 
 class TestUiInteractionContracts:
@@ -634,3 +642,32 @@ class TestUiInteractionContracts:
         assert "### Abbreviated lists replaced in the technical documents" in evidence
         assert "## Endpoint Contracts (computed)" in spec and "### Web pages and templates (3)" in spec
         assert "Interface Overview" in h.request("ea_spec") or "do not re-list them" in h.request("ea_spec")
+
+
+class TestArchitectureDiagrams:
+    """The architect declares the diagrams; the pipeline checks, draws, places and serves them."""
+
+    def test_declared_diagrams_are_drawn_placed_and_served(self, monkeypatch):
+        pytest.importorskip("PIL")
+        _Harness(monkeypatch)
+        sid = _session(PRESCAN)
+
+        _run(sid, ["java"])
+
+        state = _state(sid)
+        spec = state["technical_spec"]
+        assert "## Architecture Diagrams" in spec and "### High-level design" in spec
+        assert "![HLD-1 — System context](diagrams/HLD-1.png)" in spec
+        assert spec.index("## Architecture Overview") < spec.index("## Architecture Diagrams")
+        assert json.loads(state["diagram_files_json"]) == ["HLD-1.png"]
+        with TestClient(main.app) as client:
+            image = client.get(f"/api/sessions/{sid}/diagrams/HLD-1.png")
+            assert image.status_code == 200 and image.content.startswith(b"\x89PNG")
+            assert client.get(f"/api/sessions/{sid}/diagrams/..%2Fsecret.png").status_code == 404
+            assert client.get(f"/api/sessions/{sid}/diagrams/LLD-9.png").status_code == 404
+            docx = client.get(f"/api/sessions/{sid}/download/technical-spec?format=docx")
+            with zipfile.ZipFile(io.BytesIO(docx.content)) as archive:
+                assert any(n.startswith("word/media/") for n in archive.namelist())
+            bundle = client.get(f"/api/sessions/{sid}/download/technical-spec?format=zip")
+            with zipfile.ZipFile(io.BytesIO(bundle.content)) as archive:
+                assert sorted(archive.namelist()) == ["diagrams/HLD-1.png", "technical-spec.md"]

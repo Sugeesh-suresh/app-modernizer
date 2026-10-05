@@ -584,7 +584,8 @@ def _without_ids(text: str) -> str:
 
 def report_markdown(withheld: list[tuple[str, str]], ledger: dict | None,
                     removed: list[tuple[str, str]], spec_removed: list[tuple[str, str]] | None = None,
-                    elisions: list[str] | None = None) -> str:
+                    elisions: list[str] | None = None,
+                    diagram_rejected: list[tuple[str, str]] | None = None) -> str:
     """The audit file's Grounding Checks: everything kept out of the business
     documents because it could not be traced to the repository, with the reason."""
     rules = (ledger or {}).get("rules") or []
@@ -603,6 +604,8 @@ def report_markdown(withheld: list[tuple[str, str]], ledger: dict | None,
                      f"{len(spec_removed):,}")
     if elisions is not None:
         lines.append(f"- **Abbreviated lists replaced in the technical documents:** {len(elisions):,}")
+    if diagram_rejected is not None:
+        lines.append(f"- **Architecture diagram elements left out:** {len(diagram_rejected):,}")
     if withheld:
         lines += ["", "### Evidence items withheld", "", "| Evidence | Reason |", "|---|---|"]
         lines += [f"| `{i}` | {_cell(reason)} |" for i, reason in withheld]
@@ -619,6 +622,11 @@ def report_markdown(withheld: list[tuple[str, str]], ledger: dict | None,
     if removed:
         lines += ["", "### BRD statements removed", "", "| Statement | Reason |", "|---|---|"]
         lines += [f"| {_cell(s)} | {_cell(reason)} |" for s, reason in removed]
+    if diagram_rejected:
+        lines += ["", "### Architecture diagram elements left out", "",
+                  "_Declared by the Enterprise Architect agent but not traceable to what they cite._", "",
+                  "| Element | Reason |", "|---|---|"]
+        lines += [f"| {_cell(what)} | {_cell(why)} |" for what, why in diagram_rejected]
     if elisions:
         lines += ["", "### Abbreviated lists replaced in the technical documents", "",
                   "_An agent shortened a list instead of giving every item; each was replaced with a pointer to the "

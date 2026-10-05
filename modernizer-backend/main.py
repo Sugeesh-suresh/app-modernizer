@@ -48,7 +48,8 @@ from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11 import preflight as java11_preflight
-from agents.shared import (config_matrix, current_state, docx_export, evidence_pack, grounding, interfaces,
+from agents.shared import (arch_diagrams, config_matrix, current_state, docx_export, evidence_pack, grounding,
+                           interfaces,
                            existing_tests, migration_inventory, plain_language, repo_fingerprint, rule_candidates,
                            rules_ledger, ui_contracts, ui_screens)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
@@ -1862,6 +1863,43 @@ def _load_ledger(state: dict) -> dict | None:
         return None
 
 
+_BUILD_FILES = ("pom.xml", "build.gradle", "build.gradle.kts", "package.json", "setup.py", "pyproject.toml")
+
+
+def _module_names(workspace_dir: str) -> list[str]:
+    """The repository's modules: every folder with a build file (the root by the repository's name)."""
+    root = Path(workspace_dir)
+    names: set[str] = set()
+    if root.is_dir():
+        for name in _BUILD_FILES:
+            for path in root.rglob(name):
+                rel = path.relative_to(root)
+                if dependency_graph.EXCLUDED_DIRS & set(rel.parts):
+                    continue
+                names.add(rel.parent.name if rel.parent.parts else root.name)
+    return sorted(names)
+
+
+def _diagram_facts(stacks: list[str], endpoints: list[dict], modules: list[str], config_md: str,
+                   ui_result: dict, computed: str) -> arch_diagrams.Facts:
+    keys = _re.findall(r"^\|\s*`([^`]+)`", config_md or "", _re.M)
+    return arch_diagrams.Facts.build(stacks, endpoints, modules, keys, ui_contracts.ids(ui_result), computed)
+
+
+def _diagram_refs(facts: arch_diagrams.Facts) -> str:
+    """The computed-fact references the diagrams agent may cite, grouped."""
+    groups: dict[str, list[str]] = {}
+    for ref in sorted(facts.refs):
+        kind = "ui" if ref.startswith("UI-") else ref.split(":", 1)[0]
+        groups.setdefault(kind, []).append(ref)
+    lines = ["## Computed facts you may cite", ""]
+    for kind in ("stack", "module", "endpoint", "handler", "config", "ui"):
+        if groups.get(kind):
+            lines.append(f"**{kind}:** " + ", ".join(f"`{r}`" for r in groups[kind]))
+            lines.append("")
+    return "\n".join(lines)
+
+
 async def _write_ui_contracts(session_id: str, ui_result: dict, packs: list, feedback: str | None,
                               keep: frozenset = frozenset()) -> dict:
     """The UI Interaction Contracts, a batch of screens at a time: each batch gets its
@@ -2015,6 +2053,15 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         test_files = json.loads(state["test_files_json"])
     test_files_md = existing_tests.to_markdown(test_files)
     ea_ui = json.loads(state.get("ea_ui_json") or "{}")
+    ea_diagrams = state.get("ea_diagrams", "")
+    if not state.get("modules_json"):
+        modules = await asyncio.to_thread(_module_names, workspace_dir)
+        await _update_state(session_id, {"modules_json": json.dumps(modules)})
+    else:
+        modules = json.loads(state["modules_json"])
+    facts = _diagram_facts([sid for sid, _, _ in packs], endpoints_jobs.get("endpoints", []), modules, config_md,
+                           ui_result, "\n".join([state.get("stack_inventory_markdown", ""), inventory_md,
+                                                endpoint_contracts_md, contracts_md, config_md or ""]))
 
     po_brd, ea_spec, ea_tests = state.get("po_brd", ""), state.get("ea_spec", ""), state.get("ea_tests", "")
     ledger = _load_ledger(state)
@@ -2059,6 +2106,22 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
                                   ea_spec + "\n\n" + ea_tests)
             if ui_result.get("screens"):
                 jobs["ui"] = _write_ui_contracts(session_id, ui_result, packs, feedback, keep)
+            await _push(session_id, "re-stream",
+                        content="\n\n### Enterprise Architect agent: architecture diagrams\n")
+            diagram_facts = ("## Repository Facts (computed by the pipeline)\n"
+                             + _for_writer(state.get("stack_inventory_markdown", ""), 40000)
+                             + _for_writer(inventory_md, 40000) + _for_writer(contracts_md, 20000)
+                             + _for_writer(config_md, 15000) + _for_writer(_diagram_refs(facts), 40000))
+
+            async def diagrams_job() -> str:
+                text = await writer("ea_diagrams", evidence_pack.EA_SECTIONS, diagram_facts, ea_diagrams)
+                raw, problem = arch_diagrams.parse(text)
+                if problem or not raw:                        # once more, saying what was wrong
+                    text = await writer("ea_diagrams", evidence_pack.EA_SECTIONS, diagram_facts
+                                        + f"## Your previous answer could not be used\n{problem or 'it declared no diagrams'}"
+                                        "; answer with the JSON object only.\n\n", ea_diagrams)
+                return text
+            jobs["diagrams"] = diagrams_job()
         results = dict(zip(jobs, await asyncio.gather(*jobs.values())))
         if "brd" in results:
             po_brd = _current_state_only(results["brd"], "BRD (Product Owner)", keep)
@@ -2068,8 +2131,10 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
             ea_tests = _current_state_only(tests, "Test Inventory (Enterprise Architect)", keep)
         if "ui" in results:
             ea_ui = results["ui"]
+        if "diagrams" in results:
+            ea_diagrams = _current_state_only(results["diagrams"], "Architecture diagrams", keep)
         await _update_state(session_id, {"po_brd": po_brd, "ea_spec": ea_spec, "ea_tests": ea_tests,
-                                         "ea_ui_json": json.dumps(ea_ui)})
+                                         "ea_ui_json": json.dumps(ea_ui), "ea_diagrams": ea_diagrams})
 
     # Assembly. The BRD is business language only: the Product Owner's document
     # with its evidence citations and any code reference taken out (moved to the
@@ -2110,6 +2175,25 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         if spec_untraced:
             print(f"[discovery] grounding: removed {len(spec_untraced)} UI contract statement(s) not traceable "
                   "to the code", flush=True)
+    # The architecture diagrams: every element checked against what it cites, then drawn.
+    raw_diagrams, diagram_problem = arch_diagrams.parse(ea_diagrams)
+    diagrams, diagram_rejected = arch_diagrams.validate(raw_diagrams, evidence_text, facts)
+    if ea_diagrams and diagram_problem:
+        diagram_rejected.append(("the architecture diagrams", diagram_problem))
+    diagrams_dir = state.get("diagrams_dir") or tempfile.mkdtemp(prefix="modernizer-diagrams-")
+    for old in Path(diagrams_dir).glob("*.png"):
+        old.unlink()
+    diagram_files = await asyncio.to_thread(arch_diagrams.render, diagrams, diagrams_dir)
+    await _update_state(session_id, {"diagrams_dir": diagrams_dir, "diagram_files_json": json.dumps(diagram_files)})
+    diagrams_md = arch_diagrams.to_markdown(diagrams)
+    if ea_spec and diagrams_md:
+        ea_spec = plain_language.place_section(ea_spec, diagrams_md, arch_diagrams.HEADING,
+                                               before=("## Interface Overview", ui_contracts.SECTION_HEADING,
+                                                       "## Data Architecture", "## Integrations", "## Security",
+                                                       "## Runtime", "## Per-Stack Detail",
+                                                       "## Discovery Limitations"))
+    if diagram_rejected:
+        print(f"[discovery] grounding: left {len(diagram_rejected)} diagram element(s) out", flush=True)
     # An abbreviated list ("[...27 more web pages]") points at the complete computed list instead.
     ea_spec, cut = grounding.replace_elisions(ea_spec, _ELIDED_SPEC)
     elisions += cut
@@ -2142,7 +2226,8 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     evidence_md = evidence_pack.evidence_markdown(
         _discovery_title(state), inventory, citations, packs, state.get("rules_markdown", ""), check_md,
         state.get("ingestion_warning", ""),
-        grounding.report_markdown(withheld, ledger, untraced, spec_untraced if contracts_md else None, elisions))
+        grounding.report_markdown(withheld, ledger, untraced, spec_untraced if contracts_md else None, elisions,
+                                  diagram_rejected if ea_diagrams else None))
     evidence_file = evidence_dir / EVIDENCE_FILE
     evidence_file.write_text(evidence_md, encoding="utf-8")
 
@@ -3201,8 +3286,9 @@ async def download_evidence(session_id: str, format: str = "md"):
 @app.get("/api/sessions/{session_id}/download/technical-spec")
 async def download_technical_spec(session_id: str, format: str = "md"):
     """The technical documentation — the Technical Specification and the Existing
-    Test Inventory — as Markdown (default) or Word (`?format=docx`)."""
-    fmt = _download_format(format, ("md", "docx"))
+    Test Inventory — as Markdown (default), Word with the architecture diagrams
+    embedded (`?format=docx`), or the Markdown with diagrams/*.png (`?format=zip`)."""
+    fmt = _download_format(format, ("md", "docx", "zip"))
     state = await _get_state(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found.")
@@ -3213,8 +3299,18 @@ async def download_technical_spec(session_id: str, format: str = "md"):
                 ("Existing Test Inventory", tests.strip() or "_Not produced for this run._")]
     name = f"technical-spec-{session_id[:8]}"
     if fmt == "docx":
-        return await _docx_response(name, f"Technical Documentation — {_discovery_title(state)}", sections)
-    return _markdown_response("\n\n---\n\n".join(f"# {h}\n\n{body}" for h, body in sections), name)
+        return await _docx_response(name, f"Technical Documentation — {_discovery_title(state)}", sections,
+                                    _diagram_images(state))
+    document = "\n\n---\n\n".join(f"# {h}\n\n{body}" for h, body in sections)
+    if fmt == "zip":
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("technical-spec.md", document)
+            for published, path in _diagram_images(state).items():
+                archive.write(path, published)
+        return Response(content=buffer.getvalue(), media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{name}.zip"'})
+    return _markdown_response(document, name)
 
 
 @app.get("/api/sessions/{session_id}/download/business-rules")
@@ -3256,6 +3352,34 @@ async def ui_screen_image(session_id: str, name: str):
         raise HTTPException(status_code=404, detail="No such screen.")
     return Response(content=path.read_bytes(), media_type="image/png",
                     headers={"Cache-Control": "private, max-age=3600"})
+
+
+_DIAGRAM_FILE = _re.compile(r"^(?:HLD|LLD)-\d{1,3}\.png$")
+
+
+def _diagram_files(state: dict) -> list[str]:
+    """The architecture diagrams this session's specification shows — the only files the route serves."""
+    return [n for n in json.loads(state.get("diagram_files_json") or "[]") if _DIAGRAM_FILE.match(n)]
+
+
+def _diagram_images(state: dict) -> dict[str, Path]:
+    """{"diagrams/HLD-1.png": file} for the Word and zip downloads."""
+    folder = Path(state.get("diagrams_dir", "") or "/nonexistent")
+    return {f"diagrams/{n}": folder / n for n in _diagram_files(state) if (folder / n).is_file()}
+
+
+@app.get("/api/sessions/{session_id}/diagrams/{name}")
+async def architecture_diagram_image(session_id: str, name: str):
+    state = await _get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    if name not in _diagram_files(state):
+        raise HTTPException(status_code=404, detail="No such diagram.")
+    path = Path(state.get("diagrams_dir", "")) / name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="No such diagram.")
+    return Response(content=path.read_bytes(), media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=60"})
 
 
 def _screen_images(state: dict) -> dict[str, Path]:
@@ -3319,7 +3443,7 @@ async def download_reverse_engineering(session_id: str, format: str = "md"):
         if state.get("ui_screens"):
             sections.append(("UI Screens", state["ui_screens"]))
         return await _docx_response(f"reverse-engineering-{session_id[:8]}", f"Reverse Engineering — {title}",
-                                    sections, _screen_images(state))
+                                    sections, {**_screen_images(state), **_diagram_images(state)})
     parts = [f"# Reverse Engineering — {title}", ""]
     for heading, body in (
         ("Business Requirements", brd),
