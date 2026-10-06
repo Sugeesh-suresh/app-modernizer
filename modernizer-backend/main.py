@@ -2303,14 +2303,20 @@ async def _run_ui_screens(session_id: str) -> None:
     await _push(session_id, "re-stream", content="\n\n### UI screens: rendering pages with sample data\n")
     try:
         inventory = await asyncio.to_thread(interfaces.scan, workspace_dir)
-        manifest = await asyncio.wait_for(ui_screens.capture(workspace_dir, inventory, out_dir),
-                                          timeout=config.UI_SCREENSHOTS_TIMEOUT_S + 60)
+        # On its own thread and event loop: the renderer and the browser are separate
+        # programs, and the server's loop may not be able to start them (Windows + --reload).
+        manifest = await asyncio.wait_for(
+            asyncio.to_thread(ui_screens.capture_in_own_loop, workspace_dir, inventory, out_dir),
+            timeout=config.UI_SCREENSHOTS_TIMEOUT_S + 60)
     except asyncio.CancelledError:
         raise
     except Exception as exc:                                  # noqa: BLE001 — reported in the document
-        detail = str(exc).replace(workspace_dir.rstrip("/") + "/", "")[:300] if workspace_dir else str(exc)[:300]
-        manifest = {"screens": [], "not_rendered": [], "pages": 0,
-                    "notes": [f"Screenshots could not be produced: {type(exc).__name__}: {detail}"]}
+        traceback.print_exc()
+        detail = ui_screens.describe(exc)
+        if workspace_dir:
+            detail = detail.replace(workspace_dir.rstrip("/") + "/", "")
+        manifest = {"screens": [], "not_rendered": [], "pages": 0, "failed": True,
+                    "notes": [f"Screenshots could not be produced: {detail[:300]}"]}
     await _update_state(session_id, {"ui_screens_json": json.dumps(manifest)})
     await _push(session_id, "re-stream",
                 content=f"\nUI screens: {len(manifest['screens'])} screen(s), "

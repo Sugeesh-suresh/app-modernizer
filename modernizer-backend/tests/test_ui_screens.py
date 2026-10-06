@@ -378,3 +378,61 @@ def test_an_object_read_only_in_a_condition_still_gets_sample_data(tmp_path):
                                     '<p th:if="${error}">x</p></html>')
     model = mock.base_model({}, mock.read_template(root, "dash"), {})
     assert model == {"job": {"failedCount": 1}}            # the object is there; the bare flag stays unset
+
+
+# ── an event loop that cannot start other programs (Windows, uvicorn --reload) ──
+
+class _NoSubprocessLoop(asyncio.SelectorEventLoop):
+    """What uvicorn gives the server on Windows with --reload: a selector loop, which
+    raises a bare NotImplementedError when asked to start a program."""
+    async def _make_subprocess_transport(self, *args, **kwargs):
+        raise NotImplementedError
+
+
+def _on_loop(loop, coro):
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+@pytest.mark.skipif(not _browser_and_renderer(), reason="Chromium, Java 17+ or the renderer not available")
+def test_capture_runs_on_its_own_loop_when_the_servers_loop_cannot_start_programs(tmp_path):
+    ws = _app(tmp_path / "repo")
+    inv = interfaces.scan(ws)
+    manifest = _on_loop(_NoSubprocessLoop(), asyncio.to_thread(ui_screens.capture_in_own_loop, ws, inv,
+                                                               str(tmp_path / "out")))
+    assert len(manifest["screens"]) == 12 and {s["mode"] for s in manifest["screens"]} == {"rendered"}
+
+
+@pytest.mark.skipif(not _browser_and_renderer(), reason="Chromium, Java 17+ or the renderer not available")
+def test_on_a_loop_that_cannot_start_programs_every_page_is_listed_with_the_step_that_failed(tmp_path):
+    ws = _app(tmp_path / "repo")
+    manifest = _on_loop(_NoSubprocessLoop(), ui_screens.capture(ws, interfaces.scan(ws), str(tmp_path / "out")))
+    assert manifest["screens"] == [] and manifest["pages"] == 4            # the pages were found
+    reasons = {n["reason"] for n in manifest["not_rendered"] if n["template"] != "legacy/page"}
+    assert reasons == {"the browser (Playwright Chromium) could not be started: NotImplementedError: this event "
+                       "loop cannot start other programs — on Windows the server is running on a selector event "
+                       "loop (uvicorn --reload)"}
+    md = ui_screens.to_markdown(manifest)
+    assert "No Thymeleaf pages were found" not in md and "could not be started" in md
+
+
+def test_the_renderer_that_cannot_be_started_leaves_each_page_a_reason(tmp_path, monkeypatch):
+    monkeypatch.setattr(ui_screens, "tools", lambda refresh=False: {"java": "java"})
+    spec = {"jobs": [{"id": "SCR-0001"}, {"id": "SCR-0002"}]}
+    results = _on_loop(_NoSubprocessLoop(), ui_screens._run_renderer(tmp_path, 0, spec, 10))
+    assert {r["error"] for r in results.values()} == {
+        "the Thymeleaf renderer (Java) could not be started: NotImplementedError: this event loop cannot start "
+        "other programs — on Windows the server is running on a selector event loop (uvicorn --reload)"}
+    assert all(r["ok"] is False for r in results.values())
+
+
+def test_a_failed_stage_does_not_claim_there_are_no_pages():
+    md = ui_screens.to_markdown({"screens": [], "not_rendered": [], "pages": 0, "failed": True,
+                                 "notes": ["Screenshots could not be produced: RuntimeError: boom"]})
+    assert "No Thymeleaf pages were found" not in md and "0 screens of 0 pages" not in md
+    assert "> Screenshots could not be produced: RuntimeError: boom" in md
+    assert "stopped before it checked the repository's pages" in md
+    assert "No Thymeleaf pages were found" in ui_screens.to_markdown({"screens": [], "not_rendered": [], "pages": 0})
+    assert ui_screens.describe(ValueError("x")) == "ValueError: x" and ui_screens.describe(KeyError()) == "KeyError"

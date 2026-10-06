@@ -304,10 +304,14 @@ async def _run_renderer(work: Path, k: int, spec: dict, timeout: float) -> dict[
     jobs_file.write_text(json.dumps(spec), encoding="utf-8")
     # No inherited environment: the session's credentials never reach the renderer.
     env = {"PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8", "HOME": str(work)}
-    proc = await asyncio.create_subprocess_exec(
-        status["java"], "-Xmx512m", "-Duser.timezone=UTC", "-Duser.language=en", "-Duser.country=US",
-        "-Djava.awt.headless=true", "-jar", config.UI_THYMELEAF_RENDERER, str(jobs_file), str(results_file),
-        cwd=str(work), env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            status["java"], "-Xmx512m", "-Duser.timezone=UTC", "-Duser.language=en", "-Duser.country=US",
+            "-Djava.awt.headless=true", "-jar", config.UI_THYMELEAF_RENDERER, str(jobs_file), str(results_file),
+            cwd=str(work), env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    except Exception as exc:                              # noqa: BLE001 — each page falls back to a static preview
+        reason = f"the Thymeleaf renderer (Java) could not be started: {describe(exc)}"
+        return {j["id"]: {"ok": False, "error": reason} for j in spec["jobs"]}
     try:
         _, err = await asyncio.wait_for(proc.communicate(), timeout=max(5.0, timeout))
     except asyncio.TimeoutError:
@@ -374,6 +378,30 @@ async def _screenshot(pages: list[tuple[str, Path, list[Path], Path]], deadline:
         finally:
             await browser.close()
     return errors
+
+
+def describe(exc: BaseException) -> str:
+    """An exception as a reader can use it, even one raised without a message."""
+    text = str(exc).strip()
+    if isinstance(exc, NotImplementedError) and not text:
+        text = ("this event loop cannot start other programs — on Windows the server is running on a "
+                "selector event loop (uvicorn --reload)")
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
+def capture_in_own_loop(workspace_dir: str, inventory: dict, out_dir: str, **kwargs) -> dict:
+    """`capture` on a fresh event loop of its own, for a worker thread. The renderer and
+    the browser are separate programs, and the server's loop may not be able to start
+    them: on Windows, uvicorn with --reload runs on a selector loop, which cannot. A
+    proactor loop (Windows) or the platform's default loop always can."""
+    loop = asyncio.ProactorEventLoop() if os.name == "nt" else asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(capture(workspace_dir, inventory, out_dir, **kwargs))
+    finally:
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        finally:
+            loop.close()
 
 
 async def capture(workspace_dir: str, inventory: dict, out_dir: str,
@@ -453,10 +481,13 @@ async def capture(workspace_dir: str, inventory: dict, out_dir: str,
                 "endpoint": page.endpoint, "state": st.name, "description": st.description,
                 "model": st.model if mode == "rendered" else {},
             })
+        errors = {}
         if shots:
-            errors = await _screenshot(shots, deadline)
-        else:
-            errors = {}
+            try:
+                errors = await _screenshot(shots, deadline)
+            except Exception as exc:                      # noqa: BLE001 — every page is listed with the reason
+                reason = f"the browser (Playwright Chromium) could not be started: {describe(exc)}"
+                errors = {sid: reason for sid, *_ in shots}
     kept = []
     for screen in manifest["screens"]:
         if screen["id"] in errors or not (out / screen["image"]).is_file():
@@ -528,6 +559,12 @@ def to_markdown(manifest: dict, ledger: dict | None = None, image_prefix: str = 
              "_Rendered by the pipeline from the repository's own templates with generated sample data — not "
              "screenshots of a running system. Layout, labels, conditions and role-based visibility come from the "
              "templates; every value shown is made up. Scripts are not run._", ""]
+    if manifest.get("failed"):
+        for note in manifest.get("notes", []):
+            lines += [f"> {note}", ""]
+        lines.append("The UI Screens stage stopped before it checked the repository's pages, so this document says "
+                     "nothing about which pages exist. Fix the cause above and run the reverse engineering again.")
+        return "\n".join(lines).rstrip() + "\n"
     rendered = sum(1 for s in screens if s["mode"] == "rendered")
     previews = len(screens) - rendered
     lines.append(f"{len(screens)} screen{'s' if len(screens) != 1 else ''} of {manifest.get('pages', 0)} "
