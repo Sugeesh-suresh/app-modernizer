@@ -757,6 +757,13 @@ class _Script:
                     self.functions.setdefault(_text(node.child_by_field_name("key"), src).strip("'\""), []).append(value)
             elif node.type == "method_definition":
                 self.functions.setdefault(_text(node.child_by_field_name("name"), src), []).append(node)
+            elif node.type == "assignment_expression":       # App.search = function () { … }
+                left, value = node.child_by_field_name("left"), node.child_by_field_name("right")
+                if left is not None and value is not None and value.type in (
+                        "arrow_function", "function_expression", "function"):
+                    prop = left.child_by_field_name("property") if left.type == "member_expression" else left
+                    if prop is not None:
+                        self.functions.setdefault(_text(prop, src), []).append(value)
         for node in nodes:
             if node.type == "call_expression":
                 self.call_nodes.append(node)

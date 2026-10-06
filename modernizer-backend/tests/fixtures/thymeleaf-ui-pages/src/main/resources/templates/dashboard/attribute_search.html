@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div class="dropdown">
+  <button class="dropbtn">Links...</button>
+  <div class="dropdown-content"><a href="#top">Top</a></div>
+</div>
+<input id="attrQuery" type="text" placeholder="Attribute name"/>
+<button id="searchButton" type="button">Search</button>
+<button id="clearSearchButton" type="button">Clear Search</button>
+<label for="showValues">Show Values</label>
+<input id="showValues" type="checkbox" value="0"/>
+<div id="attributeGrid"></div>
+<script th:src="@{/selfservicetool/handsontable-chosen-editor.js}"></script>
+<script th:src="@{/dashboard/attribute_search.js}"></script>
+</body>
+</html>
