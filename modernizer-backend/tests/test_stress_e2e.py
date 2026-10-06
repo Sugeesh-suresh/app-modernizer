@@ -115,8 +115,13 @@ class Scripted(BaseLlm):
             # Answer every candidate in the batch, citing each one's first line.
             found = re.findall(r"### (C\d{5}) .*?\nFile: `[^`]+` lines (\d+)-", system)
             self.rule_batches.append([cid for cid, _ in found])
+            # Like a real answer, each rule names the decision points it covers.
+            blocks = dict(re.findall(r"### (C\d{5}) — (.*?)(?=\n### C\d{5} — |\Z)", system, re.S))
             results = [{"candidate": cid, "rules": [{"statement": f"Rule found in candidate {cid} applies.", "type": "validation",
-                                                     "lines": start, "basis": "explicit"}]} for cid, start in found]
+                                                     "lines": start, "basis": "explicit",
+                                                     "decision_points": re.findall(r"^- (DP-\d{5}) ", blocks.get(cid, ""),
+                                                                                   re.M)}]}
+                       for cid, start in found]
             yield self._reply("```json\n" + json.dumps({"results": results}) + "\n```")
         elif skill == "stack-discovery-unit":
             listed = re.findall(r"- `([^`]+)`", system)

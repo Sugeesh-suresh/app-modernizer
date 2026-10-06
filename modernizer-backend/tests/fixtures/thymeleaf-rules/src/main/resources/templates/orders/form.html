@@ -1,0 +1,7 @@
+<html xmlns:th="http://www.thymeleaf.org">
+<form th:action="@{/orders}" th:object="${orderForm}" method="post">
+  <input th:field="*{quantity}" />
+  <span th:if="${#fields.hasErrors('quantity')}" th:errors="*{quantity}">error</span>
+  <input th:field="*{email}" />
+</form>
+</html>

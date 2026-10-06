@@ -109,8 +109,10 @@ def test_rules_in_lambdas_access_rules_schedules_and_templates_are_candidates(tm
     assert by[("scheduled", "nightlyStandardization")].signals == ['@Scheduled(cron = "0 0 2 * * *")']
     assert ("method", "list") not in by                                     # no decision, no annotation
     view = by[("view-logic", "index.html")]
-    assert view.language == "Thymeleaf" and view.signals == ["conditional rendering ×3"]
-    assert ("view-logic", "search.html") not in by                          # a template with no conditions
+    assert view.language == "Thymeleaf" and view.signals == ["visibility ×1", "access rule ×1", "ternary ×1"]
+    assert [d["kind"] for d in view.decisions] == ["visibility", "access rule", "ternary"]
+    # A list is a rendering decision too (what the page shows for each row, and when there is none).
+    assert [d["kind"] for d in by[("view-logic", "search.html")].decisions] == ["list"]
     assert ("method", "validateUpload") in by and not any("vendor/" in c.path for c in scan.candidates)
     assert scan.files_by_language["Thymeleaf"] == {"files": 2, "parser": "pattern"}   # plain.html is not a template
 

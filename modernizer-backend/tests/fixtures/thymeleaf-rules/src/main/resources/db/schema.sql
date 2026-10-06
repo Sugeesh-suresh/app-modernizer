@@ -1,0 +1,1 @@
+CREATE TABLE orders (id BIGINT PRIMARY KEY, status VARCHAR(20), total DECIMAL(10,2));

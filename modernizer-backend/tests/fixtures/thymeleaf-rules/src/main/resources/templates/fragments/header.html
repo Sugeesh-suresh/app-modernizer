@@ -1,0 +1,6 @@
+<html xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<header th:fragment="header">
+  <a sec:authorize="hasRole('ADMIN')" th:href="@{/admin}">Admin</a>
+  <span th:if="${cartCount > 0}" th:text="${cartCount}">0</span>
+</header>
+</html>

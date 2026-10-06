@@ -101,8 +101,13 @@ def test_candidates_are_found_by_parsing_every_supported_language(tmp_path):
 def test_candidate_source_is_numbered_and_bounded(tmp_path):
     body = "\n".join(f"        if (x > {i}) y();" for i in range(30))
     _write(tmp_path, {"A.java": f"class A {{\n    void big(int x) {{\n{body}\n    }}\n}}\n"})
-    [c] = rc.scan(str(tmp_path), max_lines=10).candidates
-    assert c.truncated and c.source.splitlines()[0].startswith(" 2| ") and len(c.source.splitlines()) == 10
+    parts = rc.scan(str(tmp_path), max_lines=10).candidates
+    # Too long for one candidate: split into parts, every line analysed, none truncated.
+    assert [(c.start, c.end) for c in parts] == [(2, 11), (12, 21), (22, 31), (32, 33)]
+    assert not any(c.truncated for c in parts) and parts[0].source.splitlines()[0].startswith(" 2| ")
+    assert [l.strip() for l in parts[1].source.splitlines()[:2]] == ["2|     void big(int x) {", "…"]  # the signature
+    assert sum(len(c.decisions) for c in parts) == 30                                     # every if, in its part
+    assert [c.symbol for c in parts][-1] == "A.big (part 4 of 4)"
 
 
 def test_a_file_that_does_not_parse_is_reported_not_fatal(tmp_path):

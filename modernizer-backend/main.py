@@ -48,8 +48,8 @@ from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
 from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11 import preflight as java11_preflight
-from agents.shared import (arch_diagrams, config_matrix, current_state, docx_export, evidence_pack, grounding,
-                           interfaces,
+from agents.shared import (arch_diagrams, config_matrix, current_state, docx_export, evidence_pack, external_rules,
+                           grounding, interfaces,
                            existing_tests, migration_inventory, plain_language, repo_fingerprint, rule_candidates,
                            rules_ledger, ui_contracts, ui_screens)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
@@ -2602,6 +2602,20 @@ async def _run_rules_extraction(session_id: str) -> None:
                 if not missing:
                     break
             rules_ledger.mark_unclassified(missing, ledger, reason)
+            # Every decision point must be named by a rule or dismissed: what is left goes back once.
+            open_points = rules_ledger.unaccounted(batch, ledger)
+            if open_points:
+                again = [c for c in batch if c.id in open_points]
+                try:
+                    raw = await _run_isolated(
+                        "rules", _STACK_DISCOVERY,
+                        {"workspace_dir": workspace_dir,
+                         "rule_batch": rules_ledger.render_batch(again, account=open_points)},
+                        "Account for every listed decision point.", "rule_batch_result",
+                    )
+                    rules_ledger.apply_answer(again, rules_ledger.parse_answer(raw), ledger, repo_text=repo_text)
+                except Exception:                              # noqa: BLE001 — what is left is reported
+                    traceback.print_exc()
             # Rules worded in code go back once, with their wording, to be restated
             # in plain English; finalize() rewords whatever is still technical.
             reword = rules_ledger.needs_rewording(batch, ledger)
@@ -2629,7 +2643,12 @@ async def _run_rules_extraction(session_id: str) -> None:
         "parser_error": scanned.tree_sitter_error,
     })
     markdown = (rules_ledger.catalog_markdown(ledger, config.RULES_CATALOG_MAX_IN_DOCUMENT)
-                + "\n\n" + rules_ledger.coverage_markdown(cov))
+                + "\n\n" + rules_ledger.coverage_markdown(cov)
+                + "\n\n" + rules_ledger.decisions_markdown(ledger))
+    try:
+        markdown += "\n\n" + external_rules.to_markdown(external_rules.scan(workspace_dir))
+    except Exception:
+        traceback.print_exc()
     print(f"[rules] {cov['candidates']} candidates, {cov['rules']} rules, statuses {cov['statuses']}", flush=True)
     # The ledger lists every candidate — tens of MB on a large repository — so it
     # lives in a file rather than session state, which is copied on every read.
@@ -3374,6 +3393,23 @@ async def download_business_rules(session_id: str):
         content=rules_ledger.to_csv(json.loads(path.read_text(encoding="utf-8"))),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="business-rules-{session_id[:8]}.csv"'},
+    )
+
+
+@app.get("/api/sessions/{session_id}/download/decision-points")
+async def download_decision_points(session_id: str):
+    """Every decision point the parser found in the code and how it was accounted for:
+    the business rules it implements, or why it was dismissed, or that it was not."""
+    state = await _get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    path = Path(state.get("rules_ledger_path", "") or "/nonexistent")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="No business-rules ledger for this run.")
+    return Response(
+        content=rules_ledger.decisions_csv(json.loads(path.read_text(encoding="utf-8"))),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="decision-points-{session_id[:8]}.csv"'},
     )
 
 

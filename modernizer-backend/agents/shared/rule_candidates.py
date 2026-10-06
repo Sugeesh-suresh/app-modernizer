@@ -22,8 +22,30 @@ Candidate kinds:
 - `constants`   a class's literal constants (limits, thresholds, codes)
 - `sql-routine` a stored procedure/function/package body/trigger
 - `sql-constraint` a table's CHECK constraints
-- `view-logic`  a JSP's conditional rendering (<c:if>/<c:when>/scriptlet branches)
+- `view-logic`  a template's rendering decisions: Thymeleaf `th:if`/`th:unless`/
+                `th:switch`/`th:case`, lists (`th:each`), conditional styling and
+                state (`th:classappend`, `th:disabled`…), formatting (`#numbers`,
+                `#dates`, `#temporals`), forms (`th:field`, `th:errors`), calls into
+                server beans (`${@bean.method(..)}`), `sec:authorize`; JSP
+                `<c:if>`/`<c:when>`/scriptlet branches
+- `validator`   a custom validator (`ConstraintValidator.isValid`, Spring
+                `Validator.validate`, `rejectValue`)
+- `global-model` data or settings every page gets: `@ModelAttribute` and
+                `@InitBinder` methods (application-wide in a `@ControllerAdvice`)
+- `interceptor` a request interceptor or filter (`HandlerInterceptor.preHandle`…)
+- `error-mapping` an `@ExceptionHandler`: which failure the user sees and how
+- `session-state` state the server keeps between requests: session attributes,
+                `@SessionAttributes`, flash attributes
 - `rules-engine` a Drools rule
+
+Every candidate carries its **decision points** — each condition, branch,
+comparison, access rule, validation annotation, rendering decision, session or
+model write, with its line — numbered `DP-00001`… across the scan. The ledger
+requires the extraction agent to account for every one: mapped to a rule, or
+dismissed as technical with a reason. A candidate with no finer structure has one
+decision point, itself. A candidate longer than the per-candidate limit is split
+into parts, never truncated. Inline `<script>` blocks of templates are parsed as
+JavaScript.
 Methods whose only decisions are null checks, and accessors/equals/hashCode/
 toString, are classified `auto-technical` here and never sent to the model.
 """
@@ -82,10 +104,17 @@ class Candidate:
     area: str = ""
     status: str = "pending"    # pending | auto-technical
     reason: str = ""
+    #: [{"id": "DP-00001", "line": n, "kind": "if", "text": the line}] — every decision the candidate makes
+    decisions: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {k: getattr(self, k) for k in ("id", "path", "start", "end", "kind", "symbol", "language",
-                                              "parser", "signals", "truncated", "area", "status", "reason")}
+                                              "parser", "signals", "truncated", "area", "status", "reason",
+                                              "decisions")}
+
+
+def _dp(line: int, kind: str, text: str) -> dict:
+    return {"id": "", "line": line, "kind": kind, "text": re.sub(r"\s+", " ", text or "").strip()[:200]}
 
 
 @dataclass
@@ -211,6 +240,92 @@ def _decision_signals(body, src: bytes, nested: tuple, lang: str) -> tuple[list[
     return signals, null_only
 
 
+def _decision_points(body, src: bytes, nested: tuple, lang: str) -> list[dict]:
+    """Every decision in a body, with its line: each `if` (its condition), `case`,
+    ternary, comparison outside an `if`/ternary condition, access-rule call, and SQL
+    filter literal."""
+    points = []
+    conditions: list[tuple[int, int]] = []
+    for n in _walk(body, nested):
+        t = n.type
+        if t == "if_statement":
+            cond = n.child_by_field_name("condition")
+            if cond is not None:
+                conditions.append((cond.start_byte, cond.end_byte))
+            points.append(_dp(n.start_point[0] + 1, "if", "if " + (_text(cond, src) if cond is not None else "")))
+        elif t in ("switch_label", "switch_case", "switch_rule"):
+            points.append(_dp(n.start_point[0] + 1, "case", _text(n, src).split("\n")[0]))
+        elif t == "ternary_expression":
+            cond = n.child_by_field_name("condition")
+            if cond is not None:
+                conditions.append((cond.start_byte, cond.end_byte))
+            points.append(_dp(n.start_point[0] + 1, "ternary", _text(n, src).split("\n")[0]))
+        elif t == "method_invocation" and lang == "java":
+            name = n.child_by_field_name("name")
+            if name is not None and _text(name, src) in _AUTHZ_CALLS:
+                points.append(_dp(n.start_point[0] + 1, "access rule", _text(n, src).split("\n")[0]))
+        elif lang == "java" and t in ("string_literal", "text_block") and is_sql_filter(_text(n, src)):
+            points.append(_dp(n.start_point[0] + 1, "sql filter", _text(n, src)))
+    for n in _walk(body, nested):
+        if n.type == "binary_expression":
+            op = n.child_by_field_name("operator")
+            if op is None or _text(op, src) not in _COMPARISON_OPS:
+                continue
+            expr = _text(n, src)
+            if "null" in expr or "undefined" in expr:
+                continue
+            if any(a <= n.start_byte and n.end_byte <= b for a, b in conditions):
+                continue                                   # part of an if / ternary already listed
+            if n.parent is not None and n.parent.type == "binary_expression":
+                continue                                   # one point for `a > 1 && b < 2`
+            points.append(_dp(n.start_point[0] + 1, "comparison", expr))
+    return points
+
+
+def _split_long(cands: list[Candidate], lines: list[str], max_lines: int) -> list[Candidate]:
+    """Candidates longer than `max_lines` split into parts of `max_lines` lines — each
+    part analysed, each starting with the candidate's first line for context — instead
+    of only the first part being analysed."""
+    out = []
+    for c in cands:
+        if not c.truncated or c.end - c.start + 1 <= max_lines:
+            out.append(c)
+            continue
+        windows = [(a, min(a + max_lines - 1, c.end)) for a in range(c.start, c.end + 1, max_lines)]
+        for k, (a, b) in enumerate(windows, 1):
+            head = "" if a == c.start else _snippet(lines, c.start, c.start, 1)[0] + "\n   …\n"
+            out.append(Candidate(
+                id="", path=c.path, start=a, end=b, kind=c.kind, symbol=f"{c.symbol} (part {k} of {len(windows)})",
+                language=c.language, parser=c.parser, signals=list(c.signals),
+                source=head + _snippet(lines, a, b, max_lines)[0], truncated=False, status=c.status,
+                reason=c.reason, decisions=[d for d in c.decisions if a <= d["line"] <= b
+                                            or (k == 1 and d["line"] < a)]))
+    return out
+
+
+#: Constraint annotations the repository declares (`@Constraint(validatedBy = …) @interface ValidSku`),
+#: found before the Java files are scanned; set by `scan`.
+_CUSTOM_CONSTRAINTS: set[str] = set()
+_CONSTRAINT_DECL = re.compile(r"@(?:[\w.]+\.)?Constraint\s*\((?:[^()]|\([^()]*\))*\)[\s\S]{0,400}?@interface\s+(\w+)")
+
+
+def _validation_annotations() -> set[str]:
+    return VALIDATION_ANNOTATIONS | _CUSTOM_CONSTRAINTS
+
+
+#: Classes whose methods carry framework-wide behaviour.
+_VALIDATOR_IMPL = re.compile(r"\bimplements\b[^{]*\b(?:ConstraintValidator|Validator)\b")
+_INTERCEPTOR_IMPL = re.compile(r"\b(?:implements\b[^{]*\b(?:HandlerInterceptor|WebRequestInterceptor|AsyncHandlerInterceptor|"
+                               r"Filter)\b|extends\s+(?:HandlerInterceptorAdapter|OncePerRequestFilter|GenericFilterBean))")
+_INTERCEPTOR_METHODS = {"preHandle", "postHandle", "afterCompletion", "doFilter", "doFilterInternal", "afterConcurrentHandlingStarted"}
+_SESSION_CALL = re.compile(r"getSession\s*\(|\b\w*[sS]ession\s*\.\s*(?:set|get|remove)Attribute\s*\(|"
+                           r"\b\w*[sS]ession\s*\.\s*invalidate\s*\(|addFlashAttribute\s*\(|\.setComplete\s*\(\s*\)|"
+                           r"getFlashAttributes?\s*\(|RequestContextUtils\.getInputFlashMap")
+_REJECT_CALL = re.compile(r"\.\s*(?:rejectValue|reject|addConstraintViolation|buildConstraintViolationWithTemplate)\s*\(|"
+                          r"\.\s*has(?:Field|Global)?Errors\s*\(")
+_MODEL_WRITE = re.compile(r"\.\s*(?:addAttribute|addObject|put|setAttribute|setStatus|sendRedirect|sendError)\s*\(")
+
+
 def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Candidate]) -> None:
     tree = _PARSERS["java"].parse(src)
     package = ""
@@ -218,12 +333,21 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
         if child.type == "package_declaration":
             package = re.sub(r"^package\s+|;\s*$", "", _text(child, src)).strip()
 
+    classes: dict[str, dict] = {}                    # qualified name -> what the class is
+
     def visit(node, owner: str):
         for child in node.children:
             if child.type in _JAVA_TYPES:
                 name_node = child.child_by_field_name("name")
                 name = _text(name_node, src) if name_node else "?"
                 qualified = f"{owner}.{name}" if owner else name
+                header = _text(child, src).split("{", 1)[0]
+                annos = {a for a, _ in _annotations(child)}
+                classes[qualified] = {
+                    "validator": bool(_VALIDATOR_IMPL.search(header)),
+                    "interceptor": bool(_INTERCEPTOR_IMPL.search(header)),
+                    "advice": bool(annos & {"ControllerAdvice", "RestControllerAdvice"}),
+                }
                 _java_type(child, qualified)
                 body = child.child_by_field_name("body")
                 if body is not None:
@@ -240,10 +364,16 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
             end = max((c.end_point[0] + 1 for c in (body.children if body else []) if c.type == "enum_constant"),
                       default=start_row)
             add(start_row, end, "enum", owner, [f"{len(constants)} values: " + ", ".join(constants[:12])])
-        class_authz = [a for a in _annotations(node) if a[0] in _AUTHZ_ANNOTATIONS]
+        class_annos = _annotations(node)
+        class_authz = [a for a in class_annos if a[0] in _AUTHZ_ANNOTATIONS]
         if class_authz:
             add(start_row, start_row + len(class_authz), "authorization", owner,
-                [f"@{a}{args}" for a, args in class_authz])
+                [f"@{a}{args}" for a, args in class_authz],
+                decisions=[_dp(start_row, "access rule", f"@{a}{args}") for a, args in class_authz])
+        session = [(a, args) for a, args in class_annos if a == "SessionAttributes"]
+        if session:
+            add(start_row, start_row + 1, "session-state", owner, [f"@SessionAttributes{session[0][1]}"],
+                decisions=[_dp(start_row, "session", f"@SessionAttributes{session[0][1]}")])
         body = node.child_by_field_name("body")
         if body is None:
             return
@@ -267,7 +397,7 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
                     name_m = re.search(r"(\w+)\s*=", text)
                     lookup_rows.append((member.start_point[0] + 1, member.end_point[0] + 1))
                     lookup_names.append(name_m.group(1) if name_m else "?")
-                annos = [a for a in re.findall(r"@(\w+)", text) if a in VALIDATION_ANNOTATIONS and a != "Valid"]
+                annos = [a for a in re.findall(r"@(\w+)", text) if a in _validation_annotations() and a != "Valid"]
                 if annos:
                     validation_rows.append((member.start_point[0] + 1, member.end_point[0] + 1))
                     validation_signals += annos
@@ -285,18 +415,25 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
                 for inner in member.children:
                     if inner.type in ("method_declaration", "constructor_declaration"):
                         _java_method(inner, owner)
+        def row_points(rows, kind):
+            return [_dp(a, kind, " ".join(l.strip() for l in lines[a - 1:b])) for a, b in rows]
         if validation_rows:
+            points = [_dp(a, "validation", f"@{anno} on " + " ".join(l.strip() for l in lines[a - 1:b]))
+                      for a, b in validation_rows
+                      for anno in re.findall(r"@(\w+)", "\n".join(lines[a - 1:b]))
+                      if anno in _validation_annotations() and anno != "Valid"]
             add(validation_rows[0][0], validation_rows[-1][1], "validation", owner,
-                [f"@{a}" for a in dict.fromkeys(validation_signals)], rows=validation_rows)
+                [f"@{a}" for a in dict.fromkeys(validation_signals)], rows=validation_rows, decisions=points)
         if constant_rows:
             add(constant_rows[0][0], constant_rows[-1][1], "constants", owner,
-                [", ".join(constant_names[:12])], rows=constant_rows)
+                [", ".join(constant_names[:12])], rows=constant_rows, decisions=row_points(constant_rows, "constant"))
         if lookup_rows:
             add(lookup_rows[0][0], lookup_rows[-1][1], "lookup", owner,
-                [", ".join(lookup_names[:12])], rows=lookup_rows)
+                [", ".join(lookup_names[:12])], rows=lookup_rows, decisions=row_points(lookup_rows, "lookup"))
         if query_rows:
             add(query_rows[0][0], query_rows[-1][1], "query", owner,
-                ["SQL constants: " + ", ".join(query_names[:12])], rows=query_rows)
+                ["SQL constants: " + ", ".join(query_names[:12])], rows=query_rows,
+                decisions=row_points(query_rows, "sql filter"))
 
     def _java_method(node, owner: str):
         name_node = node.child_by_field_name("name")
@@ -304,9 +441,11 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
         body = node.child_by_field_name("body")
         start, end = node.start_point[0] + 1, node.end_point[0] + 1
         params = node.child_by_field_name("parameters")
-        param_annos = [a for a in re.findall(r"@(\w+)", _text(params, src) if params else "")
-                       if a in VALIDATION_ANNOTATIONS and a != "Valid"]
+        params_text = _text(params, src) if params else ""
+        param_annos = [a for a in re.findall(r"@(\w+)", params_text)
+                       if a in _validation_annotations() and a != "Valid"]
         annotations = _annotations(node)
+        anno_names = {a for a, _ in annotations}
         authz = [a for a in annotations if a[0] in _AUTHZ_ANNOTATIONS]
         sched = [a for a in annotations if a[0] in _SCHEDULE_ANNOTATIONS]
         if body is None and not authz:
@@ -314,21 +453,58 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
         signals, null_only = (_decision_signals(body, src, _JAVA_NESTED, "java") if body is not None
                               else ([], True))
         decisions = bool(signals)
+        points = _decision_points(body, src, _JAVA_NESTED, "java") if body is not None else []
+        body_text = _text(body, src) if body is not None else ""
+        body_line = body.start_point[0] + 1 if body is not None else start
+        # Framework-wide behaviour: these are candidates even with no branch in them.
+        info = classes.get(owner, {})
+        special = ""
+        if info.get("validator") and name in ("isValid", "validate"):
+            special = "validator"
+        elif info.get("interceptor") and name in _INTERCEPTOR_METHODS:
+            special = "interceptor"
+        elif "ExceptionHandler" in anno_names:
+            special = "error-mapping"
+        elif anno_names & {"ModelAttribute", "InitBinder"}:
+            special = "global-model"
+        session_lines = [i for i, l in enumerate(body_text.split("\n")) if _SESSION_CALL.search(l)]
+        if not special and session_lines:
+            special = "session-state"
+        for i, line in enumerate(body_text.split("\n")):
+            at = body_line + i
+            if _REJECT_CALL.search(line):
+                points.append(_dp(at, "validation outcome", line))
+            elif _SESSION_CALL.search(line):
+                points.append(_dp(at, "session", line))
+            elif special in ("global-model", "interceptor", "error-mapping") and _MODEL_WRITE.search(line):
+                points.append(_dp(at, "model / response", line))
+        for a in dict.fromkeys(param_annos):
+            points.append(_dp(start, "validation", f"@{a} parameter"))
+        for a, args in authz + sched:
+            points.append(_dp(start, "access rule" if (a, args) in authz else "schedule", f"@{a}{args}"))
+        if "BindingResult" in params_text or re.search(r"\bErrors\s+\w+", params_text):
+            signals.append("BindingResult")
+        if special:
+            signals.append({"validator": "custom validator", "interceptor": "request interceptor/filter",
+                            "error-mapping": "@ExceptionHandler", "session-state": "session / flash state",
+                            "global-model": "@ModelAttribute/@InitBinder" + (
+                                " in @ControllerAdvice (every page)" if info.get("advice") else "")}[special])
         signals += [f"@{a} parameter" for a in dict.fromkeys(param_annos)]
         signals += [f"@{a}{args}" for a, args in authz + sched]
         if not signals:
             return
         status, reason = "pending", ""
-        if authz or sched:
-            pass                                   # an access rule or a schedule is never plumbing
+        if authz or sched or special:
+            pass                                   # an access rule, schedule or framework hook is never plumbing
         elif name in _SKIP_METHODS or (_ACCESSOR.match(name) and end - start <= 3):
             status, reason = "auto-technical", f"`{name}` is an accessor/object method"
         elif null_only and not param_annos:
             status, reason = "auto-technical", "decisions are null checks only"
         only_sql = decisions and all(s.startswith("sql-filter") for s in signals if not s.startswith("@"))
-        kind = ("query" if only_sql and not authz and not sched else
+        kind = (special if special else
+                "query" if only_sql and not authz and not sched else
                 "method" if decisions or param_annos else "authorization" if authz else "scheduled")
-        add(start, end, kind, f"{owner}.{name}", signals, status=status, reason=reason)
+        add(start, end, kind, f"{owner}.{name}", signals, status=status, reason=reason, decisions=points)
 
     def _annotations(node) -> list[tuple[str, str]]:
         """[(name, "(arguments)")] of the declaration's annotations, from its syntax tree."""
@@ -344,16 +520,18 @@ def _java(path: str, src: bytes, lines: list[str], max_lines: int, out: list[Can
                     out.append((name, re.sub(r"\s+", " ", _text(args, src))[:120] if args is not None else ""))
         return out
 
-    def add(start, end, kind, symbol, signals, rows=None, status="pending", reason=""):
+    def add(start, end, kind, symbol, signals, rows=None, status="pending", reason="", decisions=None):
         if rows and kind in ("validation", "constants", "lookup", "query"):
             text = "\n".join(_snippet(lines, a, b, max_lines)[0] for a, b in rows)
             truncated = False
         else:
             text, truncated = _snippet(lines, start, end, max_lines)
+        points = sorted({(d["line"], d["kind"], d["text"]): d for d in (decisions or [])}.values(),
+                        key=lambda d: (d["line"], d["kind"]))
         out.append(Candidate(id="", path=path, start=start, end=end, kind=kind,
                              symbol=f"{package}.{symbol}" if package else symbol, language="Java",
                              parser="tree-sitter", signals=signals, source=text, truncated=truncated,
-                             status=status, reason=reason))
+                             status=status, reason=reason, decisions=points))
 
     visit(tree.root_node, "")
 
@@ -408,7 +586,8 @@ def _js(path: str, src: bytes, lines: list[str], max_lines: int, grammar: str, l
         text, truncated = _snippet(lines, start, end, max_lines)
         out.append(Candidate(id="", path=path, start=start, end=end, kind="method", symbol=name,
                              language=language, parser="tree-sitter", signals=signals, source=text,
-                             truncated=truncated, status=status, reason=reason))
+                             truncated=truncated, status=status, reason=reason,
+                             decisions=_decision_points(body, src, _JS_NESTED, "js")))
 
 
 # ---------------------------------------------------------------------------
@@ -456,10 +635,22 @@ def _python(path: str, text: str, lines: list[str], max_lines: int, out: list[Ca
                     if child.name.startswith("__") and child.name.endswith("__") and child.name != "__init__":
                         status, reason = "auto-technical", f"`{child.name}` is a dunder method"
                     snippet, truncated = _snippet(lines, start, end, max_lines)
+                    points, branch_lines = [], set()
+                    for n in _py_own_nodes(child):
+                        kind = ("if" if isinstance(n, ast.If) else "ternary" if isinstance(n, ast.IfExp)
+                                else "case" if type(n).__name__ == "match_case" else "")
+                        if kind:
+                            line = getattr(n, "lineno", None) or getattr(getattr(n, "pattern", None), "lineno", start)
+                            branch_lines.add(line)
+                            points.append(_dp(line, kind, lines[line - 1] if 0 < line <= len(lines) else ""))
+                    for n in _py_own_nodes(child):
+                        if isinstance(n, ast.Compare) and n.lineno not in branch_lines and not any(
+                                isinstance(c, ast.Constant) and c.value is None for c in n.comparators):
+                            points.append(_dp(n.lineno, "comparison", lines[n.lineno - 1]))
                     out.append(Candidate(id="", path=path, start=start, end=end, kind="method",
                                          symbol=f"{owner}.{child.name}" if owner else child.name, language="Python",
                                          parser="python-ast", signals=signals, source=snippet, truncated=truncated,
-                                         status=status, reason=reason))
+                                         status=status, reason=reason, decisions=points))
                 visit(child, f"{owner}.{child.name}" if owner else child.name)
 
     visit(tree, "")
@@ -566,36 +757,105 @@ def _sql(path: str, lines: list[str], max_lines: int, out: list[Candidate]) -> N
 
 _JSP_DECISION = re.compile(r"<c:(?:if|when)\b[^>]*test\s*=|<%[^@=!-][^%]*\b(?:if|switch)\s*\(|\$\{[^}]*\?[^}]*:[^}]*\}"
                            r"|<sec:authorize\b")
-#: Thymeleaf conditional rendering and Spring Security attributes.
-_THYMELEAF_DECISION = re.compile(r"\bth:(?:if|unless|switch|case)\s*=|\bsec:authorize(?:-url)?\s*=|"
-                                 r"\bth:[\w-]+\s*=\s*\"[^\"]*\?[^\"]*:[^\"]*\"")
 _THYMELEAF_MARK = re.compile(r"xmlns:th\s*=|\bth:[\w-]+\s*=|\bsec:authorize")
+_TH = r"\b(?:th|data-th)"
+_ATTR = r"\s*=\s*(?:\"[^\"]*\"|'[^']*')"
+#: Every rendering decision of a Thymeleaf template, by kind; one decision point per occurrence.
+_THYMELEAF_RULES = [
+    ("visibility", re.compile(_TH + r"-?:?(?:if|unless)" + _ATTR)),
+    ("case", re.compile(_TH + r"-?:?(?:switch|case)" + _ATTR)),
+    ("access rule", re.compile(r"\bsec:authorize(?:-url|-expr|-acl)?" + _ATTR)),
+    ("list", re.compile(_TH + r"-?:?each" + _ATTR)),
+    ("conditional state", re.compile(_TH + r"-?:?(?:disabled|readonly|required|checked|selected|hidden|multiple)"
+                                     + _ATTR)),
+    ("conditional styling", re.compile(_TH + r"-?:?(?:classappend|class|styleappend|style|attrappend)"
+                                       r"\s*=\s*(?:\"[^\"]*(?:\$\{|\*\{|\?)[^\"]*\"|'[^']*(?:\$\{|\*\{|\?)[^']*')")),
+    ("formatting", re.compile(r"#(?:numbers|dates|temporals|calendars)\.\w+\s*\([^)]*\)")),
+    ("form field", re.compile(_TH + r"-?:?field" + _ATTR)),
+    ("form errors", re.compile(_TH + r"-?:?errors" + _ATTR
+                               + r"|#fields\.(?:hasErrors|hasAnyErrors|errors|allErrors|hasGlobalErrors)\s*\([^)]*\)")),
+    ("server call", re.compile(r"\$\{\s*@\w+\.\w+\s*\([^}]*\}")),
+    ("ternary", re.compile(_TH + r"-?:?[\w-]+\s*=\s*\"[^\"]*\?[^\"]*:[^\"]*\"")),
+]
+#: How many template lines with decisions one candidate holds; more make several candidates.
+VIEW_CHUNK_ROWS = 40
+
+
+def _view_points(lines: list[str], rules) -> list[dict]:
+    points = []
+    for i, line in enumerate(lines, 1):
+        taken: list[tuple[int, int]] = []
+        for kind, pattern in rules:
+            for m in pattern.finditer(line):
+                if any(a < m.end() and m.start() < b for a, b in taken):
+                    continue                       # one point per expression, by its most specific kind
+                taken.append((m.start(), m.end()))
+                points.append(_dp(i, kind, m.group(0)))
+    return points
+
+
+def _view_candidates(path: str, lines: list[str], max_lines: int, points: list[dict], language: str,
+                     out: list[Candidate]) -> None:
+    """A template's decisions as candidates of at most VIEW_CHUNK_ROWS lines each — every one analysed."""
+    rows = sorted({d["line"] for d in points})
+    chunks = [rows[i:i + VIEW_CHUNK_ROWS] for i in range(0, len(rows), VIEW_CHUNK_ROWS)]
+    for k, chunk in enumerate(chunks, 1):
+        text = "\n".join(_snippet(lines, max(1, r - 1), min(len(lines), r + 2), max_lines)[0] for r in chunk)
+        mine = [d for d in points if chunk[0] <= d["line"] <= chunk[-1] and d["line"] in chunk]
+        kinds = {}
+        for d in mine:
+            kinds[d["kind"]] = kinds.get(d["kind"], 0) + 1
+        out.append(Candidate(id="", path=path, start=chunk[0], end=chunk[-1], kind="view-logic",
+                             symbol=Path(path).name + (f" (part {k} of {len(chunks)})" if len(chunks) > 1 else ""),
+                             language=language, parser="pattern",
+                             signals=[f"{kind} ×{n}" for kind, n in kinds.items()], source=text,
+                             decisions=mine))
 
 
 def _jsp(path: str, lines: list[str], max_lines: int, out: list[Candidate]) -> None:
-    rows = [i + 1 for i, line in enumerate(lines) if _JSP_DECISION.search(line)]
-    if not rows:
-        return
-    text = "\n".join(_snippet(lines, max(1, r - 1), min(len(lines), r + 2), max_lines)[0] for r in rows[:60])
-    out.append(Candidate(id="", path=path, start=rows[0], end=rows[-1], kind="view-logic",
-                         symbol=Path(path).name, language="JSP", parser="pattern",
-                         signals=[f"conditional rendering ×{len(rows)}"], source=text,
-                         truncated=len(rows) > 60))
+    points = [_dp(i, "visibility", line) for i, line in enumerate(lines, 1) if _JSP_DECISION.search(line)]
+    if points:
+        _view_candidates(path, lines, max_lines, points, "JSP", out)
 
 
 def _thymeleaf(path: str, lines: list[str], max_lines: int, out: list[Candidate]) -> bool:
-    """A template's conditional rendering, as one candidate. False when the file
-    is not a Thymeleaf template at all (plain HTML is not scanned for rules)."""
+    """A template's rendering decisions, as candidates. False when the file is not a
+    Thymeleaf template at all (plain HTML is not scanned for rules)."""
     if not any(_THYMELEAF_MARK.search(line) for line in lines):
         return False
-    rows = [i + 1 for i, line in enumerate(lines) if _THYMELEAF_DECISION.search(line)]
-    if rows:
-        text = "\n".join(_snippet(lines, max(1, r - 1), min(len(lines), r + 2), max_lines)[0] for r in rows[:60])
-        out.append(Candidate(id="", path=path, start=rows[0], end=rows[-1], kind="view-logic",
-                             symbol=Path(path).name, language="Thymeleaf", parser="pattern",
-                             signals=[f"conditional rendering ×{len(rows)}"], source=text,
-                             truncated=len(rows) > 60))
+    points = _view_points(lines, _THYMELEAF_RULES)
+    if points:
+        _view_candidates(path, lines, max_lines, points, "Thymeleaf", out)
     return True
+
+
+_SCRIPT_BLOCK = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.S | re.I)
+
+
+def _inline_scripts(path: str, text: str, lines: list[str], max_lines: int, language: str,
+                    out: list[Candidate]) -> None:
+    """Inline `<script>` blocks of a template parsed as JavaScript, at their own line numbers."""
+    if "javascript" not in _PARSERS or "<script" not in text.lower():
+        return
+    kept = []
+    for m in _SCRIPT_BLOCK.finditer(text):
+        attrs = m.group(1)
+        kind = re.search(r"\btype\s*=\s*[\"']([^\"']+)", attrs)
+        if re.search(r"\bsrc\s*=", attrs) or (kind and not re.search(r"javascript|module|babel|jsx", kind.group(1), re.I)):
+            continue
+        kept.append((m.start(2), m.end(2)))
+    if not kept:
+        return
+    chars = ["\n" if ch == "\n" else " " for ch in text]
+    for a, b in kept:
+        chars[a:b] = list(text[a:b])
+    # Thymeleaf inlined expressions ([[${x}]], /*[[...]]*/) are values to the script.
+    code = re.sub(r"\[\[(.*?)\]\]|\[\((.*?)\)\]", lambda m: "0" + " " * (len(m.group(0)) - 1), "".join(chars))
+    before = len(out)
+    _js(path, code.encode("utf-8", "replace"), lines, max_lines, "javascript", language, out)
+    for c in out[before:]:
+        c.symbol = f"<script> {c.symbol}"
+        c.signals.append("inline script")
 
 
 _DRL_RULE = re.compile(r'^\s*rule\s+"([^"]+)"|^\s*rule\s+(\w+)', re.I)
@@ -718,6 +978,18 @@ def scan(workspace_dir: str, max_lines: int = 250) -> Scan:
     tests: list[str] = []
     if not root.exists():
         return Scan([], {}, {}, [], [], TREE_SITTER_ERROR)
+    # Constraint annotations the repository declares itself count as validation everywhere.
+    _CUSTOM_CONSTRAINTS.clear()
+    for path in sorted(root.rglob("*.java")):
+        if EXCLUDED_DIRS & set(path.relative_to(root).parts):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace") if path.stat().st_size <= _MAX_FILE_BYTES else ""
+        except OSError:
+            continue
+        if "@interface" in text and "Constraint" in text:
+            _CUSTOM_CONSTRAINTS.update(_CONSTRAINT_DECL.findall(text))
+    templates: dict[str, str] = {}                  # Thymeleaf template -> its text, for fragment links
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
@@ -774,11 +1046,15 @@ def scan(workspace_dir: str, max_lines: int = 250) -> Scan:
             continue
         text = raw.decode("utf-8", "replace")
         lines = text.splitlines()
+        before = len(candidates)
         if key == "thymeleaf":
             # Only templates count; plain HTML pages carry no rules to parse.
             if _thymeleaf(rel, lines, max_lines, candidates):
                 entry = by_language.setdefault(language, {"files": 0, "parser": parser})
                 entry["files"] += 1
+                templates[rel] = text
+                _inline_scripts(rel, text, lines, max_lines, language, candidates)
+                candidates[before:] = _split_long(candidates[before:], lines, max_lines)
             continue
         if key in _PARSERS or key in ("python", "sql", "jsp", "drl"):
             entry = by_language.setdefault(language, {"files": 0, "parser": parser})
@@ -794,17 +1070,48 @@ def scan(workspace_dir: str, max_lines: int = 250) -> Scan:
                 _sql(rel, lines, max_lines, candidates)
             elif key == "jsp":
                 _jsp(rel, lines, max_lines, candidates)
+                _inline_scripts(rel, text, lines, max_lines, language, candidates)
             elif key == "drl":
                 _drl(rel, lines, max_lines, candidates)
             else:
                 unparsed[language] = unparsed.get(language, 0) + 1
         except (SyntaxError, ValueError, RecursionError) as exc:
             errors.append(f"{rel}: could not be parsed ({type(exc).__name__})")
+        candidates[before:] = _split_long(candidates[before:], lines, max_lines)
+    _link_fragments(candidates, templates)
     _assign_areas(candidates)
     candidates.sort(key=lambda c: (c.area, c.path, c.start))
+    n = 0
     for i, c in enumerate(candidates, 1):
         c.id = f"C{i:05d}"
+        if not c.decisions:                    # no finer structure: the candidate is its one decision point
+            c.decisions = [_dp(c.start, c.kind, c.symbol)]
+        for d in c.decisions:
+            n += 1
+            d["id"] = f"DP-{n:05d}"
     return Scan(candidates, by_language, unparsed, errors, tests, TREE_SITTER_ERROR)
+
+
+_INCLUDE = re.compile(r"\b(?:th|data-th)[-:](?:replace|insert|include|substituteby|decorate)\s*=\s*[\"']~?\{?\s*([\w/.-]+)|"
+                      r"\blayout:decorate\s*=\s*[\"']~?\{?\s*([\w/.-]+)|\bdata-layout-decorate\s*=\s*[\"']~?\{?\s*([\w/.-]+)")
+
+
+def _link_fragments(candidates: list[Candidate], templates: dict[str, str]) -> None:
+    """A fragment's or layout's decisions apply on every page that includes it: say which pages."""
+    def name_of(rel: str) -> str:
+        m = re.search(r"(?:^|/)templates/(.+?)\.html?$", rel)
+        return m.group(1) if m else re.sub(r"\.html?$", "", rel.rsplit("/", 1)[-1])
+    used: dict[str, set] = {}
+    for rel, text in templates.items():
+        for m in _INCLUDE.finditer(text):
+            target = next(g for g in m.groups() if g).split("::")[0].strip()
+            if target and target != name_of(rel):
+                used.setdefault(target, set()).add(rel)
+    for c in candidates:
+        if c.path in templates:
+            pages = sorted(used.get(name_of(c.path), ()))
+            if pages:
+                c.signals.append("included by: " + ", ".join(pages))
 
 
 _SOURCE_ROOTS = re.compile(r"^(?:[^/]+/)?src/(?:main/(?:java|webapp|resources|js|javascript|ts|python)/)?")

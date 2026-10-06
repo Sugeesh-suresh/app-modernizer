@@ -6,7 +6,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  brdDownloadUrl, businessRulesDownloadUrl, diagramUrl, technicalSpecDownloadUrl, uiScreenUrl, uiScreensDownloadUrl,
+  brdDownloadUrl, businessRulesDownloadUrl, decisionPointsDownloadUrl, diagramUrl, technicalSpecDownloadUrl, uiScreenUrl, uiScreensDownloadUrl,
   uploadContextFiles,
 } from '../api';
 
@@ -331,6 +331,17 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
                 >
                   <Download size={12} />
                   Business rules (CSV)
+                </a>
+              )}
+              {reOnly && brd.includes('## Business Rules by Capability') && (
+                <a
+                  href={decisionPointsDownloadUrl(sessionId)}
+                  download
+                  title="Every decision the code makes and how it was accounted for: the rule it implements, or why it was dismissed"
+                  className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 bg-slate-900/5 hover:bg-slate-900/10 border border-slate-900/10 rounded-lg px-2.5 py-1 transition-colors"
+                >
+                  <Download size={12} />
+                  Decision points (CSV)
                 </a>
               )}
             </div>

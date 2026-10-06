@@ -27,7 +27,13 @@ exact source of its candidates, and its answer is checked here in code:
   once with the reasons; then an untraceable rule is left out of the BRD
   (`verified` False, an `UV-` id, listed in the audit file) and an untraceable
   scenario entry is dropped (kept in `dropped` for the audit file);
-- ids carry the rule's business capability: `BR-<CAPABILITY>-<nnn>`.
+- ids carry the rule's business capability: `BR-<CAPABILITY>-<nnn>`;
+- every decision point of a candidate (rule_candidates: each condition, branch,
+  comparison, access rule, validation annotation, rendering decision, session or
+  model write) must be accounted for — named by a rule's `decision_points`, or
+  dismissed in `technical_decisions` with a reason. A candidate answered with
+  points left over is asked once more for exactly those (`unaccounted`); what is
+  still unaccounted is reported point by point (`decision_report`), never dropped.
 """
 import csv
 import io
@@ -62,11 +68,16 @@ def batches(candidates: list[Candidate], max_candidates: int, max_chars: int) ->
     return out
 
 
-def render_batch(batch: list[Candidate], reword: dict[str, list[str]] | None = None) -> str:
+def render_batch(batch: list[Candidate], reword: dict[str, list[str]] | None = None,
+                 account: dict[str, list[str]] | None = None) -> str:
     """The candidates as the extraction agent sees them. `reword`: {candidate id:
-    what was wrong with its earlier answer} — the candidate is asked again, with that."""
+    what was wrong with its earlier answer} — the candidate is asked again, with that.
+    `account`: {candidate id: decision points its earlier answer left out} — asked for those."""
     parts = []
     for c in batch:
+        points = c.decisions
+        if account and account.get(c.id):
+            points = [d for d in c.decisions if d["id"] in account[c.id]]
         note = ""
         if reword and reword.get(c.id):
             note = ("\n**Restate from this code, in plain English.** Parts of your earlier answer for this candidate "
@@ -74,11 +85,18 @@ def render_batch(batch: list[Candidate], reword: dict[str, list[str]] | None = N
                     "use cases, negative scenarios and edge cases — using only what this code shows (its values, "
                     "messages and checks), as sentences with no code, names, expressions or backticks. Leave out "
                     "any case the code does not contain:\n" + "\n".join(f"- {s}" for s in reword[c.id][:8]))
+        if account and account.get(c.id):
+            note += ("\n**Account for these decision points.** Your earlier answer for this candidate did not "
+                     "account for the points below. For each, give the rule it implements (with the point in its "
+                     "`decision_points`) or dismiss it in `technical_decisions` with the reason. Do not repeat "
+                     "rules you already gave.")
         parts.append(
             f"### {c.id} — {c.kind} `{c.symbol}`\n"
             f"File: `{c.path}` lines {c.start}-{c.end} ({c.language}; signals: {', '.join(c.signals) or '—'})"
             + ("\n**Truncated:** only the first part of this code is shown." if c.truncated else "")
             + note
+            + "\nDecision points:\n" + "\n".join(f"- {d['id']} line {d['line']} [{d['kind']}] {d['text']}"
+                                                  for d in points)
             + f"\n```\n{c.source}\n```"
         )
     return "\n\n".join(parts)
@@ -123,11 +141,15 @@ def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict, repl
     `replace`: the answer restates candidates already answered — their earlier rules go.
     `repo_text`: the repository's message texts, which a rule may quote."""
     by_id = {c.id: c for c in batch}
+    earlier: dict[str, list] = defaultdict(list)    # restated candidates: their rules' decision points
     if replace:
         restated = {str(r.get("candidate") or r.get("id") or "").strip() for r in results} & set(by_id)
         restated = {cid for cid in restated if any(isinstance(x, dict) and str(x.get("statement") or "").strip()
                                                    for r in results if str(r.get("candidate") or r.get("id") or "").strip() == cid
                                                    for x in (r.get("rules") or []))}
+        for r in ledger["raw_rules"]:
+            if r["sources"][0]["candidate"] in restated:
+                earlier[r["sources"][0]["candidate"]].append(r.get("decision_points", []))
         ledger["raw_rules"] = [r for r in ledger["raw_rules"] if r["sources"][0]["candidate"] not in restated]
         for cid in restated:
             ledger["candidates"][cid]["rule_count"] = 0
@@ -140,15 +162,29 @@ def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict, repl
         rules = result.get("rules") if isinstance(result.get("rules"), list) else []
         rules = [r for r in rules if isinstance(r, dict) and str(r.get("statement") or "").strip()]
         technical = str(result.get("technical") or "").strip()
-        if not rules and (not technical or replace):
+        own = {d["id"] for d in c.decisions}
+        dismissed = {}
+        for item in result.get("technical_decisions") or []:
+            if isinstance(item, dict) and str(item.get("id") or "").strip() in own:
+                dismissed[str(item["id"]).strip()] = str(item.get("reason") or "technical").strip()[:300]
+            elif isinstance(item, str) and item.strip() in own:
+                dismissed[item.strip()] = technical[:300] or "technical"
+        if not rules and not dismissed and (not technical or replace):
             continue                         # a restatement without rules leaves the earlier answer standing
         answered.add(cid)
         entry = ledger["candidates"][cid]
+        entry.setdefault("dismissed", {}).update(dismissed)
         if not rules:
-            entry.update(status="technical", reason=technical[:300])
+            if technical and not replace:
+                entry.update(status="technical" if entry["status"] != "rule" else "rule", reason=technical[:300])
+                for d in own - set(entry["dismissed"]):
+                    entry["dismissed"][d] = technical[:300]
             continue
         entry["status"] = "rule"
-        for r in rules:
+        carried = earlier.get(cid, []) if replace else []
+        for k, r in enumerate(rules):
+            if replace and not r.get("decision_points") and len(carried) == len(rules):
+                r = {**r, "decision_points": carried[k]}     # restated in the same order: same decisions
             a, b, moved = _lines(r.get("lines"), c)
             flags = ["cited lines outside the candidate; clamped"] if moved else []
             named = {m for field in ("statement", "condition", "outcome") for m in _IDENT.findall(str(r.get(field) or ""))}
@@ -172,6 +208,8 @@ def apply_answer(batch: list[Candidate], results: list[dict], ledger: dict, repl
                 "area": c.area,
                 "sources": [{"candidate": cid, "path": c.path, "start": a, "end": b, "symbol": c.symbol}],
                 "flags": flags,
+                "decision_points": [d for d in dict.fromkeys(str(x).strip() for x in (r.get("decision_points") or []))
+                                    if d in own],
             })
             raw = ledger["raw_rules"][-1]
             raw["grounding"] = grounding.check_rule(raw, c.source, repo_text)
@@ -231,12 +269,67 @@ def needs_rewording(batch: list[Candidate], ledger: dict) -> dict[str, list[str]
 
 
 def new_ledger(candidates: list[Candidate]) -> dict:
-    return {
+    ledger = {
         "candidates": {c.id: {**c.to_dict(), "status": c.status if c.status != "pending" else "pending",
-                              "reason": c.reason} for c in candidates},
+                              "reason": c.reason, "dismissed": {}} for c in candidates},
         "raw_rules": [],
         "rules": [],
     }
+    for c in candidates:
+        if c.status == "auto-technical":            # dismissed by the parser, with its reason
+            ledger["candidates"][c.id]["dismissed"] = {d["id"]: f"auto: {c.reason}" for d in c.decisions}
+    return ledger
+
+
+def unaccounted(batch: list[Candidate], ledger: dict) -> dict[str, list[str]]:
+    """{candidate id: its decision points no rule names and no dismissal covers}, for the
+    answered candidates of this batch."""
+    ids = {c.id for c in batch}
+    named: dict[str, set] = defaultdict(set)
+    for r in ledger["raw_rules"]:
+        cid = r["sources"][0]["candidate"]
+        if cid in ids:
+            named[cid].update(r.get("decision_points", []))
+    out = {}
+    for c in batch:
+        entry = ledger["candidates"][c.id]
+        if entry["status"] in ("pending", "unclassified"):
+            continue
+        left = [d["id"] for d in c.decisions if d["id"] not in named[c.id] and d["id"] not in entry.get("dismissed", {})]
+        if left:
+            out[c.id] = left
+    return out
+
+
+def decision_report(ledger: dict) -> list[dict]:
+    """Every decision point and how it was accounted for: `rule` (verified rule ids),
+    `unverified rule`, `technical` (the agent's reason), `auto-technical` (the parser's),
+    or `unaccounted` (with why) — computed after `finalize`."""
+    by_point: dict[str, list[dict]] = defaultdict(list)
+    for rule in ledger.get("rules", []):
+        for d in rule.get("decision_points", []):
+            by_point[d].append(rule)
+    rows = []
+    for cid, entry in ledger["candidates"].items():
+        for d in entry.get("decisions", []):
+            rules = by_point.get(d["id"], [])
+            verified = [r["id"] for r in rules if r.get("verified", True)]
+            reason = entry.get("dismissed", {}).get(d["id"], "")
+            if verified:
+                status, why = "rule", ""
+            elif rules:
+                status, why = "unverified rule", "; ".join(r["id"] for r in rules)
+            elif reason:
+                status, why = ("auto-technical" if reason.startswith("auto: ") else "technical"), \
+                    reason.removeprefix("auto: ")
+            elif entry["status"] == "unclassified":
+                status, why = "unaccounted", f"candidate unclassified: {entry.get('reason', '')}"
+            else:
+                status, why = "unaccounted", "no rule names it and it was not dismissed (asked twice)"
+            rows.append({"id": d["id"], "candidate": cid, "path": entry["path"], "line": d["line"],
+                         "kind": d["kind"], "text": d["text"], "status": status,
+                         "rules": [r["id"] for r in rules], "reason": why, "area": entry.get("area", "")})
+    return rows
 
 
 def mark_unclassified(candidates: list[Candidate], ledger: dict, reason: str) -> None:
@@ -295,6 +388,8 @@ def finalize(ledger: dict, workspace_dir: str, test_files: list[str]) -> None:
         else:
             target["sources"] += [s for s in rule["sources"] if s not in target["sources"]]
             target["flags"] += [f for f in rule["flags"] if f not in target["flags"]]
+            target["decision_points"] = list(dict.fromkeys(target.get("decision_points", [])
+                                                           + rule.get("decision_points", [])))
             for key in SCENARIO_FIELDS:
                 target[key] = (target.get(key, []) + [s for s in rule.get(key, [])
                                                       if s not in target.get(key, [])])[:MAX_SCENARIOS]
@@ -441,7 +536,11 @@ def coverage(ledger: dict, scan_stats: dict) -> dict:
         by_kind[entry["kind"]][entry["status"]] += 1
         truncated += bool(entry.get("truncated"))
     rules = ledger["rules"]
+    points = defaultdict(int)
+    for row in decision_report(ledger):
+        points[row["status"]] += 1
     return {
+        "decision_points": dict(points),
         "candidates": len(ledger["candidates"]),
         "statuses": dict(statuses),
         "by_kind": {k: dict(v) for k, v in by_kind.items()},
@@ -478,6 +577,20 @@ def coverage_markdown(cov: dict) -> str:
         f"- **Not traceable to the code, left out of the BRD:** {cov.get('unverified', 0):,} rules and "
         f"{cov.get('dropped_scenarios', 0):,} scenario entries — see Grounding Checks",
     ]
+    dp = cov.get("decision_points") or {}
+    if dp:
+        total = sum(dp.values())
+        lines += [
+            f"- **Decision points found:** {total:,} — each condition, branch, comparison, access rule, "
+            "validation, rendering decision, session or model write; every one accounted for below:",
+            f"  - implement a business rule in the BRD: {dp.get('rule', 0):,}",
+            f"  - named by a rule that could not be traced to the code: {dp.get('unverified rule', 0):,}",
+            f"  - technical, dismissed by the agent with a reason: {dp.get('technical', 0):,}",
+            f"  - technical, dismissed without the agent (accessors, null checks only): {dp.get('auto-technical', 0):,}",
+            f"  - **unaccounted for: {dp.get('unaccounted', 0):,}**" + (" — listed under Decision Points Not "
+                                                                         "Accounted For" if dp.get("unaccounted")
+                                                                         else ""),
+        ]
     if cov.get("excluded"):
         lines.append(f"- **Not analysed:** {cov['excluded']:,} candidates in code of stacks that were not "
                      "confirmed for documentation.")
@@ -485,8 +598,9 @@ def coverage_markdown(cov: dict) -> str:
         lines.append(f"- **Parser unavailable:** {cov['parser_error']} — Java/JavaScript/TypeScript were not "
                      "analysed for rules.")
     if cov.get("truncated"):
-        lines.append(f"- **Truncated candidates:** {cov['truncated']:,} were longer than the per-candidate limit; "
-                     "only their first part was analysed (raise `RULES_CANDIDATE_MAX_LINES`).")
+        lines.append(f"- **Truncated candidates:** {cov['truncated']:,} were longer than the per-candidate limit "
+                     "and could not be split; only their first part was analysed (raise "
+                     "`RULES_CANDIDATE_MAX_LINES`).")
     lines += ["", "| Candidate kind | Rules | Technical | Auto-technical | Unclassified |", "|---|---|---|---|---|"]
     for kind, counts in sorted(cov["by_kind"].items()):
         lines.append(f"| {kind} | {counts.get('rule', 0)} | {counts.get('technical', 0)} | "
@@ -571,6 +685,46 @@ def business_rules_markdown(ledger: dict | None, max_rules: int) -> str:
             "Observed" if rule.get("basis") == "explicit" else "Inferred",
             str(rule.get("confidence") or "medium").capitalize()]) + " |")
     return "\n".join(lines)
+
+
+def decisions_markdown(ledger: dict) -> str:
+    """The audit view of the decision points: every one not accounted for, every one the
+    agent dismissed as technical (with its reason), every one only an untraceable rule names."""
+    rows = decision_report(ledger)
+    if not rows:
+        return ""
+    lines = ["## Decision Points", "",
+             "_Every decision the code makes was listed by parsing and had to be accounted for: named by a "
+             "business rule, or dismissed as technical with a reason. Review the dismissals: a business decision "
+             "dismissed here is missing from the BRD. The full list, with the rule each point implements, is in "
+             "the decision-points download._", ""]
+    for status, title in (("unaccounted", "Decision Points Not Accounted For"),
+                          ("unverified rule", "Decision Points Only an Untraceable Rule Names"),
+                          ("technical", "Decision Points Dismissed as Technical by the Agent")):
+        group = [r for r in rows if r["status"] == status]
+        lines += [f"### {title} ({len(group):,})", ""]
+        if not group:
+            lines += ["None.", ""]
+            continue
+        lines += ["| Point | Where | Kind | Code | Reason |", "|---|---|---|---|---|"]
+        lines += [f"| {r['id']} | `{r['path']}:{r['line']}` | {r['kind']} | `{_cell(r['text'][:120])}` | "
+                  f"{_cell(r['reason']) or '—'} |" for r in group]
+        lines.append("")
+    auto = sum(1 for r in rows if r["status"] == "auto-technical")
+    lines.append(f"{auto:,} decision point(s) were dismissed without the agent (accessors, null checks only); "
+                 "they are in the decision-points download.")
+    return "\n".join(lines)
+
+
+def decisions_csv(ledger: dict) -> str:
+    """Every decision point: where, what, how it was accounted for, and the rules it implements."""
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["decision_point", "file", "line", "kind", "code", "status", "rules", "reason", "candidate", "area"])
+    for r in decision_report(ledger):
+        w.writerow([r["id"], r["path"], r["line"], r["kind"], r["text"], r["status"], "; ".join(r["rules"]),
+                    r["reason"], r["candidate"], r["area"]])
+    return out.getvalue()
 
 
 def to_csv(ledger: dict) -> str:

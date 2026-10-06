@@ -14,6 +14,11 @@ What to record:
 - Layers: controllers → services → DAOs/repositories → data sources, with the classes in each
 - Persistence: JDBC/JPA/Hibernate/MyBatis usage, entities and their tables, transaction boundaries
 - Cross-cutting: security (authentication, authorisation, filters), logging, caching, error handling, i18n
+- Validation: bean-validation constraints on form/request objects (including custom constraint annotations and their `ConstraintValidator`), Spring `Validator` implementations and every `rejectValue`/`reject` call, and how handlers react to `BindingResult.hasErrors()` — the field, the condition and the message key of each
+- Data added to every page or request: `@ControllerAdvice` with `@ModelAttribute` (current user, cart count, flags) and `@InitBinder` (trimming, formats, disallowed fields); `HandlerInterceptor`/servlet `Filter` logic (redirects, blocks, headers) and the condition of each
+- Error mapping: every `@ExceptionHandler` (in a controller or `@ControllerAdvice`), the exception it handles, the status, view or message it produces
+- State held on the server: `HttpSession` attributes, `@SessionAttributes`, flash attributes (`RedirectAttributes`) — what is stored, when it is set and cleared, and which pages read it
+- Rules that live outside the repository: message keys used but not defined in any bundle, external services called, tables and stored procedures used but not defined here, expressions or scripts evaluated at run time (SpEL, script engines, rules engines, `Class.forName`), and feature switches (`@ConditionalOnProperty`, `@Profile`, flag libraries) — list each with where it is used
 - Concurrency: thread pools, executors, synchronisation, async processing
 - External calls: HTTP clients, SOAP clients, files, mail, sockets, and where their endpoints are configured
 - Tests: frameworks (JUnit, TestNG, Mockito, Arquillian, Spring Test), what each test class covers, and the surefire/failsafe configuration

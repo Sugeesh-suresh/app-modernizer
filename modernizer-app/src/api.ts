@@ -159,6 +159,10 @@ export const reverseEngineeringDownloadUrl = (sessionId: string, format: DocForm
 export const businessRulesDownloadUrl = (sessionId: string) =>
   `${BASE}/api/sessions/${sessionId}/download/business-rules`;
 
+/** stack-discovery: every decision point found in the code and how it was accounted for, as CSV. */
+export const decisionPointsDownloadUrl = (sessionId: string) =>
+  `${BASE}/api/sessions/${sessionId}/download/decision-points`;
+
 /** stack-discovery: the UI Screens document — Markdown and images as one zip, or Word with the images inside. */
 export const uiScreensDownloadUrl = (sessionId: string, format: 'zip' | 'docx' = 'docx') =>
   `${BASE}/api/sessions/${sessionId}/download/ui-screens?format=${format}`;

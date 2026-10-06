@@ -1,0 +1,23 @@
+<html xmlns:th="http://www.thymeleaf.org">
+<div th:replace="~{fragments/header :: header}"></div>
+<h1 th:text="#{order.title}">Orders</h1>
+<p th:if="${#lists.isEmpty(orders)}" th:text="#{order.empty}">None</p>
+<table>
+  <tr th:each="o, stat : ${orders}" th:classappend="${o.status == 'OVERDUE'} ? 'row-danger'">
+    <td th:text="${#numbers.formatDecimal(o.total, 1, 2)}">0.00</td>
+    <td th:text="${#temporals.format(o.placedAt, 'dd/MM/yyyy')}">date</td>
+    <td th:switch="${o.status}"><span th:case="'SHIPPED'">Shipped</span><span th:case="*">Open</span></td>
+    <td><button th:disabled="${o.status != 'OPEN'}">Cancel</button></td>
+    <td th:text="${@pricing.discountFor(o)}">0</td>
+    <td th:text="${o.express} ? 'Express' : 'Standard'">x</td>
+  </tr>
+</table>
+<p th:text="#{order.legacy.notice}">Legacy</p>
+<script th:inline="javascript">
+  var limit = [[${maxItems}]];
+  function checkQuantity(q) {
+    if (q > limit) { alert('Too many items'); return false; }
+    return true;
+  }
+</script>
+</html>
