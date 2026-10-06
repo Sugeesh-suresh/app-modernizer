@@ -2062,21 +2062,24 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         await _update_state(session_id, {"ui_contracts_json": json.dumps(ui_result)})
     else:
         ui_result = json.loads(state["ui_contracts_json"])
-    contracts_md = ui_contracts.to_markdown(ui_result)
     endpoint_contracts_md = ui_contracts.contracts_markdown(ui_result)
-    # Every page and every interactive element on it: id, action, state, navigation, calls and fields.
+    # Every page and every interactive element on it: id, action, what happens, the API each action calls.
+    # Computed once with the template files it covers, so the UI-to-Backend Contracts refer to it rather
+    # than print the same form fields and grid columns again.
     if "technical_spec" not in documents:
-        pages_md = ""
+        pages_md, covered = "", {}
     elif "ui_pages_markdown" not in state:
         try:
-            pages_md = await asyncio.to_thread(
-                lambda: ui_pages.to_markdown(ui_pages.scan(workspace_dir, endpoints_jobs, ui_result)))
+            pages = await asyncio.to_thread(ui_pages.scan, workspace_dir, endpoints_jobs, ui_result)
+            pages_md, covered = ui_pages.to_markdown(pages), ui_pages.covered(pages)
         except Exception as exc:                              # noqa: BLE001 — the documents do not depend on it
             print(f"[discovery] UI pages scan failed: {type(exc).__name__}: {exc}", flush=True)
-            pages_md = ""
-        await _update_state(session_id, {"ui_pages_markdown": pages_md})
+            pages_md, covered = "", {}
+        await _update_state(session_id, {"ui_pages_markdown": pages_md, "ui_pages_covered_json": json.dumps(covered)})
     else:
         pages_md = state["ui_pages_markdown"]
+        covered = json.loads(state.get("ui_pages_covered_json") or "{}")
+    contracts_md = ui_contracts.to_markdown(ui_result, covered)
     # Every test file and every test it declares, from the files.
     if "test_inventory" not in documents:
         test_files = []
@@ -2205,6 +2208,10 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     if ea_spec and ui_result.get("screens"):
         raw_section, _ = ui_contracts.assemble(ui_result, ea_ui.get("intros", {}), ea_ui.get("blocks", {}), fill=False)
         raw_section, elisions = grounding.replace_elisions(raw_section, _ELIDED_UI)
+        raw_section, schema_tables = ui_contracts.strip_schema_tables(raw_section)   # printed once, elsewhere
+        if schema_tables:
+            print(f"[discovery] UI contracts: {schema_tables} repeated field table(s) replaced by a reference "
+                  "to Endpoint Contracts", flush=True)
         checked_section, spec_untraced = grounding.check_ui_section(
             raw_section, contracts_md + "\n" + endpoint_contracts_md, set(ui_contracts.ids(ui_result)),
             ui_contracts.calls(ui_result), evidence_text, placeholder=False)   # the computed line fills a gap

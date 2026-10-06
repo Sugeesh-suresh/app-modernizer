@@ -3,9 +3,18 @@ var AttributeSearch = {};
 
 AttributeSearch.search = function () {
   var q = $j('#attrQuery').val();
-  $.getJSON('/api/attributes/search', { q: q, showValues: $j('#showValues').is(':checked') }, function (rows) {
-    $j('#attributeGrid').html(render(rows));
+  var showValues = $j('#showValues').is(':checked');
+  $.getJSON('/api/attributes/search', { q: q, showValues: showValues }, function (rows) {
+    AttributeSearch.render(rows, showValues);
   });
+};
+
+AttributeSearch.render = function (rows, showValues) {
+  var columns = [{ data: 'id', title: 'ID' }, { data: 'name', title: 'Name' }];
+  if (showValues) {
+    columns.push({ data: 'value', title: 'Value' });
+  }
+  new Handsontable(document.getElementById('attributeGrid'), { data: rows, columns: columns, readOnly: true });
 };
 
 $j(document).ready(function () {

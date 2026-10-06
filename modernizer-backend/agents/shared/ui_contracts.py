@@ -2041,7 +2041,9 @@ def _handler_cell(e: dict) -> str:
     return "the page's own handler (server-rendered)"
 
 
-def to_markdown(result: dict) -> str:
+def to_markdown(result: dict, covered: dict[str, str] | None = None) -> str:
+    """`covered`: {template file: page} described element by element in the UI Pages section — their form
+    fields and grid columns are referred to there, not printed twice."""
     screens = result.get("screens") or []
     if not screens and not result.get("pages"):
         return ""
@@ -2054,7 +2056,11 @@ def to_markdown(result: dict) -> str:
              f"**{count} UI element(s) on {len(screens)} screen(s); every handler's contract is under Endpoint "
              f"Contracts.**", ""]
     for screen in screens:
-        lines += screen_markdown(screen)
+        page = (covered or {}).get(screen["file"])
+        lines += screen_markdown(screen, details=page is None)
+        if page is not None and any(e["fields"] or e["columns"] for e in screen["elements"]):
+            lines += [f"Form fields and grid columns of this screen: UI Pages and Interactive Components → page "
+                      f"`{page}`.", ""]
     if result.get("pages"):
         lines += [f"### Web pages and templates ({len(result['pages'])})", "",
                   "| Template | Rendered by | UI elements |", "|---|---|---|"]
@@ -2076,7 +2082,7 @@ def to_markdown(result: dict) -> str:
     return "\n".join(lines).rstrip()
 
 
-def screen_markdown(screen: dict) -> list[str]:
+def screen_markdown(screen: dict, details: bool = True) -> list[str]:
     """One screen: its controls, form fields and grid columns."""
     lines: list[str] = []
     lines.append(f"### Screen `{screen['file']}`")
@@ -2099,6 +2105,8 @@ def screen_markdown(screen: dict) -> list[str]:
                      f"{_cell(_handler_cell(e))} | `{e['source']}` |")
     lines.append("")
     for e in screen["elements"]:
+        if not details:
+            break
         if e["fields"]:
             lines += [f"**{e['id']} form fields** (as the UI sends them)", "",
                       "| Field | Input | Client-side checks |", "|---|---|---|"]
@@ -2260,6 +2268,37 @@ def fallback(element: dict) -> str:
             + (f", sending {sends}" if sends else "") + (f" → {handler}" if handler else "")
             + ". _Computed from the code; the writer did not describe this control — its contract is under "
               "Endpoint Contracts._")
+
+
+_SCHEMA_FIRST = {"field", "parameter", "name", "request parameter", "response field", "attribute", "property"}
+
+
+def _schema_header(line: str) -> bool:
+    """`| Field | Type | … |`: a table of fields with their types (a contract's schema)."""
+    if not line.startswith("|"):
+        return False
+    cells = [c.strip().lower() for c in line.strip().strip("|").split("|")]
+    return bool(cells) and cells[0] in _SCHEMA_FIRST and any(c in ("type", "data type") for c in cells[1:])
+
+
+def strip_schema_tables(markdown: str) -> tuple[str, int]:
+    """The section without field / type tables: every endpoint's fields are printed once, under Endpoint
+    Contracts. Returns the text and how many tables were taken out."""
+    out, removed, skipping = [], 0, False
+    for line in markdown.split("\n"):
+        if skipping:
+            if line.lstrip().startswith("|"):
+                continue
+            skipping = False
+        if _schema_header(line.strip()):
+            skipping, removed = True, removed + 1
+            while out and not out[-1].strip():
+                out.pop()
+            out.append("")
+            out.append("Fields: see Endpoint Contracts.")
+            continue
+        out.append(line)
+    return "\n".join(out), removed
 
 
 SECTION_HEADING = "## UI Interaction Contracts"

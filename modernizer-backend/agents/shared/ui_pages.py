@@ -294,6 +294,12 @@ _EFFECTS = [
     (re.compile(r"window\.open\(\s*([^,)]+)"), lambda m: f"opens `{m.group(1).strip()}` in a new window"),
     (re.compile(r"location\.reload\(\s*\)"), lambda m: "reloads the page"),
     (re.compile(_SEL + r"\s*\.\s*submit\s*\(\s*\)"), lambda m: f"submits {_sel(m.group(1))}"),
+    (re.compile(r"new\s+Handsontable\s*\(\s*(?:document\.getElementById\(\s*['\"]([\w-]+)['\"]\s*\)|"
+                r"(?:\$\w*|jQuery)\(\s*['\"]#([\w-]+)['\"]\s*\)\s*\[\s*0\s*\])"),
+     lambda m: f"fills grid `#{m.group(1) or m.group(2)}` with the response"),
+    (re.compile(_SEL + r"\s*\.\s*(?:DataTable|dataTable|handsontable|jqGrid|bootstrapTable|kendoGrid)\s*\("),
+     lambda m: f"fills grid {_sel(m.group(1))} with the response"),
+    (re.compile(r"\b(\w+)\s*\.\s*(?:loadData|setData)\s*\("), lambda m: f"reloads grid `{m.group(1)}` with new data"),
     (re.compile(r"(localStorage|sessionStorage)\.setItem\(\s*['\"]([^'\"]+)"),
      lambda m: f"stores `{m.group(2)}` in {m.group(1)}"),
     (re.compile(r"\.preventDefault\(\s*\)"), lambda m: "stops the browser's default action"),
@@ -393,6 +399,7 @@ class _Page:
     contracts: dict = field(default_factory=dict)
     served: dict = field(default_factory=dict)
     endpoints: list = field(default_factory=list)
+    files: list = field(default_factory=list)          # the template files its elements come from
 
 
 def _template_index(rels: list[str]) -> dict[str, str]:
@@ -522,6 +529,7 @@ def scan(workspace_dir: str, inventory: dict, ui_result: dict) -> list[_Page]:
         for k, c in enumerate(page.components, 1):
             c.ref = f"C{k}"
         page.contracts, page.served, page.endpoints = contracts, served, endpoints
+        page.files = sorted(files)
         pages.append(page)
     # A shared script's binding whose element is on another page that loads it is not missing.
     found_on = {(h["how"], sel) for p in pages for c in p.components for h in c.handlers for sel in c.selectors}
@@ -613,6 +621,88 @@ def _callback_at(sc, offset: int):
     return found[0] if found else None
 
 
+_CHECKED = re.compile(r"(?:\$\w*|jQuery)\(\s*['\"]#([\w-]+)['\"]\s*\)\s*\.\s*(?:is\(\s*['\"]:checked['\"]\s*\)|"
+                      r"prop\(\s*['\"]checked['\"]\s*\))|getElementById\(\s*['\"]([\w-]+)['\"]\s*\)\s*\.\s*checked")
+
+
+def _readable_condition(cond: str, texts: str) -> str:
+    """`only when (showValues)` → `only when `#showValues` is checked`, following the variable to its value."""
+    m = re.match(r"only when (not )?\(?\s*(!?)\s*([A-Za-z_$][\w$.]*)\s*\)?$", cond)
+    if not m:
+        return cond.replace("only when (", "only when ").rstrip(")") if cond.startswith("only when (") and \
+            cond.count("(") == 1 else cond
+    negate = bool(m.group(1)) != bool(m.group(2))
+    name = m.group(3)
+    value = re.search(r"\b" + re.escape(name.split(".")[-1]) + r"\s*=(?!=)\s*([^;\n]+)", texts)
+    expr = value.group(1).strip() if value else ""
+    checked = _CHECKED.search(expr)
+    if checked:
+        return f"only when `#{checked.group(1) or checked.group(2)}` is {'not ' if negate else ''}checked"
+    return f"only when {'not ' if negate else ''}`{name}`" + (f" (= `{expr}`)" if expr else "")
+
+
+def _grid_columns(sc, fns: list) -> list[dict]:
+    """The columns a grid is given in these functions — Handsontable / DataTables `columns: [{data, title}]`,
+    `colHeaders`, or cells built as `'<td>' + row.x` — with the condition a column is added under."""
+    out: list[dict] = []
+    for fn in fns:
+        headers: list[str] = []
+        stack = [fn]
+        objects = []
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            if n.type == "pair":
+                key = uc._text(n.child_by_field_name("key"), sc.src).strip("'\"")
+                value = n.child_by_field_name("value")
+                if key == "colHeaders" and value is not None and value.type == "array":
+                    headers = [uc._text(c, sc.src).strip("'\"`") for c in value.children if c.type == "string"]
+            if n.type == "object":
+                objects.append(n)
+        for obj in sorted(objects, key=lambda o: o.start_byte):
+            pairs = {uc._text(p.child_by_field_name("key"), sc.src).strip("'\""): p.child_by_field_name("value")
+                     for p in obj.children if p.type == "pair"}
+            data = pairs.get("data")
+            if data is None or data.type != "string":
+                continue
+            title = next((uc._text(pairs[k], sc.src).strip("'\"`") for k in ("title", "header", "name", "label")
+                          if pairs.get(k) is not None and pairs[k].type == "string"), "")
+            cond, node = "", obj
+            while node is not None and node is not fn:
+                parent = node.parent
+                if parent is not None and parent.type == "if_statement":
+                    test = uc._text(parent.child_by_field_name("condition"), sc.src).strip()
+                    alt = parent.child_by_field_name("alternative")
+                    inside_alt = alt is not None and alt.start_byte <= obj.start_byte < alt.end_byte
+                    cond = f"only when not {test}" if inside_alt else f"only when {test}"
+                    break
+                if parent is not None and parent.type == "ternary_expression":
+                    test = uc._text(parent.child_by_field_name("condition"), sc.src).strip()
+                    cons = parent.child_by_field_name("consequence")
+                    inside = cons is not None and cons.start_byte <= obj.start_byte < cons.end_byte
+                    cond = f"only when {test}" if inside else f"only when not ({test})"
+                    break
+                node = parent
+            out.append({"title": title, "field": uc._text(data, sc.src).strip("'\"`"), "condition": cond,
+                        "at": f"{Path(sc.rel).name}:{sc.line(obj)}"})
+        for i, col in enumerate(c for c in out if not c["title"]):
+            if i < len(headers):
+                col["title"] = headers[i]
+        text = uc._text(fn, sc.src)
+        for m in re.finditer(r"['\"]<td[^>]*>['\"]\s*\+\s*[A-Za-z_$][\w$]*\s*\.\s*(\w+)", text):
+            out.append({"title": "", "field": m.group(1), "condition": "",
+                        "at": f"{Path(sc.rel).name}:{sc.line(fn) + text.count(chr(10), 0, m.start())}"})
+    texts = "\n".join(uc._text(fn, sc.src) for fn in fns)
+    for col in out:
+        col["condition"] = _readable_condition(col["condition"], texts)
+    seen, unique = set(), []
+    for col in out:
+        if (col["field"], col["condition"]) not in seen:
+            seen.add((col["field"], col["condition"]))
+            unique.append(col)
+    return unique
+
+
 def _handler(sc, fn, event: str, how: str) -> dict:
     effects, called = _handler_effects(sc, fn) if fn is not None else ([], [])
     spans = []
@@ -621,13 +711,15 @@ def _handler(sc, fn, event: str, how: str) -> dict:
         for name in called:
             for other in sc.functions.get(name, []):
                 spans.append((sc.rel, sc.line(other), other.end_point[0] + sc.first_line))
-    return {"event": event, "how": how, "effects": effects, "spans": spans,
-            "resolved": fn is not None}
+    reached = [fn] + [o for n in called for o in sc.functions.get(n, [])] if fn is not None else []
+    return {"event": event, "how": how, "effects": effects, "spans": spans, "resolved": fn is not None,
+            "columns": _grid_columns(sc, reached)}
 
 
 def _add_handler(c: Component, h: dict, calls: list) -> None:
     if any(x["event"] == h["event"] and x["how"] == h["how"] for x in c.handlers):
         return
+    h["calls"] = list({id(e): e for e in calls}.values())            # the calls this handler makes
     c.handlers.append(h)
     for e in calls:
         if e not in c.calls:
@@ -720,7 +812,7 @@ def _tie_scripts(page: _Page, files: set, readers: dict, script, elements: list[
                 continue
             event = next(g for g in m.groups() if g)
             effects = _effects(value, c.line, c.file)
-            spans = []
+            spans, columns = [], []
             names = [n for n in uc._HANDLER_CALL.findall(value) if n not in uc._JS_KEYWORDS]
             for rel, sc in sources:
                 if sc is None:
@@ -730,10 +822,11 @@ def _tie_scripts(page: _Page, files: set, readers: dict, script, elements: list[
                         h = _handler(sc, fn, event, "")
                         effects += [x for x in h["effects"] if x not in effects]
                         spans += h["spans"]
+                        columns += h["columns"]
             calls = [e for e in elements if (lambda s: s and s.group(1) == c.file and int(s.group(2)) == c.line)(
                 re.search(r"inline \w+ handler in (\S+):(\d+)", e.get("via", "")))] + _calls_in(spans, elements)
             _add_handler(c, {"event": event, "how": f"inline `{value.strip()}`", "effects": effects[:MAX_EFFECTS],
-                             "spans": spans, "resolved": True}, calls)
+                             "spans": spans, "resolved": True, "columns": columns}, calls)
     # Where an element with no behaviour found is named in the page's scripts.
     for c in page.components:
         if c.handlers or c.calls or c.reads or not c.attrs.get("id") or c.kind not in ("button", "link", "checkbox", "radio",
@@ -782,45 +875,31 @@ def _js_url(expr: str) -> str:
     return "".join(parts)
 
 
-def _user_actions(c: Component) -> str:
-    """What a user can do with the element."""
+_EVENT_ACTION = {"click": "click", "dblclick": "double-click", "change": "change the value",
+                 "keyup": "type text", "keydown": "type text", "keypress": "type text", "input": "type text",
+                 "submit": "submit", "blur": "leave the field", "focus": "enter the field",
+                 "focusout": "leave the field", "mouseover": "hover", "mouseenter": "hover",
+                 "mouseleave": "move the pointer away"}
+#: Events that are the element's own primary action (a checkbox's change is checking it).
+_PRIMARY_EVENTS = {"link": {"click"}, "button": {"click"}, "summary": {"click"}, "form": {"submit"},
+                   "checkbox": {"change", "click", "input"}, "radio": {"change", "click", "input"},
+                   "select": {"change", "input"}, "input": {"input", "keyup", "keydown", "keypress"},
+                   "textarea": {"input", "keyup", "keydown", "keypress"}}
+
+
+def _primary_action(c: Component) -> str:
     kind, a = c.kind, c.attrs
-    base = {"link": "click", "button": "click", "checkbox": "check / uncheck", "radio": "select",
-            "select": "choose an option", "textarea": "type text", "form": "submit",
-            "grid": "view rows", "summary": "click (expand / collapse)"}.get(kind, "")
     if kind == "input":
-        base = {"date": "pick a date", "file": "choose a file", "number": "type a number", "email": "type an email",
+        return {"date": "pick a date", "file": "choose a file", "number": "type a number", "email": "type an email",
                 "password": "type a password", "range": "move the slider", "color": "pick a colour"}.get(
             a.get("type", "text").lower(), "type text")
-    events = []
-    for h in c.handlers:
-        ev = {"click": "click", "dblclick": "double-click", "change": "change the value", "keyup": "type (key up)",
-              "keydown": "press a key", "keypress": "press a key", "input": "type", "submit": "submit",
-              "blur": "leave the field", "focus": "enter the field", "mouseover": "hover",
-              "mouseenter": "hover"}.get(h["event"], h["event"])
-        if ev and ev not in events and ev != base:
-            events.append(ev)
-    if kind in ("input", "textarea") and c.form is not None:
-        events.append("press Enter (submits the form)")
-    if kind == "grid" and any(h["event"] in ("click", "dblclick") for h in c.handlers):
-        base = "view rows"
-    return ", ".join([base] + events if base else events) or "—"
+    return {"link": "click", "button": "click", "checkbox": "check / uncheck", "radio": "select",
+            "select": "choose an option", "textarea": "type text", "form": "submit", "grid": "view rows",
+            "summary": "click (expand / collapse)"}.get(kind, "")
 
 
-def _outcomes(page: _Page, c: Component) -> list[str]:
-    """What the user sees happen after the action."""
-    a, out = c.attrs, []
-    toggle = a.get("data-bs-toggle") or a.get("data-toggle")
-    if toggle:
-        target = a.get("data-bs-target") or a.get("data-target") or a.get("href") or ""
-        out.append(f"opens {toggle} `{target}` on this page" if target else f"opens a {toggle} on this page")
-    submit_form = c.form if c.form is not None and c.kind == "button" and \
-        a.get("type", "submit").lower() == "submit" and not c.calls else None
-    calls = c.calls or (submit_form.calls if submit_form is not None else [])
-    if c.kind == "grid" and c.calls:
-        out.append(f"shows one row per item of `{a.get('__rows', c.calls[0].get('data', ''))}`, "
-                   "rendered with the page")
-        calls = [e for e in calls if e.get("url")]
+def _call_outcomes(page: _Page, calls: list[dict]) -> list[str]:
+    out = []
     for e in calls:
         for key in e["endpoints"]:
             con = page.contracts.get(key)
@@ -840,9 +919,9 @@ def _outcomes(page: _Page, c: Component) -> list[str]:
                 elif views:
                     out.append("loads page " + ", ".join(views)
                                + (" with the results" if e["kind"] == "form" and e["verb"] == "GET" else ""))
-                else:
+                elif redirects:
                     out += redirects
-                if not views and not con["redirects"]:
+                else:
                     out.append(f"loads the view `{con['view'] or 'named at run time'}`")
             elif e["kind"] == "link":
                 out.append(f"opens the response of `{con['endpoint']}` (a file or data, not a page)")
@@ -850,7 +929,11 @@ def _outcomes(page: _Page, c: Component) -> list[str]:
                 out.append("calls the server and stays on this page")
         if not e["endpoints"] and e.get("url"):
             out.append(f"requests `{e['path'] or e['url']}` — {e.get('reason') or 'no handler found in the code'}")
-    effects = [x for h in c.handlers for x in h["effects"] if not x.startswith(_SILENT)]
+    return out
+
+
+def _effect_outcomes(page: _Page, effects: list[str], out: list[str]) -> list[str]:
+    effects = [x for x in effects if not x.startswith(_SILENT)]
     asks = [x for x in effects if x.startswith("asks for confirmation")]
     out = asks + out
     for x in effects:
@@ -860,56 +943,110 @@ def _outcomes(page: _Page, c: Component) -> list[str]:
         if m:
             pages = [f"`{_short_template(t)}`" for t in _page_of(page, _js_url(m.group(1)))]
             if pages and all(any(p in o for o in out if o.startswith("loads page")) for p in pages):
-                continue                                    # the call above already says so
+                continue                                    # the call already says so
             out.append(("loads page " + ", ".join(pages) + f" (`{m.group(1)}`, {m.group(2)})") if pages else x)
             continue
         out.append(x)
-    if c.kind == "link" and not calls and not toggle:
+    return out
+
+
+def _api_text(page: _Page, calls: list[dict]) -> str:
+    out = []
+    for e in calls:
+        for key in e["endpoints"]:
+            src = page.contracts.get(key, {}).get("source", "")
+            out.append(_endpoint_text(key) + (f" (`{Path(src.rsplit(':', 1)[0]).name}:{src.rsplit(':', 1)[1]}`)"
+                                              if ":" in src else "") + f" — {e['id']}")
+        if not e["endpoints"] and e.get("url"):
+            out.append(f"`{e['verb']} {e['path'] or e['url']}` — no handler found in the code ({e['id']})")
+    return "; ".join(dict.fromkeys(out))
+
+
+def _actions(page: _Page, c: Component) -> list[dict]:
+    """One row per thing a user can do with the element: what happens on the UI and the API that action calls."""
+    a, kind = c.attrs, c.kind
+    own = [e for e in c.calls if not e.get("via") and e.get("url")]          # links, forms, formaction buttons
+    primary_events = _PRIMARY_EVENTS.get(kind, set())
+    primary_handlers = [h for h in c.handlers if h["event"] in primary_events]
+    other = [h for h in c.handlers if h["event"] not in primary_events]
+    rows = []
+
+    # The element's primary action.
+    out, calls, via_form = [], list(own), None
+    for h in primary_handlers:
+        calls += [e for e in h.get("calls", []) if e not in calls]
+    toggle = a.get("data-bs-toggle") or a.get("data-toggle")
+    if toggle:
+        target = a.get("data-bs-target") or a.get("data-target") or a.get("href") or ""
+        out.append(f"opens {toggle} `{target}` on this page" if target else f"opens a {toggle} on this page")
+    if kind == "button" and c.form is not None and a.get("type", "submit").lower() == "submit" and not own:
+        via_form = c.form
+        out.append(f"submits form {c.form.ref}")
+        out += _call_outcomes(page, [e for e in c.form.calls if e.get("url")])
+    if kind == "grid":
+        rows_of = a.get("__rows") or next((e.get("data") for e in c.calls if e.get("data")), "")
+        out.append(f"shows one row per item of `{rows_of}`, rendered with the page")
+    out += _call_outcomes(page, calls)
+    out = _effect_outcomes(page, [x for h in primary_handlers for x in h["effects"]], out)
+    if kind == "link" and not calls and not toggle:
         href = a.get("th:href") or a.get("href") or ""
         if href.startswith("#") and len(href) > 1:
             out.append(f"scrolls to `{href}` on this page")
         elif href and uc.normalize(href).external:
             out.append(f"opens external page `{href}`")
-    if c.kind == "select":
+    if kind == "select":
         filled = next((e.get("data") for e in c.calls if e.get("data") and not e.get("url")), "")
         if filled:
             out.append(f"its options come from `{filled}`, rendered with the page")
-    if c.kind in ("input", "select", "textarea", "checkbox", "radio"):
+    if kind in ("input", "select", "textarea", "checkbox", "radio") and not calls:
         if c.form is not None and c.name():
-            out.append(f"its value is sent as `{c.name()}` when form {c.form.ref} is submitted")
-        if c.reads and not c.handlers:
-            out.append("its value is read by the script at " + ", ".join(f"`{r}`" for r in c.reads))
+            out.append(f"nothing is sent yet — the value goes as `{c.name()}` when form {c.form.ref} is submitted")
+        if c.reads and not primary_handlers:
+            out.append("the value is read by the script at " + ", ".join(f"`{r}`" for r in c.reads))
     if a.get("target") == "_blank" and out:
         out[0] += " (in a new tab)"
     if not out:
         if c.reads:
             out.append("no behaviour recognised; its id is used in " + ", ".join(f"`{r}`" for r in c.reads)
                        + " — check there")
-        elif c.handlers:
-            out.append("handler found; it changes nothing on the page that the scan recognises")
+        elif primary_handlers:
+            out.append("a handler runs; it changes nothing on the page that the scan recognises")
         else:
             out.append("no behaviour found in the code")
-    return list(dict.fromkeys(out))
+    action = _primary_action(c) or (_EVENT_ACTION.get(primary_handlers[0]["event"], primary_handlers[0]["event"])
+                                    if primary_handlers else "—")
+    rows.append({"action": action, "outcomes": list(dict.fromkeys(out)), "calls": calls, "via_form": via_form,
+                 "columns": [col for h in primary_handlers for col in h.get("columns", [])]})
+
+    # Pressing Enter in a form's text field submits the form.
+    if kind == "input" and c.form is not None and a.get("type", "text").lower() not in (
+            "checkbox", "radio", "file", "range", "color"):
+        form_calls = [e for e in c.form.calls if e.get("url")]
+        rows.append({"action": "press Enter", "calls": [], "via_form": c.form, "columns": [],
+                     "outcomes": [f"submits form {c.form.ref} — the same result as {c.form.ref}"
+                                  if form_calls else f"submits form {c.form.ref}"]})
+
+    # Every other event a script listens for, one row each.
+    by_action: dict[str, list] = {}
+    for h in other:
+        by_action.setdefault(_EVENT_ACTION.get(h["event"], h["event"]), []).append(h)
+    for action, handlers in by_action.items():
+        calls = []
+        for h in handlers:
+            calls += [e for e in h.get("calls", []) if e not in calls]
+        out = _effect_outcomes(page, [x for h in handlers for x in h["effects"]], _call_outcomes(page, calls))
+        rows.append({"action": action, "calls": calls, "via_form": None,
+                     "columns": [col for h in handlers for col in h.get("columns", [])],
+                     "outcomes": list(dict.fromkeys(out)) or ["a handler runs; it changes nothing on the page that "
+                                                              "the scan recognises"]})
+    return rows
 
 
-def _api_called(page: _Page, c: Component) -> str:
-    calls = [e for e in c.calls if e.get("url")]
-    if not calls and c.form is not None and c.kind in ("button", "input", "select", "textarea", "checkbox",
-                                                       "radio"):
-        if c.kind != "button" or c.attrs.get("type", "submit").lower() == "submit":
-            calls = c.form.calls
-            if calls:
-                return "via form " + c.form.ref + ": " + _api_called(page, c.form)
-    out = []
-    for e in calls:
-        for key in e["endpoints"]:
-            con = page.contracts.get(key, {})
-            src = con.get("source", "")
-            out.append(f"{_endpoint_text(key)}" + (f" (`{Path(src.rsplit(':', 1)[0]).name}:{src.rsplit(':', 1)[1]}`)"
-                                                   if ":" in src else "") + f" — {e['id']}")
-        if not e["endpoints"] and e.get("url"):
-            out.append(f"`{e['verb']} {e['path'] or e['url']}` — no handler found in the code ({e['id']})")
-    return "; ".join(dict.fromkeys(out)) or "none"
+def _row_api(page: _Page, row: dict) -> str:
+    if row["via_form"] is not None:
+        api = _api_text(page, [e for e in row["via_form"].calls if e.get("url")])
+        return f"via form {row['via_form'].ref}: {api}" if api else "none"
+    return _api_text(page, row["calls"]) or "none"
 
 
 def _conditions(c: Component) -> list[str]:
@@ -940,66 +1077,82 @@ def _field_rows(rows: list) -> list[str]:
     return [f"| `{_cell(p)}` | {_cell(t)} | {_cell(k) or '—'} |" for p, t, k in rows]
 
 
-def _detail(page: _Page, c: Component) -> list[str]:
-    """Under the table: conditions, handlers, and every call's request and response fields."""
+def _response_field(page: _Page, calls: list[dict], field: str) -> str:
+    """`name` → `[].name`: the response field of the action's call that a grid column shows."""
+    paths = []
+    for e in calls:
+        for key in e["endpoints"]:
+            con = page.contracts.get(key) or {}
+            if con.get("kind") == "REST":
+                paths += [p for p, _, _ in con.get("response", []) if p == field or p.endswith("." + field)]
+    if paths:
+        return f"`{min(paths, key=len)}`"
+    return f"`{field}`" + (" (not in the response contract)" if calls else "")
+
+
+def _ref(key: str) -> str:
+    verb, path, _ = key.split(" ", 2)
+    return f"Endpoint Contracts → `{verb} {path}`"
+
+
+def _detail(page: _Page, c: Component, printed: dict | None = None) -> list[str]:
+    """Under the table: where the element comes from, when it is shown, its script handlers, its form
+    fields or grid columns, and the calls its actions make — each call's request and response fields are
+    printed once, under Endpoint Contracts, and referred to here."""
     lines: list[str] = []
+    rows = _actions(page, c)
     if c.origin:
         lines.append(f"- From: `{_short_template(c.origin)}` (included in this page)")
     conds = _conditions(c)
     if conds:
         lines.append("- Shown / enabled: " + "; ".join(conds))
     for h in c.handlers:
-        lines.append(f"- On {h['event']}: {h['how']}" + (" — " + "; ".join(h["effects"]) if h["effects"] else ""))
-    if c.kind == "form" and c.calls:
-        con_fields: dict[str, tuple] = {}
-        for e in c.calls:
-            for key in e["endpoints"]:
-                con = page.contracts.get(key)
-                if con:
-                    for p, t, k in con["body"]:
-                        con_fields.setdefault(p, (t, k))
-                    for prm in con["params"]:
-                        con_fields.setdefault(prm["name"], (prm["type"], prm["constraints"]))
-        fields = c.calls[0].get("fields") or []
-        if fields:
-            lines += ["", "| Form field | Input | Client checks | Server type | Server constraints |",
-                      "|---|---|---|---|---|"]
-            for name, itype, checks in fields:
-                t, k = con_fields.get(name, ("not in the handler's contract", ""))
-                lines.append(f"| `{_cell(name)}` | {itype} | {_cell(checks) or '—'} | {_cell(t)} | {_cell(k) or '—'} |")
+        lines.append(f"- Script on {h['event']}: {h['how']}")
+    when: dict[int, list] = {}
+    for row in rows:
+        for e in row["calls"]:
+            when.setdefault(id(e), []).append(row["action"])
     for e in c.calls:
         for key in e["endpoints"]:
-            con = page.contracts.get(key)
-            if con is None:
-                continue
-            lines += ["", f"{_endpoint_text(key)} ({e['id']})" + (f" · access {con['access']}" if con.get("access")
-                                                                     else "")]
             sends = list(dict.fromkeys(e.get("sends", []) + [f"{q} (query)" for q in e.get("query", [])]))
-            if sends:
-                lines += ["", "- The UI sends: " + ", ".join(f"`{s}`" for s in sends)]
-            if con["params"]:
-                lines += ["", "| Request parameter | In | Type | Required | Constraints |", "|---|---|---|---|---|"]
-                lines += [f"| `{_cell(p['name'])}` | {p['in']} | {_cell(p['type'])} | {p['required']} | "
-                          f"{_cell(p['constraints']) or '—'} |" for p in con["params"]]
-            if con["body"] and c.kind != "form":
-                lines += ["", f"Request {con['body_in']} — `{_cell(uc._base(con['body_type']))}`", "",
-                          "| Field | Type | Constraints |", "|---|---|---|"] + _field_rows(con["body"])
-            if not (con["params"] or con["body"]):
-                lines += ["", "- Request: no parameters or body."]
-            if con["kind"] == "REST":
-                lines += ["", f"Response — `{_cell(con['response_type'] or 'not declared')}`", "",
-                          "| Field | Type | Constraints |", "|---|---|---|"] + _field_rows(con["response"])
-            else:
-                model = ", ".join(f"`{k}` ({t})" for k, t, _ in con["model"])
-                lines += ["", f"- Response: page `{con['view'] or 'named at run time'}`"
-                          + (f"; redirects {', '.join(f'`{r}`' for r in con['redirects'])}" if con["redirects"]
-                             else "") + (f"; page data {model}" if model else "")]
-            if con["errors"]:
-                lines += ["", "- Errors: " + "; ".join(f"`{x}` → {s}" for x, s in con["errors"])]
+            lines.append(f"- Calls {_endpoint_text(key)} ({e['id']})"
+                         + (" when the user: " + ", ".join(dict.fromkeys(when[id(e)])) if when.get(id(e)) else "")
+                         + ("; sends " + ", ".join(f"`{x}`" for x in sends) if sends else "")
+                         + f". Request and response fields: {_ref(key)}.")
+    if c.kind == "form" and c.calls and c.calls[0].get("fields"):
+        lines += ["", "| Form field | Input | Client-side checks |", "|---|---|---|"]
+        lines += [f"| `{_cell(n)}` | {_cell(t)} | {_cell(k) or '—'} |" for n, t, k in c.calls[0]["fields"]]
+        keys = [k for e in c.calls for k in e["endpoints"]]
+        if keys:
+            lines += ["", "Server-side types and constraints of these fields: "
+                      + "; ".join(dict.fromkeys(_ref(k) for k in keys)) + "."]
     if c.kind == "grid" and c.calls and c.calls[0].get("columns"):
         lines += ["", "| Column | Value shown |", "|---|---|"]
         lines += [f"| {_cell(h) or '—'} | {('`' + _cell(v) + '`') if v else '—'} |" for h, v in c.calls[0]["columns"]]
+    printed = {} if printed is None else printed
+    for row in rows:
+        if not row.get("columns"):
+            continue
+        table = [f"| {_cell(col['title']) or '—'} | {_response_field(page, row['calls'], col['field'])} | "
+                 f"{_cell(col['condition']) or 'always'} (`{col['at']}`) |" for col in row["columns"]]
+        key = "\n".join(table)
+        if key in printed:
+            lines += ["", f"Grid columns after \"{row['action']}\": the same as {printed[key]}."]
+            continue
+        printed[key] = f"{c.ref} \"{row['action']}\""
+        lines += ["", f"Grid columns after \"{row['action']}\":", "", "| Column | Response field | Shown |",
+                  "|---|---|---|"] + table
     return lines
+
+
+def covered(pages: list[_Page]) -> dict[str, str]:
+    """{template file: the page section that describes its elements} — for the UI-to-Backend Contracts,
+    which then refers to that section instead of printing the same form fields and grid columns again."""
+    out: dict[str, str] = {}
+    for p in pages:
+        for f in p.files:
+            out.setdefault(f, _short_template(p.rel))
+    return out
 
 
 def to_markdown(pages: list[_Page]) -> str:
@@ -1009,11 +1162,13 @@ def to_markdown(pages: list[_Page]) -> str:
     lines = [HEADING, "",
              "_Read from the templates, their fragments and layouts, the application's scripts they load and the "
              "controller code by the pipeline — not generated by an agent. Every interactive element of every page "
-             "is listed, including those that never call the server. **User action**: what a user can do with the "
-             "element. **What happens on the UI**: the page that loads, the dialog that opens, the elements the "
-             "script updates or shows, the message shown — read from the code. **API called**: the endpoint and "
-             "controller method the action reaches (`UI-nnn` as in the UI-to-Backend Contracts); its request and "
-             "response fields are under the table. Third-party plugin scripts are not read as the page's "
+             "is listed, including those that never call the server, with one row per action a user can take on it "
+             "(`C6a`, `C6b`… when there are several). **User action**: the action. **What happens on the UI**: what "
+             "that action does — the page that loads, the dialog that opens, the elements the script updates or "
+             "shows, the message shown — read from the code. **API called by this action**: the endpoint and "
+             "controller method that this action — and only this action — calls (`UI-nnn` as in the UI-to-Backend "
+             "Contracts), or none. Request and response fields are printed once, under Endpoint Contracts; the "
+             "details below each table refer to them. Third-party plugin scripts are not read as the page's "
              "behaviour._", "",
              f"**{total} interactive element(s) on {len(pages)} page(s).**", ""]
     for page in pages:
@@ -1021,10 +1176,10 @@ def to_markdown(pages: list[_Page]) -> str:
         for e in page.loaded_by:
             key = f"{e['verb']} {e['path']} {e['handler']}"
             con = page.contracts.get(key, {})
-            params = ", ".join(f"`{p['name']}` ({p['in']})" for p in con.get("params", []))
-            model = ", ".join(f"`{k}` ({t})" for k, t, _ in con.get("model", []))
+            params = ", ".join(f"`{p['name']}`" for p in con.get("params", []))
+            model = ", ".join(f"`{k}`" for k, _, _ in con.get("model", []))
             lines.append(f"- Rendered by: {_endpoint_text(key)}" + (f"; parameters {params}" if params else "")
-                         + (f"; page data {model}" if model else ""))
+                         + (f"; page data {model}" if model else "") + f" — fields: {_ref(key)}")
         if not page.loaded_by:
             lines.append("- Rendered by: no handler names this template as its view")
         if page.includes:
@@ -1038,15 +1193,19 @@ def to_markdown(pages: list[_Page]) -> str:
             lines.append(f"- {e['event'].capitalize() if e['event'] else 'On load'}: {target} ({e['id']})")
         lines.append("")
         if page.components:
-            lines += ["| # | Element id | Element | User action | What happens on the UI | API called |",
+            lines += ["| # | Element id | Element | User action | What happens on the UI | API called by this action |",
                       "|---|---|---|---|---|---|"]
             for c in page.components:
-                lines.append(f"| {c.ref} | {c.locator()} | {_cell(c.label())} | {_cell(_user_actions(c))} | "
-                             f"{_cell('; '.join(_outcomes(page, c)))} | {_cell(_api_called(page, c))} |")
+                rows = _actions(page, c)
+                for n, row in enumerate(rows):
+                    ref = c.ref + ("abcdefghijklmnopqrstuvwxyz"[n] if len(rows) > 1 and n < 26 else "")
+                    lines.append(f"| {ref} | {c.locator()} | {_cell(c.label())} | {_cell(row['action'])} | "
+                                 f"{_cell('; '.join(row['outcomes']))} | {_cell(_row_api(page, row))} |")
             lines.append("")
         else:
             lines += ["No interactive elements in the markup.", ""]
-        details = [(c, _detail(page, c)) for c in page.components]
+        printed: dict = {}
+        details = [(c, _detail(page, c, printed)) for c in page.components]
         details = [(c, d) for c, d in details if d]
         if details:
             lines += ["#### Element details and data fields", ""]
