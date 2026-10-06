@@ -1,0 +1,10 @@
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:replace="~{fragments/header :: header}"></div>
+<h1 th:text="${order.customer}">x</h1>
+<span id="status" th:text="${order.status}">s</span>
+<button id="refreshStatus" th:attr="data-id=${order.id}">Refresh status</button>
+<a th:href="@{/orders}">Back to orders</a>
+<script th:src="@{/js/orders.js}"></script>
+</body>
+</html>

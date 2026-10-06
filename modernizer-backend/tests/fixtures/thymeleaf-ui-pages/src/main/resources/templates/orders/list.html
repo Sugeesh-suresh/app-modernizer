@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security" layout:decorate="~{layouts/main}">
+<body>
+<div layout:fragment="content">
+<div th:replace="~{fragments/header :: header}"></div>
+<form id="searchForm" th:action="@{/orders}" method="get">
+  <input type="text" name="q" th:value="${q}" maxlength="40"/>
+  <select id="statusFilter" name="status">
+    <option th:each="s : ${statuses}" th:value="${s}" th:text="${s}">OPEN</option>
+  </select>
+  <button type="submit">Search</button>
+</form>
+<button type="button" id="filtersBtn" data-bs-toggle="modal" data-bs-target="#filterModal">Filters</button>
+<input id="quickJump" type="text" placeholder="Order #"/>
+<button id="jumpBtn" type="button">Go</button>
+<button id="bulkDelete" type="button" sec:authorize="hasRole('ORDER_ADMIN')"
+        th:disabled="${#lists.isEmpty(orders)}" onclick="return confirmBulk()">Delete selected</button>
+<table id="orderGrid">
+  <thead><tr><th>Order</th><th>Customer</th><th>Status</th><th></th></tr></thead>
+  <tbody id="results">
+    <tr th:each="o : ${orders}">
+      <td><a th:href="@{/orders/{id}(id=${o.id})}" th:text="${o.id}">1</a></td>
+      <td th:text="${o.customer}">c</td>
+      <td th:text="${o.status}">s</td>
+      <td><button class="cancel-btn" th:if="${o.status.name() == 'OPEN'}"
+                  th:classappend="${o.overdue} ? 'btn-danger'" th:attr="data-id=${o.id}">Cancel</button></td>
+    </tr>
+  </tbody>
+</table>
+<a th:href="@{/orders(page=${page + 1},q=${q})}">Next page</a>
+</div>
+<script th:src="@{/js/orders.js}"></script>
+</body>
+</html>

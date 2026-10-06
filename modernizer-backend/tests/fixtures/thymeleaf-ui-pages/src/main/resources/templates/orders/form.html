@@ -1,0 +1,11 @@
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<form id="orderForm" th:action="@{/orders}" th:object="${orderForm}" method="post">
+  <input type="text" th:field="*{customer}" required maxlength="80"/>
+  <span th:errors="*{customer}"></span>
+  <input type="number" th:field="*{quantity}" min="1" max="50" required/>
+  <input type="email" th:field="*{email}"/>
+  <button type="submit">Place order</button>
+</form>
+</body>
+</html>

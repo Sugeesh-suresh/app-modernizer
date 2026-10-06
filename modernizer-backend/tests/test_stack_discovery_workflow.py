@@ -626,7 +626,8 @@ class TestUiInteractionContracts:
         inventory, result = self._ui_result(tmp_path)
         sid = _session(PRESCAN)
         asyncio.run(main._update_state(sid, {"interfaces_json": json.dumps(inventory),
-                                             "ui_contracts_json": json.dumps(result)}))
+                                             "ui_contracts_json": json.dumps(result),
+                                             "workspace_dir": str(tmp_path)}))
 
         _run(sid, ["java"])
 
@@ -646,6 +647,10 @@ class TestUiInteractionContracts:
         assert "did not describe (1)" in evidence and "UI-004" in evidence
         assert "### Abbreviated lists replaced in the technical documents" in evidence
         assert "## Endpoint Contracts (computed)" in spec and "### Web pages and templates (3)" in spec
+        # Every page with every interactive element, after the UI-to-Backend Contracts.
+        from agents.shared import ui_pages
+        assert spec.index("## UI-to-Backend Contracts (computed)") < spec.index(ui_pages.HEADING)
+        assert "### Page `" in spec[spec.index(ui_pages.HEADING):]
         assert "Interface Overview" in h.request("ea_spec") or "do not re-list them" in h.request("ea_spec")
 
 

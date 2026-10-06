@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<body>
+<nav>
+  <a id="navOrders" th:href="@{/orders}">Orders</a>
+  <a id="navAdmin" sec:authorize="hasRole('ADMIN')" th:href="@{/admin}">Admin</a>
+</nav>
+<main layout:fragment="content"></main>
+</body>
+</html>

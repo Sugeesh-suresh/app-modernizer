@@ -1,0 +1,7 @@
+<html xmlns:th="http://www.thymeleaf.org">
+<header th:fragment="header">
+  <span th:text="${currentUser}">user</span>
+  <a th:href="@{/orders}">Orders</a>
+  <a th:href="@{/orders/new}">New order</a>
+</header>
+</html>

@@ -51,7 +51,7 @@ from agents.java_8_to_11 import preflight as java11_preflight
 from agents.shared import (arch_diagrams, config_matrix, current_state, docx_export, evidence_pack, external_rules,
                            grounding, interfaces,
                            existing_tests, migration_inventory, plain_language, repo_fingerprint, rule_candidates,
-                           rules_ledger, ui_contracts, ui_screens)
+                           rules_ledger, ui_contracts, ui_pages, ui_screens)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -2064,6 +2064,19 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         ui_result = json.loads(state["ui_contracts_json"])
     contracts_md = ui_contracts.to_markdown(ui_result)
     endpoint_contracts_md = ui_contracts.contracts_markdown(ui_result)
+    # Every page and every interactive element on it: id, action, state, navigation, calls and fields.
+    if "technical_spec" not in documents:
+        pages_md = ""
+    elif "ui_pages_markdown" not in state:
+        try:
+            pages_md = await asyncio.to_thread(
+                lambda: ui_pages.to_markdown(ui_pages.scan(workspace_dir, endpoints_jobs, ui_result)))
+        except Exception as exc:                              # noqa: BLE001 — the documents do not depend on it
+            print(f"[discovery] UI pages scan failed: {type(exc).__name__}: {exc}", flush=True)
+            pages_md = ""
+        await _update_state(session_id, {"ui_pages_markdown": pages_md})
+    else:
+        pages_md = state["ui_pages_markdown"]
     # Every test file and every test it declares, from the files.
     if "test_inventory" not in documents:
         test_files = []
@@ -2271,7 +2284,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
             if section:
                 graphs.append(section.replace("## Dependency Graph & Build Order",
                                               f"## Dependency Graph & Build Order — {label}", 1))
-    tech_spec = "\n\n".join(graphs + [md for md in (inventory_md, endpoint_contracts_md, contracts_md, config_md) if md]
+    tech_spec = "\n\n".join(graphs + [md for md in (inventory_md, endpoint_contracts_md, contracts_md, pages_md, config_md) if md]
                             + ([ea_spec] if ea_spec else [])) if "technical_spec" in documents else ""
     test_inventory = "\n\n".join(md for md in (test_files_md, ea_tests) if md) \
         if "test_inventory" in documents else ""
