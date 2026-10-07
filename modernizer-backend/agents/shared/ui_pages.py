@@ -69,6 +69,8 @@ class Component:
     reads: list = field(default_factory=list)       # "script.js:12"
     selectors: list = field(default_factory=list)   # the script selectors that matched it
     label_text: str = ""                            # its <label>
+    options: list = field(default_factory=list)     # a select's fixed options: [value, text]
+    read_by: list = field(default_factory=list)     # names of the script functions that read its value
     ref: str = ""
 
     @property
@@ -140,6 +142,7 @@ class _Reader(html.parser.HTMLParser):
         self._script: dict | None = None
         self._switch: list[str] = []
         self._labels: list[dict] = []                         # open <label>s
+        self._option: Component | None = None                 # the select whose <option> is open
         self.label_for: dict[str, str] = {}                   # element id -> its label's text
 
     def _conditions(self) -> list[str]:
@@ -202,6 +205,11 @@ class _Reader(html.parser.HTMLParser):
                 self._labels[-1]["fields"].append(comp)
         if tag == "label":
             self._labels.append({"for": a.get("for", ""), "text": [], "fields": []})
+        if tag == "option" and not (a.get("th:each") or a.get("data-th-each")):
+            select = next((c for c in reversed(self._open) if c.kind == "select"), None)
+            if select is not None:
+                select.options.append([a.get("value"), ""])
+                self._option = select
         void = tag in uc._TemplateReader._VOID
         if not void:
             self._stack.append((tag, conds, fragment, bool(a.get("th:switch"))))
@@ -225,6 +233,13 @@ class _Reader(html.parser.HTMLParser):
             self._script = None
         if tag in ("form", "form:form") and self._forms:
             self._forms.pop()
+        if tag in ("option", "select"):
+            if self._option is not None and self._option.options:
+                opt = self._option.options[-1]
+                opt[1] = re.sub(r"\s+", " ", opt[1]).strip()
+                if opt[0] is None:
+                    opt[0] = opt[1]
+            self._option = None
         if tag == "label" and self._labels:
             lab = self._labels.pop()
             text = re.sub(r"\s+", " ", "".join(lab["text"])).strip()
@@ -252,6 +267,8 @@ class _Reader(html.parser.HTMLParser):
             return
         for lab in self._labels:
             lab["text"].append(data)
+        if self._option is not None and self._option.options:
+            self._option.options[-1][1] += data
         for c in self._open:
             if c.tag.split(":")[-1] not in ("table", "form", "select", "textarea"):
                 c.text += data
@@ -300,6 +317,13 @@ _EFFECTS = [
     (re.compile(_SEL + r"\s*\.\s*(?:DataTable|dataTable|handsontable|jqGrid|bootstrapTable|kendoGrid)\s*\("),
      lambda m: f"fills grid {_sel(m.group(1))} with the response"),
     (re.compile(r"\b(\w+)\s*\.\s*(?:loadData|setData)\s*\("), lambda m: f"reloads grid `{m.group(1)}` with new data"),
+    (re.compile(r"\b(\w+)\s*\.\s*updateSettings\s*\(\s*\{[^}]*\b(?:columns|colHeaders)\b"),
+     lambda m: f"changes the columns of grid `{m.group(1)}`"),
+    (re.compile(r"getPlugin\(\s*['\"]hiddenColumns['\"]\s*\)\s*\.\s*(hideColumns?|showColumns?)"),
+     lambda m: f"{'hides' if m.group(1).startswith('hide') else 'shows'} grid columns"),
+    (re.compile(r"getPlugin\(\s*['\"](?:filters|search)['\"]\s*\)|\.search\s*\.\s*query\s*\("),
+     lambda m: "filters or highlights the grid rows in the browser"),
+    (re.compile(r"\.column\(\s*[^)]*\)\s*\.\s*visible\s*\("), lambda m: "shows or hides grid columns"),
     (re.compile(r"(localStorage|sessionStorage)\.setItem\(\s*['\"]([^'\"]+)"),
      lambda m: f"stores `{m.group(2)}` in {m.group(1)}"),
     (re.compile(r"\.preventDefault\(\s*\)"), lambda m: "stops the browser's default action"),
@@ -334,6 +358,18 @@ def _node_text(sc, node) -> str:
     return sc.src[node.start_byte:node.end_byte].decode("utf-8", "replace")
 
 
+def _grid_names(sc) -> dict[str, str]:
+    """`hot` → `#jobGrid` for `var hot = new Handsontable(document.getElementById('jobGrid'), …)`."""
+    text = sc.src.decode("utf-8", "replace")
+    out = {}
+    for m in re.finditer(r"\b(\w+)\s*=\s*new\s+Handsontable\s*\(\s*(?:document\.getElementById\(\s*['\"]([\w-]+)['\"]"
+                         r"\s*\)|(?:\$\w*|jQuery)\(\s*['\"]#([\w-]+)['\"]\s*\)\s*\[\s*0\s*\])", text):
+        out[m.group(1)] = "#" + (m.group(2) or m.group(3))
+    for m in re.finditer(r"\b(\w+)\s*=\s*(?:\$\w*|jQuery)\(\s*['\"](#[\w-]+)['\"]\s*\)\s*\.\s*(?:DataTable|dataTable)\s*\(", text):
+        out[m.group(1)] = m.group(2)
+    return out
+
+
 def _handler_effects(sc, fn) -> tuple[list[str], list[str]]:
     """What a handler function does on the page, with the functions it calls one hop down."""
     texts = [(fn, _node_text(sc, fn))]
@@ -344,8 +380,18 @@ def _handler_effects(sc, fn) -> tuple[list[str], list[str]]:
                 texts.append((other, _node_text(sc, other)))
                 names.append(name)
     effects = []
+    joined = "\n".join(t for _, t in texts)
+    grids = _grid_names(sc)
+    local = re.search(r"\.filter\s*\(", joined) and not re.search(
+        r"\$\s*\.\s*(?:ajax|get|post|getJSON)|\bfetch\s*\(|axios|XMLHttpRequest", joined)
     for node, text in texts:
         for e in _effects(text, sc.line(node), sc.rel):
+            m = re.match(r"(reloads grid|changes the columns of grid) `(\w+)`(.*)$", e)
+            if m and m.group(2) in grids:
+                e = f"{m.group(1)} `{grids[m.group(2)]}`{m.group(3)}"
+            if local and e.startswith("reloads grid"):
+                e = e.replace("reloads grid", "filters the rows already loaded and re-shows grid", 1) \
+                    .replace(" with new data", "")
             if e not in effects:
                 effects.append(e)
     return effects[:MAX_EFFECTS], names
@@ -437,7 +483,8 @@ def _expanded(rel: str, readers: dict, index: dict, rels: list, depth: int = 0, 
             out += _include(includes.pop(0), rel, readers, index, rels, depth, origin)
         if origin:                                     # a fragment's elements, once per including page
             copy = Component(c.file, c.line, c.tag, c.attrs, c.text, copies.get(id(c.form)) if c.form else None,
-                             list(c.conditions), c.fragment, origin, label_text=c.label_text)
+                             list(c.conditions), c.fragment, origin, label_text=c.label_text,
+                             options=c.options)
             copies[id(c)] = copy
             c = copy
         out.append(c)
@@ -703,6 +750,88 @@ def _grid_columns(sc, fns: list) -> list[dict]:
     return unique
 
 
+def _branch(sc, node, stop) -> dict | None:
+    """The `if` / `switch` / ternary branch `node` sits in, below `stop`: {"test", "case", "negate"}."""
+    while node is not None and node is not stop:
+        parent = node.parent
+        if parent is None:
+            return None
+        if parent.type == "switch_case":
+            value = parent.child_by_field_name("value")
+            sw = parent.parent.parent if parent.parent is not None else None
+            test = uc._text(sw.child_by_field_name("value"), sc.src).strip("() ") if sw is not None and \
+                sw.child_by_field_name("value") is not None else ""
+            return {"test": test, "case": uc._text(value, sc.src).strip("'\"`") if value is not None else None,
+                    "negate": False}
+        if parent.type == "switch_default":
+            return {"test": "", "case": None, "negate": True}
+        if parent.type == "if_statement" and node is not parent.child_by_field_name("condition"):
+            alt = parent.child_by_field_name("alternative")
+            inside_alt = alt is not None and alt.start_byte <= node.start_byte < alt.end_byte
+            return {"test": uc._text(parent.child_by_field_name("condition"), sc.src).strip("() "), "case": None,
+                    "negate": inside_alt}
+        node = parent
+    return None
+
+
+def _array_of(sc, value):
+    """An array literal, or the array a variable of the script is given."""
+    if value is None:
+        return None
+    if value.type == "array":
+        return value
+    if value.type == "identifier":
+        name = uc._text(value, sc.src)
+        stack = [sc.tree.root_node]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            if n.type == "variable_declarator" and uc._text(n.child_by_field_name("name"), sc.src) == name:
+                v = n.child_by_field_name("value")
+                if v is not None and v.type == "array":
+                    return v
+    return None
+
+
+def _column_sets(sc, fns: list) -> list[dict]:
+    """Each set of columns a handler gives a grid (`updateSettings({columns: …})`, a `columns:` option) with the
+    branch that picks it — how a view selector switches what the grid shows, without calling the server."""
+    out = []
+    for fn in fns:
+        stack = [fn]
+        while stack:
+            n = stack.pop()
+            stack.extend(n.children)
+            if n.type != "object":
+                continue
+            pairs = {uc._text(p.child_by_field_name("key"), sc.src).strip("'\""): p.child_by_field_name("value")
+                     for p in n.children if p.type == "pair"}
+            if "columns" not in pairs and "colHeaders" not in pairs:
+                continue
+            cols = []
+            arr = _array_of(sc, pairs.get("columns"))
+            for obj in (arr.children if arr is not None else []):
+                if obj.type != "object":
+                    continue
+                kv = {uc._text(p.child_by_field_name("key"), sc.src).strip("'\""): p.child_by_field_name("value")
+                      for p in obj.children if p.type == "pair"}
+                if kv.get("data") is not None and kv["data"].type == "string":
+                    title = next((uc._text(kv[k], sc.src).strip("'\"`") for k in ("title", "header", "name", "label")
+                                  if kv.get(k) is not None and kv[k].type == "string"), "")
+                    cols.append({"title": title, "field": uc._text(kv["data"], sc.src).strip("'\"`")})
+            headers = _array_of(sc, pairs.get("colHeaders"))
+            titles = [uc._text(h, sc.src).strip("'\"`") for h in (headers.children if headers is not None else [])
+                      if h.type == "string"]
+            for i, t in enumerate(titles):
+                if i < len(cols) and not cols[i]["title"]:
+                    cols[i]["title"] = t
+                elif i >= len(cols):
+                    cols.append({"title": t, "field": ""})
+            if cols:
+                out.append({"branch": _branch(sc, n, fn), "columns": cols, "at": f"{Path(sc.rel).name}:{sc.line(n)}"})
+    return out
+
+
 def _handler(sc, fn, event: str, how: str) -> dict:
     effects, called = _handler_effects(sc, fn) if fn is not None else ([], [])
     spans = []
@@ -712,8 +841,11 @@ def _handler(sc, fn, event: str, how: str) -> dict:
             for other in sc.functions.get(name, []):
                 spans.append((sc.rel, sc.line(other), other.end_point[0] + sc.first_line))
     reached = [fn] + [o for n in called for o in sc.functions.get(n, [])] if fn is not None else []
+    own = [n for n, nodes in sc.functions.items() for x in nodes if fn is not None and
+           (x.start_byte, x.end_byte) == (fn.start_byte, fn.end_byte)]
     return {"event": event, "how": how, "effects": effects, "spans": spans, "resolved": fn is not None,
-            "columns": _grid_columns(sc, reached)}
+            "functions": own + list(called),
+            "columns": _grid_columns(sc, reached), "sets": _column_sets(sc, reached) if reached else []}
 
 
 def _add_handler(c: Component, h: dict, calls: list) -> None:
@@ -799,11 +931,16 @@ def _tie_scripts(page: _Page, files: set, readers: dict, script, elements: list[
             for m in pattern.finditer(text):
                 sel = m.group(1) if pattern is _READS[0] else f"#{m.group(1)}"
                 line = text.count("\n", 0, m.start()) + sc.first_line
+                reader = min(((n, x) for n, xs in sc.functions.items() for x in xs
+                              if sc.line(x) <= line <= x.end_point[0] + sc.first_line),
+                             key=lambda nx: nx[1].end_byte - nx[1].start_byte, default=(None, None))[0]
                 for c in page.components:
                     if _matches(sel, c):
                         spot = f"{name}:{line}"
                         if spot not in c.reads:
                             c.reads.append(spot)
+                        if reader and reader not in c.read_by:
+                            c.read_by.append(reader)
     # Inline handlers (onclick="search()"): the named function in the page's scripts.
     for c in page.components:
         for key, value in c.attrs.items():
@@ -812,7 +949,7 @@ def _tie_scripts(page: _Page, files: set, readers: dict, script, elements: list[
                 continue
             event = next(g for g in m.groups() if g)
             effects = _effects(value, c.line, c.file)
-            spans, columns = [], []
+            spans, columns, sets, fnames = [], [], [], []
             names = [n for n in uc._HANDLER_CALL.findall(value) if n not in uc._JS_KEYWORDS]
             for rel, sc in sources:
                 if sc is None:
@@ -823,10 +960,13 @@ def _tie_scripts(page: _Page, files: set, readers: dict, script, elements: list[
                         effects += [x for x in h["effects"] if x not in effects]
                         spans += h["spans"]
                         columns += h["columns"]
+                        sets += h["sets"]
+                        fnames += h["functions"]
             calls = [e for e in elements if (lambda s: s and s.group(1) == c.file and int(s.group(2)) == c.line)(
                 re.search(r"inline \w+ handler in (\S+):(\d+)", e.get("via", "")))] + _calls_in(spans, elements)
             _add_handler(c, {"event": event, "how": f"inline `{value.strip()}`", "effects": effects[:MAX_EFFECTS],
-                             "spans": spans, "resolved": True, "columns": columns}, calls)
+                             "spans": spans, "resolved": True, "columns": columns, "sets": sets,
+                             "functions": fnames}, calls)
     # Where an element with no behaviour found is named in the page's scripts.
     for c in page.components:
         if c.handlers or c.calls or c.reads or not c.attrs.get("id") or c.kind not in ("button", "link", "checkbox", "radio",
@@ -1002,7 +1142,7 @@ def _actions(page: _Page, c: Component) -> list[dict]:
         if c.form is not None and c.name():
             out.append(f"nothing is sent yet — the value goes as `{c.name()}` when form {c.form.ref} is submitted")
         if c.reads and not primary_handlers:
-            out.append("the value is read by the script at " + ", ".join(f"`{r}`" for r in c.reads))
+            out.append(_used_by(page, c))
     if a.get("target") == "_blank" and out:
         out[0] += " (in a new tab)"
     if not out:
@@ -1015,16 +1155,21 @@ def _actions(page: _Page, c: Component) -> list[dict]:
             out.append("no behaviour found in the code")
     action = _primary_action(c) or (_EVENT_ACTION.get(primary_handlers[0]["event"], primary_handlers[0]["event"])
                                     if primary_handlers else "—")
-    rows.append({"action": action, "outcomes": list(dict.fromkeys(out)), "calls": calls, "via_form": via_form,
-                 "columns": [col for h in primary_handlers for col in h.get("columns", [])]})
+    client = bool([x for h in primary_handlers for x in h["effects"] if not x.startswith(_SILENT)])
+    option_rows = _option_rows(page, c, primary_handlers, calls) if kind == "select" else []
+    if option_rows:
+        rows += option_rows
+    else:
+        rows.append({"action": action, "outcomes": list(dict.fromkeys(out)), "calls": calls, "via_form": via_form,
+                     "columns": [col for h in primary_handlers for col in h.get("columns", [])], "client": client,
+                     "toggle": bool(toggle)})
 
     # Pressing Enter in a form's text field submits the form.
     if kind == "input" and c.form is not None and a.get("type", "text").lower() not in (
             "checkbox", "radio", "file", "range", "color"):
         form_calls = [e for e in c.form.calls if e.get("url")]
-        rows.append({"action": "press Enter", "calls": [], "via_form": c.form, "columns": [],
-                     "outcomes": [f"submits form {c.form.ref} — the same result as {c.form.ref}"
-                                  if form_calls else f"submits form {c.form.ref}"]})
+        rows.append({"action": "press Enter", "calls": [], "via_form": c.form, "columns": [], "client": False,
+                     "outcomes": [f"the same result as {c.form.ref}" if form_calls else ""]})
 
     # Every other event a script listens for, one row each.
     by_action: dict[str, list] = {}
@@ -1036,17 +1181,120 @@ def _actions(page: _Page, c: Component) -> list[dict]:
             calls += [e for e in h.get("calls", []) if e not in calls]
         out = _effect_outcomes(page, [x for h in handlers for x in h["effects"]], _call_outcomes(page, calls))
         rows.append({"action": action, "calls": calls, "via_form": None,
+                     "client": bool([x for h in handlers for x in h["effects"] if not x.startswith(_SILENT)]),
                      "columns": [col for h in handlers for col in h.get("columns", [])],
                      "outcomes": list(dict.fromkeys(out)) or ["a handler runs; it changes nothing on the page that "
                                                               "the scan recognises"]})
+    for row in rows:
+        _label(page, row)
     return rows
+
+
+def _used_by(page: _Page, c: Component) -> str:
+    """`the value is used by `filterJobs()` (`job_list.js:39`) when C1 type text, C3 check / uncheck`."""
+    where = ", ".join(f"`{r}`" for r in c.reads)
+    spots = [(r.rsplit(":", 1)[0], int(r.rsplit(":", 1)[1])) for r in c.reads if r.rsplit(":", 1)[-1].isdigit()]
+    runs = []
+    for other in page.components:
+        for h in other.handlers:
+            inside = any(Path(rel).name == f and a <= line <= b for f, line in spots for rel, a, b in h["spans"])
+            if inside or set(h.get("functions", [])) & set(c.read_by):
+                action = _EVENT_ACTION.get(h["event"], h["event"])
+                if h["event"] in _PRIMARY_EVENTS.get(other.kind, set()):
+                    action = _primary_action(other) or action
+                runs.append(f"{other.ref} {action}")
+    if not c.read_by and not runs:
+        return f"the value is read by the script at {where}"
+    names = ", ".join(f"`{n}()`" for n in c.read_by) or "the script"
+    return f"the value is used by {names} ({where})" + (" when " + ", ".join(dict.fromkeys(runs)) if runs else "")
+
+
+def _option_rows(page: _Page, c: Component, handlers: list, calls: list) -> list[dict]:
+    """A select whose handler switches the grid between column sets by the chosen value: one row per option."""
+    sets = [st for h in handlers for st in h.get("sets", []) if st["branch"]]
+    if not sets or not c.options:
+        return []
+
+    def picks(st, value) -> bool:
+        b = st["branch"]
+        if b["case"] is not None:
+            return b["case"] == value
+        return not b["negate"] and bool(re.search(r"(['\"`])" + re.escape(value) + r"\1", b["test"]))
+
+    matched = {v: next((st for st in sets if picks(st, v)), None) for v, _ in c.options}
+    others = [st for st in sets if not any(st is m for m in matched.values())
+              and (st["branch"]["negate"] or st["branch"]["case"] is None and not re.search(r"['\"`]", st["branch"]["test"]))]
+    rows = []
+    grid = next((m.group(1) for h in handlers for x in h["effects"]
+                 for m in [re.search(r"grid `([^`]+)`", x)] if m), "the grid")
+    for value, text in c.options:
+        st = matched[value] or (others[0] if len(others) == 1 else None)
+        label = text or value
+        if st is None:
+            rows.append({"action": f"choose \"{label}\"", "calls": calls, "via_form": None, "columns": [],
+                         "client": False, "outcomes": ["no view of its own found in the code"]})
+            continue
+        rows.append({"action": f"choose \"{label}\"", "calls": calls, "via_form": None, "client": True,
+                     "columns": [dict(col, condition="", at=st["at"]) for col in st["columns"]],
+                     "outcomes": [f"switches `{grid}` to the \"{label}\" columns: "
+                                  + ", ".join(col["title"] or f"`{col['field']}`" for col in st["columns"])
+                                  + f" (`{st['at']}`)"]})
+    return rows
+
+
+def _label(page: _Page, row: dict) -> None:
+    """Say first what kind of thing the action does, then the detail."""
+    calls = [e for e in (row["via_form"].calls if row["via_form"] is not None else row["calls"]) if e.get("url")]
+    kinds = {(page.contracts.get(k) or {}).get("kind") for e in calls for k in e["endpoints"]}
+    outs = row["outcomes"]
+    navigates = any(o.startswith(("loads page", "navigates to", "redirects to")) or " → page " in o for o in outs)
+    if row["via_form"] is not None:
+        label = f"Submits form {row['via_form'].ref}"
+        outs = [o for o in outs if not o.startswith("submits form")]
+    elif kinds - {"REST", None}:
+        label = "Loads a page"
+    elif "REST" in kinds:
+        label = "Calls the server; stays on this page"
+    elif any(not e["endpoints"] for e in calls):
+        label = "Requests a URL the code does not serve"
+    elif navigates:
+        label = "Loads a page"
+    elif row.get("toggle"):
+        label = "Opens a dialog or panel (no server call)"
+    elif any(o.startswith("scrolls to") for o in outs):
+        label = "Moves within this page (no server call)"
+    elif any(o.startswith("opens external page") for o in outs):
+        label = "Opens an external page"
+    elif row.get("client"):
+        label = "Changes this page only (no server call)"
+    elif any("goes as `" in o for o in outs):
+        label = "Nothing happens yet"
+    elif any(o.startswith("shows one row per item") for o in outs):
+        label = "Display only"
+    elif any(o.startswith(("the value is read by the script", "the value is used by")) for o in outs):
+        label = "No action of its own"
+    else:
+        label = ""
+    details = [o.replace("nothing is sent yet — ", "") for o in outs
+               if o and o != "calls the server and stays on this page"]
+    if label == "Loads a page":
+        details = [d[len("loads page "):] if d.startswith("loads page ") else d for d in details]
+    elif label.startswith("Moves within this page"):
+        details = [d.replace(" on this page", "") for d in details]
+    asks = [d for d in details if d.startswith("asks for confirmation")]
+    details = [d for d in details if d not in asks] + [f"first {d}" for d in asks]
+    row["outcomes"] = [f"{label}: " + "; ".join(details) if label and details else label or "; ".join(details)]
+    row["no_call"] = not calls
 
 
 def _row_api(page: _Page, row: dict) -> str:
     if row["via_form"] is not None:
         api = _api_text(page, [e for e in row["via_form"].calls if e.get("url")])
         return f"via form {row['via_form'].ref}: {api}" if api else "none"
-    return _api_text(page, row["calls"]) or "none"
+    api = _api_text(page, row["calls"])
+    if api:
+        return api
+    return "none — handled in the browser" if row.get("client") or row.get("toggle") else "none"
 
 
 def _conditions(c: Component) -> list[str]:
@@ -1133,14 +1381,15 @@ def _detail(page: _Page, c: Component, printed: dict | None = None) -> list[str]
     for row in rows:
         if not row.get("columns"):
             continue
-        table = [f"| {_cell(col['title']) or '—'} | {_response_field(page, row['calls'], col['field'])} | "
+        source = row["calls"] or [e for e in page.page_calls if e.get("url")]   # columns of data already loaded
+        table = [f"| {_cell(col['title']) or '—'} | {_response_field(page, source, col['field']) if col['field'] else '—'} | "
                  f"{_cell(col['condition']) or 'always'} (`{col['at']}`) |" for col in row["columns"]]
         key = "\n".join(table)
         if key in printed:
-            lines += ["", f"Grid columns after \"{row['action']}\": the same as {printed[key]}."]
+            lines += ["", f"Grid columns after {row['action']}: the same as {printed[key]}."]
             continue
-        printed[key] = f"{c.ref} \"{row['action']}\""
-        lines += ["", f"Grid columns after \"{row['action']}\":", "", "| Column | Response field | Shown |",
+        printed[key] = f"{c.ref} {row['action']}"
+        lines += ["", f"Grid columns after {row['action']}:", "", "| Column | Response field | Shown |",
                   "|---|---|---|"] + table
     return lines
 

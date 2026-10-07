@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<h1>PDS Self Service Job List</h1>
+<label for="jobSearch">Search:</label>
+<input id="jobSearch" type="text"/>
+<select id="searchField">
+  <option value="fileMatch">File Match</option>
+  <option value="jobName">Job Name</option>
+  <option value="description">Description</option>
+</select>
+<label><input id="exactSearch" type="checkbox"/> Exact Search</label>
+<select id="viewSelect">
+  <option value="Standard">Standard</option>
+  <option value="Description">Description</option>
+  <option value="Dev">Dev</option>
+</select>
+<div id="loadStatus"></div>
+<div id="jobGrid"></div>
+<script th:src="@{/selfservicetool/job_list.js}"></script>
+</body>
+</html>

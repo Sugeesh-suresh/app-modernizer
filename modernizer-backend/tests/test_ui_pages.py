@@ -64,7 +64,7 @@ def _detail(md: str, page: str, head: str) -> str:
 
 def test_pages_are_the_templates_a_handler_renders_not_fragments_or_layouts(pages):
     assert sorted(pages) == [T + "dashboard/attribute_search.html", T + "orders/detail.html",
-                             T + "orders/form.html", T + "orders/list.html"]
+                             T + "orders/form.html", T + "orders/list.html", T + "selfservicetool/job_list.html"]
     listing = pages[T + "orders/list.html"]
     assert listing.includes == [T + "fragments/header.html", T + "layouts/main.html"]
     assert listing.scripts == ["src/main/resources/static/js/orders.js"]
@@ -83,29 +83,31 @@ def test_one_row_per_action_with_the_api_of_that_action(md):
         ("C14", "— (no id)", "click"), ("C15", "— (class=`cancel-btn`)", "click"), ("C16", "— (no id)", "click")]
     # Typing calls nothing; pressing Enter submits the form and calls its endpoint.
     assert _row(md, "orders/list.html", "C6a")[3:] == [
-        "nothing is sent yet — the value goes as `q` when form C5 is submitted", "none"]
+        "Nothing happens yet: the value goes as `q` when form C5 is submitted", "none"]
     assert _row(md, "orders/list.html", "C6b")[3:] == [
-        "submits form C5 — the same result as C5", f"via form C5: {LIST_API} — UI-012"]
+        "Submits form C5: the same result as C5", f"via form C5: {LIST_API} — UI-013"]
 
 
 def test_button_click_checkbox_and_its_grid(md):
     page = "dashboard/attribute_search.html"
     assert _row(md, page, "C4") == [
         "`#searchButton`", 'button "Search"', "click",
-        "calls the server and stays on this page; fills grid `#attributeGrid` with the response "
+        "Calls the server; stays on this page: fills grid `#attributeGrid` with the response "
         "(`attribute_search.js:17`)", ATTR_API]
     assert _row(md, page, "C6") == [
         "`#showValues`", 'checkbox "Show Values"', "check / uncheck",
-        "calls the server and stays on this page; fills grid `#attributeGrid` with the response "
+        "Calls the server; stays on this page: fills grid `#attributeGrid` with the response "
         "(`attribute_search.js:17`)", ATTR_API]
     assert _row(md, page, "C5")[2:] == [
-        "click", "sets the value of `#attrQuery` (`attribute_search.js:23`); clears `#attributeGrid` "
-                 "(`attribute_search.js:24`)", "none"]
+        "click", "Changes this page only (no server call): sets the value of `#attrQuery` (`attribute_search.js:23`); "
+                 "clears `#attributeGrid` (`attribute_search.js:24`)", "none — handled in the browser"]
+    assert _row(md, page, "C3")[3] == ("No action of its own: the value is used by `search()` "
+                                       "(`attribute_search.js:5`) when C4 click, C6 check / uncheck")
     assert _row(md, page, "C1")[2:] == ["click", "no behaviour found in the code", "none"]
     search = _detail(md, page, '#searchButton · button "Search"**')
     assert "| Value | `[].value` | only when `#showValues` is checked (`attribute_search.js:15`) |" in search
     assert "| ID | `[].id` | always (`attribute_search.js:13`) |" in search
-    assert 'Grid columns after "check / uncheck": the same as C4 "click".' in \
+    assert "Grid columns after check / uncheck: the same as C4 click." in \
         _detail(md, page, '#showValues · checkbox "Show Values"**')
     section = _section(md, page)
     assert "handsontable-chosen-editor.js` (third-party, not read)" in section and "keydown" not in section
@@ -113,33 +115,37 @@ def test_button_click_checkbox_and_its_grid(md):
 
 def test_links_forms_and_buttons_say_which_page_loads(md):
     page = "orders/list.html"
-    assert _row(md, page, "C2")[3:] == ["requests `/admin` — no handler in the code serves this path",
-                                        "`GET /admin` — no handler found in the code (UI-009)"]
-    assert _row(md, page, "C5")[3:] == ["loads page `orders/list.html` with the results", f"{LIST_API} — UI-012"]
-    assert _row(md, page, "C8")[3:] == ["submits form C5; loads page `orders/list.html` with the results",
-                                        f"via form C5: {LIST_API} — UI-012"]
-    assert _row(md, page, "C9")[3:] == ["opens modal `#filterModal` on this page", "none"]
-    assert _row(md, page, "C10")[3:] == ["the value is read by the script at `orders.js:16`", "none"]
+    assert _row(md, page, "C2")[3:] == ["Requests a URL the code does not serve: requests `/admin` — no handler "
+                                        "in the code serves this path",
+                                        "`GET /admin` — no handler found in the code (UI-010)"]
+    assert _row(md, page, "C5")[3:] == ["Loads a page: `orders/list.html` with the results", f"{LIST_API} — UI-013"]
+    assert _row(md, page, "C8")[3:] == ["Submits form C5: loads page `orders/list.html` with the results",
+                                        f"via form C5: {LIST_API} — UI-013"]
+    assert _row(md, page, "C9")[3:] == ["Opens a dialog or panel (no server call): opens modal `#filterModal` on "
+                                        "this page", "none — handled in the browser"]
+    assert _row(md, page, "C10")[3:] == ["No action of its own: the value is used by the script (`orders.js:16`) "
+                                         "when C11 click", "none"]
     assert _row(md, page, "C11")[3:] == [
-        "loads page `orders/detail.html`",
+        "Loads a page: `orders/detail.html`",
         "`GET /orders/{id}` → `OrderPageController.detail` (`OrderPageController.java:26`) — UI-004"]
-    assert _row(md, page, "C12")[3] == ('asks for confirmation: "Delete the selected orders?" (`orders.js:25`); '
-                                        'loads page `orders/list.html`')
+    assert _row(md, page, "C12")[3] == ('Loads a page: `orders/list.html`; first asks for confirmation: '
+                                        '"Delete the selected orders?" (`orders.js:25`)')
     assert _row(md, page, "C15")[3:] == [
-        "calls the server and stays on this page; shows a message: `res.message` (`orders.js:5`); sets `disabled` "
+        "Calls the server; stays on this page: shows a message: `res.message` (`orders.js:5`); sets `disabled` "
         "= `true` on the element itself (`orders.js:6`)",
         "`POST /api/orders/{id}/cancel` → `OrderApiController.cancel` (`OrderApiController.java:18`) — UI-002"]
     assert _row(md, page, "C7")[3:] == [
-        "its options come from `statuses`, rendered with the page; nothing is sent yet — the value goes as "
+        "Nothing happens yet: its options come from `statuses`, rendered with the page; the value goes as "
         "`status` when form C5 is submitted", "none"]
-    assert _row(md, page, "C13")[3:] == ["shows one row per item of `orders`, rendered with the page", "none"]
+    assert _row(md, page, "C13")[3:] == ["Display only: shows one row per item of `orders`, rendered with the page",
+                                         "none"]
 
 
 def test_a_form_submit_names_the_redirect_and_the_page_shown_again(md):
     assert _row(md, "orders/form.html", "C1")[2:] == [
-        "submit", "redirects to `/orders` and loads page `orders/list.html`, or shows page `orders/form.html` again "
-                  "(e.g. with validation errors)",
-        "`POST /orders` → `OrderPageController.create` (`OrderPageController.java:39`) — UI-011"]
+        "submit", "Loads a page: redirects to `/orders` and loads page `orders/list.html`, or shows page "
+                  "`orders/form.html` again (e.g. with validation errors)",
+        "`POST /orders` → `OrderPageController.create` (`OrderPageController.java:39`) — UI-012"]
     form = _detail(md, "orders/form.html", "#orderForm · form**")
     assert "| `quantity` | number | type=number, required, min=1, max=50 |" in form
     assert "Server-side types and constraints of these fields: Endpoint Contracts → `POST /orders`." in form
@@ -176,7 +182,7 @@ def test_visibility_and_state_are_in_the_element_details(md):
 
 def test_a_fragment_element_is_on_every_page_that_includes_it(md):
     for page in ("orders/list.html", "orders/detail.html"):
-        assert any(r[1] == 'link "New order"' and r[3] == "loads page `orders/form.html`" for r in
+        assert any(r[1] == 'link "New order"' and r[3] == "Loads a page: `orders/form.html`" for r in
                    [x[1:] for x in _rows(md, page)])
 
 
@@ -219,3 +225,31 @@ def test_a_javascript_url_expression_keeps_its_literal_parts():
 def test_no_pages_gives_no_section(tmp_path):
     assert ui_pages.scan(str(tmp_path), {"endpoints": []}, {"screens": [], "contracts": []}) == []
     assert ui_pages.to_markdown([]) == ""
+
+
+def test_client_side_actions_say_so_and_call_no_api(md):
+    """The Job List: the search box and Exact Search filter the rows already loaded, the view selector
+    switches the grid's columns — none of them calls the server."""
+    page = "selfservicetool/job_list.html"
+    section = _section(md, page)
+    assert "- Page load: `GET /api/jobs` → `JobApiController.all`" in section
+    assert _row(md, page, "C1")[2:] == [
+        "type text", "Changes this page only (no server call): filters the rows already loaded and re-shows grid "
+                     "`#jobGrid` (`job_list.js:45`)", "none — handled in the browser"]
+    assert _row(md, page, "C2")[2:] == [
+        "choose an option", "No action of its own: the value is used by `filterJobs()` (`job_list.js:39`) when C1 "
+                            "type text, C3 check / uncheck", "none"]
+    assert _row(md, page, "C3")[3:] == [
+        "Changes this page only (no server call): filters the rows already loaded and re-shows grid `#jobGrid` "
+        "(`job_list.js:45`)", "none — handled in the browser"]
+    assert _row(md, page, "C4b") == [
+        "`#viewSelect`", "select", 'choose "Description"',
+        'Changes this page only (no server call): switches `#jobGrid` to the "Description" columns: Job ID, '
+        "Job Name, Status, Attribute, Description, Edit, Run (`job_list.js:26`)", "none — handled in the browser"]
+    assert [r[3] for r in _rows(md, page) if r[0].startswith("C4")] == [
+        'choose "Standard"', 'choose "Description"', 'choose "Dev"']
+    assert _row(md, page, "C4a")[3].endswith("Job ID, Job Name, Status, Attribute, Attribute Type, Edit "
+                                             "(`job_list.js:32`)")
+    view = _detail(md, page, "#viewSelect · select**")
+    assert 'Grid columns after choose "Dev":' in view
+    assert "| File Name | `[].fileName` | always (`job_list.js:29`) |" in view   # from the page-load response
