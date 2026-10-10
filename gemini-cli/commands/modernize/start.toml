@@ -1,0 +1,17 @@
+description = "Start a modernization run on this repository: /modernize:start <pattern> [incremental] [springboot] [junit] [context=<file>,...]"
+prompt = """
+Start a Stella Modernizer run on the current repository. The user's arguments: `{{args}}`
+
+1. Work out the pattern from the arguments. Valid patterns: `java-8-to-25`, `java-8-to-11`, `solr-4-to-9`,
+   `oracle-19c-to-23ai`, `tibco-ems-to-pubsub`, `jsp-to-react-bff`, `stack-discovery`. If none is given or it is
+   ambiguous, call `mcp_modernizer_list_patterns`, show the list and ask which one — do not guess.
+   For `java-8-to-25` only: "incremental" means migration_strategy=incremental (default bigbang), "springboot"
+   means springboot_upgrade=true, "junit" means junit_upgrade=true. `context=` lists Swagger / OpenAPI / design
+   files for the planner.
+2. Remind the user, in one line, that the run changes this repository in place after they approve the plan
+   (a baseline copy is kept), so a clean git working tree is recommended.
+3. Call `mcp_modernizer_start_run` with those arguments. If it says a run already exists, show its status
+   (`mcp_modernizer_run_status`) and ask whether to continue it (/modernize:next) or restart (restart=true).
+4. Then drive the pipeline exactly as `/modernize:next` does (see the Stella Modernizer context): loop on
+   `mcp_modernizer_next_step` until it returns a step for a person, the run is blocked, or it is done.
+"""

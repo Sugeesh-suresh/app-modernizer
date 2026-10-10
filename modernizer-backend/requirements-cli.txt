@@ -1,0 +1,18 @@
+# The Gemini CLI path (cli/, gemini-cli/): the deterministic tools and the MCP
+# server, without Google ADK, FastAPI or the web server. The models are Gemini
+# CLI's own; this environment never calls a model.
+#   python -m venv .venv-cli && .venv-cli/bin/pip install -r requirements-cli.txt
+# (gemini-cli/install.mjs does this for you.)
+mcp>=1.10
+python-dotenv>=1.0
+pypdf>=4.0.0
+python-docx>=1.1.0
+markdown-it-py>=3,<5
+pyyaml>=6.0
+tree-sitter>=0.25,<0.27
+tree-sitter-java>=0.23,<0.24
+tree-sitter-javascript>=0.23,<0.26
+tree-sitter-typescript>=0.23,<0.24
+pillow>=10.1
+# Optional — stack discovery's UI Screens document only (then: python dev.py setup-ui).
+# playwright>=1.40,<2

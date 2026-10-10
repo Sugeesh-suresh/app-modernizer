@@ -4,6 +4,8 @@ An AI-powered application modernization platform for migrating legacy codebases 
 
 The platform is built on **Google ADK** with **Gemini**, and its domain knowledge lives in editable skill files rather than in Python.
 
+It also runs **from Gemini CLI with no ADK pipeline and no web server** — the same skills, the same deterministic checks and the same human gates, driven by `/modernize:*` commands. See [Running from Gemini CLI](#running-from-gemini-cli).
+
 ---
 
 ## Supported Migration Patterns
@@ -211,6 +213,8 @@ Measured on a synthetic repository of 4,000 Java files and 1.49M lines: fingerpr
 ```
 modernizer-app/        ← React + TypeScript frontend (Vite + Tailwind)
 modernizer-backend/    ← Python backend (FastAPI + Google ADK + Gemini)
+  cli/                 ← the same pipeline for Gemini CLI (state machine + MCP server, no ADK)
+gemini-cli/            ← the Gemini CLI extension (subagents, /modernize commands, skills link)
 ```
 
 ### End-to-end pipeline
@@ -285,6 +289,27 @@ Phase 4  Cloud Native   Stage 7  Spring Boot 4.x
 ```
 
 Stages interleave so every stage lands on a supported JDK/framework combination, and each one must leave the project compiling — which is what makes a phase boundary a real rollback point. With the Spring Boot toggle off, only stages 1, 2, 3 and 6 run.
+
+---
+
+## Running from Gemini CLI
+
+Every pattern, every agent role and every skill also runs from a [Gemini CLI](https://github.com/google-gemini/gemini-cli) session, without the ADK pipeline or the web app:
+
+```bash
+node gemini-cli/install.mjs                 # Python env without ADK (requirements-cli.txt) + skills link
+gemini extensions link "$(pwd)/gemini-cli"  # once
+cd ~/src/legacy-app && gemini               # then: /modernize:start java-8-to-11
+```
+
+| Piece | In Gemini CLI |
+|---|---|
+| Skills (`agents/skills/*`) | Loaded as Gemini CLI skills — the same files, shared with the web app |
+| Agents | Seven role subagents (`gemini-cli/agents/`): analyst, planner, coder, validator, reviewer, writer, curator |
+| Deterministic tools and checks | The `modernizer` MCP server (`modernizer-backend/cli/mcp_server.py`) calls the same functions: inventories, preflight, scope fence, approved-versions gate, validators, change audit, plan conformance, discovery's computed sections, grounding |
+| Orchestration and HITL gates | `cli/pipeline.py` / `cli/discovery.py`, a state machine kept in the repository's `.modernizer/` folder; `/modernize:approve` and `/modernize:refine` answer the gates |
+
+The run works in place on the repository you opened (a baseline copy is kept under `~/.modernizer/`), and nothing changes before you approve the plan. Details, commands and the differences from the web pipeline: [gemini-cli/README.md](gemini-cli/README.md).
 
 ---
 

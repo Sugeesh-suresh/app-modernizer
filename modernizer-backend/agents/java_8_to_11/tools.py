@@ -20,7 +20,7 @@ loop exits green only when the real build passes AND this reports PASS.
 import json
 from pathlib import Path
 
-from google.adk.tools import ToolContext
+from ..shared.adk_compat import ToolContext
 
 from .. import config
 from . import preflight

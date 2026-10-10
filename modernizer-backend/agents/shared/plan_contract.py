@@ -20,12 +20,16 @@ approval time rather than discovered after the migration ran.
 `plan_contract.py` is deliberately free of ADK imports otherwise so the
 contract can be checked in a test without a session.
 """
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from google.adk.agents.callback_context import CallbackContext
-from google.genai import types as genai_types
+from .adk_compat import CallbackContext
+
+if TYPE_CHECKING:  # annotations only; the Gemini CLI path has no google-genai
+    from google.genai import types as genai_types
 
 
 @dataclass(frozen=True)

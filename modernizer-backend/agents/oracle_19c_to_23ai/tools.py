@@ -10,7 +10,7 @@ and deciding pass/fail as JSON) — only the fact-gathering is deterministic.
 """
 import re
 
-from google.adk.tools import ToolContext
+from ..shared.adk_compat import ToolContext
 
 from ..shared.workspace_tools import (  # noqa: F401 (re-exported)
     EXCLUDED_DIRS,

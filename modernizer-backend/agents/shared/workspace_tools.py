@@ -27,7 +27,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from google.adk.tools import ToolContext
+from .adk_compat import ToolContext
 
 # Single source of truth — this used to be a byte-identical copy, free to drift
 # from the one the diff and the change audit use.

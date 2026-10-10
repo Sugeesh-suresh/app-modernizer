@@ -35,6 +35,7 @@ from google.adk.tools.skill_toolset import SkillToolset
 from .. import config
 from ..shared.model_config import make_model
 from ..shared import skill_manifest
+from ..shared.rosters import PLAN_SKILL_ROSTERS
 from ..shared.callbacks import make_skill_update_callback
 from ..shared.learned_fixes import (
     jsp_targets, make_lesson_capture_callback, make_lesson_verify_callback, skill_targets,
@@ -46,29 +47,7 @@ from . import tools as fs_tools
 _MODEL = make_model()
 _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
 
-#: The plan's one stage heading. main.py splits the plan into tasks under it, so
-#: the planner skill must emit this title character for character.
-STAGE_TITLE = "Java 8 → Java 11"
-
-#: The rules every writing agent is held to, stated once so the modifier and the
-#: fixer cannot drift apart. The tools enforce them regardless; stating them
-#: saves the agent the refused call.
-FENCE_RULES = (
-    "Scope fence — enforced by your write tools, which refuse anything outside it:\n"
-    "- Only `.java` sources and build files (pom.xml, build.gradle[.kts], settings.gradle, "
-    "gradle.properties, Maven/Gradle wrapper properties) may change.\n"
-    "- JSP (.jsp/.jspf/.tag/.tld), everything under src/main/webapp, WEB-INF and META-INF, web.xml, "
-    "every WildFly/JBoss descriptor (jboss-*.xml, standalone*.xml, *-ds.xml, module.xml, *.cli) and "
-    "container launch configuration (standalone.conf, Dockerfile) are FROZEN.\n"
-    "- In build files: `<packaging>`, `<finalName>`, WildFly/JBoss deployment plugins and the "
-    "maven-war-plugin configuration stay exactly as they are (the WAR plugin's version alone may "
-    "move); the Java level is exactly 11, never higher; Spring Boot is never introduced.\n"
-    "- The Java EE namespace stays `javax.*` — never add a `jakarta.*` import.\n"
-    "- A dependency the WildFly container supplies (scope `provided`, or listed in "
-    "jboss-deployment-structure.xml) keeps its version: WildFly supplies it at runtime, not the WAR.\n"
-    "If the Java 11 upgrade genuinely cannot be completed inside the fence, stop and say exactly "
-    "what and why in your summary — never work around a refusal."
-)
+from .fence_rules import FENCE_RULES, STAGE_TITLE  # noqa: E402,F401 (re-exported for main.py)
 
 
 def _skill(name: str) -> SkillToolset:
@@ -179,16 +158,7 @@ re_synthesis_agent = LlmAgent(
 )
 
 # ── planner_agent ────────────────────────────────────────────────────────────
-_PLAN_SKILL_ROSTER: list[tuple[str, str]] = [
-    ("java-8-to-11-re-module", "Analysed the repository unit by unit (module, or part of one) into Module Findings"),
-    ("java-8-to-11-re", "Combined the Module Findings into the confirmed BRD, Technical Specification and Test Inventory"),
-    ("java-8-to-11-plan", "Produces this plan"),
-    ("java-8-to-11-modify", "Applies each task's `.java` and build-file changes, inside the scope fence"),
-    ("java-8-to-11-validate", "Packages the WAR at release 11 and checks the scope-fence invariants"),
-    ("java-8-to-11-fix", "Repairs build and invariant failures inside the loop, inside the scope fence"),
-    ("code-review", "Independent review of the result against this plan's manifest"),
-    ("java-8-to-11-report", "Produces the final migration report"),
-]
+_PLAN_SKILL_ROSTER: list[tuple[str, str]] = PLAN_SKILL_ROSTERS["java-8-to-11"]
 
 planner_agent = LlmAgent(
     name="java11_plan",

@@ -50,6 +50,7 @@ from ..shared.learned_fixes import (
     jsp_targets, make_lesson_capture_callback, make_lesson_verify_callback, skill_targets,
 )
 from ..shared import skill_manifest
+from ..shared.rosters import PLAN_SKILL_ROSTERS
 from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
 from ..shared.ux_designs import make_ux_design_callback
@@ -102,17 +103,7 @@ re_pipeline = SequentialAgent(
 # The plan's Skill Composition section, computed from each SKILL.md's frontmatter rather
 # than left to the model: the planner cannot see the roster, the order or the versions,
 # so a table it wrote itself would be invented.
-_PLAN_SKILL_ROSTER: list[tuple[str, str]] = [
-    ("jsp-re", "Extracted the verifiable facts of the JSP application that the Analysis, BRD, Technical Specification and Test Inventory were built from"),
-    ("jsp-logic-classifier", "Classified each JSP's logic as client-side or server-side"),
-    ("jsp-to-react-bff-plan", "Produces this plan"),
-    ("spring-boot-bff-generate", "Generates the Spring Boot 4 BFF tree"),
-    ("react-frontend-generate", "Generates the React frontend tree"),
-    ("jsp-to-react-bff-validate", "Builds both generated trees after each pass"),
-    ("jsp-to-react-bff-fix", "Repairs build errors inside the loop"),
-    ("code-review", "Independent review of the result against this plan's manifests"),
-    ("jsp-to-react-bff-report", "Produces the final migration report"),
-]
+_PLAN_SKILL_ROSTER: list[tuple[str, str]] = PLAN_SKILL_ROSTERS["jsp-to-react-bff"]
 
 planner_agent = LlmAgent(
     name="jsp_plan",

@@ -13,7 +13,7 @@ workspace first.
 import json
 from pathlib import Path
 
-from google.adk.tools import ToolContext
+from ..shared.adk_compat import ToolContext
 
 from ..shared.workspace_tools import (  # noqa: F401 (re-exported)
     EXCLUDED_DIRS,

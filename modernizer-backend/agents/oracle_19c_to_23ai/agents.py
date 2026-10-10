@@ -24,6 +24,7 @@ from ..shared.learned_fixes import (
     jsp_targets, make_lesson_capture_callback, make_lesson_verify_callback, skill_targets,
 )
 from ..shared import skill_manifest
+from ..shared.rosters import PLAN_SKILL_ROSTERS
 from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
 from . import tools as fs_tools
@@ -49,15 +50,7 @@ re_agent = LlmAgent(
 # The plan's Skill Composition section, computed from each SKILL.md's frontmatter rather
 # than left to the model: the planner cannot see the roster, the order or the versions,
 # so a table it wrote itself would be invented.
-_PLAN_SKILL_ROSTER: list[tuple[str, str]] = [
-    ("oracle-19c-to-23ai-re", "Reverse-engineered this repository into the confirmed BRD, Technical Specification and Test Inventory"),
-    ("oracle-19c-to-23ai-plan", "Produces this plan"),
-    ("oracle-19c-to-23ai-modify", "Applies the plan's file changes to the workspace"),
-    ("oracle-19c-to-23ai-validate", "Validates the migrated SQL/PLSQL after each pass"),
-    ("oracle-19c-to-23ai-fix", "Repairs validation errors inside the loop"),
-    ("code-review", "Independent review of the result against this plan's manifest"),
-    ("oracle-19c-to-23ai-report", "Produces the final migration report"),
-]
+_PLAN_SKILL_ROSTER: list[tuple[str, str]] = PLAN_SKILL_ROSTERS["oracle-19c-to-23ai"]
 
 planner_agent = LlmAgent(
     name="oracle_plan",

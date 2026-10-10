@@ -31,6 +31,8 @@ EXCLUDED_DIRS = {
     # JS/TS dependencies and build output
     "node_modules", "dist", "out", "coverage",
     ".next", ".nuxt", ".svelte-kit", ".output", ".turbo", ".parcel-cache", ".vite",
+    # The Gemini CLI run folder (cli/runstate.py): the run's own documents, not the repository.
+    ".modernizer",
 }
 
 

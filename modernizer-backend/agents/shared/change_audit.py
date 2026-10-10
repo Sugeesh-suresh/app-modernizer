@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypedDict
 
-from google.adk.tools import ToolContext
+from .adk_compat import ToolContext
 
 from . import scope_fence
 from .dependency_graph import EXCLUDED_DIRS

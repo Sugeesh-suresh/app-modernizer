@@ -1,0 +1,19 @@
+description = "Continue the modernization run: runs subagent steps until the next human gate"
+prompt = """
+Continue the Stella Modernizer run in this repository. Follow the "Driving the pipeline" loop from the
+Stella Modernizer context exactly:
+
+- Call `mcp_modernizer_next_step`.
+- kind `subagent`: call `invoke_agent` with agent_name = the named subagent and prompt = the text between
+  <query> and </query>, verbatim and complete. When it returns, call `mcp_modernizer_complete_step` with the
+  step_id. If complete_step says nothing was saved, invoke the subagent once more with the same query plus
+  "You did not call mcp_modernizer_save_output — do the work and save it." Then call next_step again.
+- kind `ask_user` or `review_gate`: stop and present the step's text to the user in plain words, with the
+  file paths to review and the commands that answer it. Do not answer a gate yourself.
+- kind `blocked`: stop and explain what must be fixed.
+- kind `done`: summarise the outcome and where the reports are.
+
+Between steps, tell the user in one line what finished and what runs next. Do not do a subagent's work
+yourself and do not edit files under `.modernizer/` except when the user asks you to edit a document under
+review.
+"""

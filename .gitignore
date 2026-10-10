@@ -1,5 +1,6 @@
 # Python backend
 modernizer-backend/.venv/
+modernizer-backend/.venv-cli/
 modernizer-backend/__pycache__/
 modernizer-backend/**/__pycache__/
 modernizer-backend/*.pyc

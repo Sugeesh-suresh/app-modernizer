@@ -1,0 +1,429 @@
+"""
+MCP server: the Stella Modernizer's deterministic tools and pipeline, for Gemini CLI.
+
+Run by the Gemini CLI extension (gemini-cli/gemini-extension.json, through
+gemini-cli/launch.mjs) over stdio. Tools act on the repository Gemini CLI has
+open (MODERNIZER_WORKSPACE, set by the extension), or on `workspace` when given.
+
+Three groups of tools:
+
+- **pipeline** — start_run, next_step, save_output, complete_step, confirm,
+  refine, run_status, export_docx: the state machine of cli/pipeline.py and
+  cli/discovery.py;
+- **workspace** (ws_*) — the subagents' write, build and check tools: the same
+  functions as the ADK agents' tools (agents/<pattern>/tools.py), so the Java 11
+  scope fence, the approved-versions gate, the build classification and the
+  change audit behave exactly as in the web pipeline;
+- **curator** — the skill curator's skill-file tools, restricted to the
+  pattern's own skills.
+
+Usage outside Gemini CLI: `python -m cli.mcp_server` (stdio).
+"""
+from __future__ import annotations
+
+import contextlib
+import os
+import sys
+from pathlib import Path
+
+_BACKEND = Path(__file__).resolve().parent.parent
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
+
+try:   # the same .env the web backend reads (MIGRATION_JAVA_HOME, MAVEN_SETTINGS, limits, ...)
+    from dotenv import load_dotenv
+    load_dotenv(_BACKEND / ".env")
+except ImportError:
+    pass
+
+try:                                                          # mcp 2.x
+    from mcp.server.mcpserver import MCPServer as _Server
+except ImportError:                                           # mcp 1.x
+    from mcp.server.fastmcp import FastMCP as _Server
+
+import anyio  # noqa: E402 — a dependency of mcp
+
+from cli import docs as cli_docs  # noqa: E402
+from cli import pipeline, patterns as P  # noqa: E402
+from cli.runstate import RUN_DIR, Run, RunError, resolve_workspace  # noqa: E402
+
+INSTRUCTIONS = """\
+Stella Modernizer: AI-driven application modernization (Java 8 -> 25 / 11, Solr 4 -> 9, Oracle 19c -> 23ai,
+TIBCO EMS -> Pub/Sub, JSP -> React + BFF) and stack discovery, run as a pipeline with two human gates.
+Drive it with next_step: it runs every deterministic step itself and returns the next step that needs a
+subagent (call that subagent with the returned query, then complete_step) or a person (ask them, then
+confirm / refine). Never edit `.modernizer/` files by hand except where a review gate invites it."""
+
+server = _Server("modernizer", instructions=INSTRUCTIONS)
+
+
+def _safe(fn, *args, **kwargs) -> str:
+    """Run a tool body with prints sent to stderr (stdout is the MCP channel) and
+    every expected failure returned as an `ERROR:` string the agent can read."""
+    with contextlib.redirect_stdout(sys.stderr):
+        try:
+            return fn(*args, **kwargs)
+        except (RunError, KeyError, ValueError) as exc:
+            return f"ERROR: {exc.args[0] if exc.args else exc}"
+
+
+async def _run(fn, *args, **kwargs) -> str:
+    """Tools can run builds for many minutes: off the event loop, so the server stays responsive."""
+    return await anyio.to_thread.run_sync(lambda: _safe(fn, *args, **kwargs))
+
+
+def _load(workspace: str = "") -> Run:
+    return Run.load(workspace or None)
+
+
+def _format_step(step: dict, log: list[str]) -> str:
+    lines = []
+    if log:
+        lines += ["## Done since the last step (no model)", *[f"- {entry}" for entry in log], ""]
+    lines.append(f"## Next: {step.get('title', step['id'])}")
+    lines.append(f"- step_id: `{step['id']}`")
+    lines.append(f"- kind: {step['kind']}")
+    if step["kind"] == "subagent":
+        lines += [f"- subagent: `{step['subagent']}`", "",
+                  f"Call the `{step['subagent']}` subagent with exactly this query, then call `complete_step` "
+                  f"with step_id `{step['id']}`:", "", "<query>", step["query"], "</query>"]
+    else:
+        lines += ["", step.get("text", "")]
+    return "\n".join(lines)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Pipeline
+# ═════════════════════════════════════════════════════════════════════════════
+
+@server.tool()
+async def list_patterns() -> str:
+    """List the modernization patterns this server can run, with what each changes."""
+    rows = [f"- `{p.id}` — {p.label}" for p in P.PATTERNS.values()]
+    rows.append(f"- `{P.STACK_DISCOVERY}` — Discover & reverse-engineer my stack (documents only; changes nothing)")
+    return "\n".join(rows) + ("\n\njava-8-to-25 also takes migration_strategy=bigbang|incremental, "
+                              "springboot_upgrade and junit_upgrade.")
+
+
+@server.tool()
+async def start_run(pattern: str, workspace: str = "", migration_strategy: str = "bigbang",
+                    springboot_upgrade: bool = False, junit_upgrade: bool = False,
+                    context_files: list[str] | None = None, restart: bool = False) -> str:
+    """Start a modernization run on the repository: snapshot it as the baseline, build the
+    dependency graph, detect companion migrations (or, for stack-discovery, the stacks).
+
+    Args:
+        pattern: java-8-to-25, java-8-to-11, solr-4-to-9, oracle-19c-to-23ai, tibco-ems-to-pubsub,
+            jsp-to-react-bff or stack-discovery.
+        workspace: Repository root; defaults to the Gemini CLI workspace.
+        migration_strategy: java-8-to-25 only — "bigbang" (one pass) or "incremental" (staged).
+        springboot_upgrade: java-8-to-25 only — also move to Spring Boot 4 / executable JAR.
+        junit_upgrade: java-8-to-25 only — also upgrade JUnit.
+        context_files: Swagger / OpenAPI / design documents (paths) for the planner.
+        restart: Discard an existing run in this repository and start over.
+    """
+    def body():
+        run = pipeline.start(resolve_workspace(workspace or None), pattern, migration_strategy,
+                             springboot_upgrade, junit_upgrade, context_files, restart)
+        return pipeline.summary(run) + "\n\nRun started. Call `next_step` to continue."
+    return await _run(body)
+
+
+@server.tool()
+async def run_status(workspace: str = "") -> str:
+    """Show the current run: pattern, phase, the step it waits on, and its documents."""
+    def body():
+        run = _load(workspace)
+        docs = sorted(p for p in (run.dir / "docs").rglob("*.md")) if (run.dir / "docs").is_dir() else []
+        results = sorted(p for p in (run.dir / "results").rglob("*") if p.is_file()) \
+            if (run.dir / "results").is_dir() else []
+        lines = [pipeline.summary(run)]
+        if docs:
+            lines += ["", "## Documents", *[f"- `{run.rel(p)}`" for p in docs]]
+        if results:
+            lines += ["", "## Results", *[f"- `{run.rel(p)}`" for p in results]]
+        return "\n".join(lines)
+    return await _run(body)
+
+
+@server.tool()
+async def next_step(workspace: str = "") -> str:
+    """Advance the run: performs every deterministic step it reaches (inventories, preflight, plan
+    checks, mechanical rewrites, computed sections, the final diff) and returns the next step that
+    needs a subagent (with the exact query to give it) or a person (what to ask)."""
+    def body():
+        run = _load(workspace)
+        step, log = pipeline.next_step(run)
+        return _format_step(step, log)
+    return await _run(body)
+
+
+@server.tool()
+async def save_output(step_id: str, content: str, workspace: str = "") -> str:
+    """Save a subagent's complete output for the step it was given. This is the only output the
+    pipeline reads — call it once, at the end, with the whole document/result.
+
+    Args:
+        step_id: The step_id from the brief (e.g. `plan-solr-4-to-9`).
+        content: The complete output: the document, the JSON verdict, the summary.
+    """
+    def body():
+        run = _load(workspace)
+        current = run.state.get("current_step") or {}
+        if current.get("id") != step_id:
+            raise RunError(f"The run is waiting on `{current.get('id', 'nothing')}`, not `{step_id}`.")
+        path = run.out_path(step_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return f"Saved {len(content):,} characters for `{step_id}`."
+    return await _run(body)
+
+
+@server.tool()
+async def complete_step(step_id: str, workspace: str = "") -> str:
+    """Finish a subagent step after the subagent called save_output: the pipeline processes the
+    output (splits the analysis, checks the plan, routes a failed build to the fixer, ...).
+
+    Args:
+        step_id: The step_id next_step returned.
+    """
+    return await _run(lambda: pipeline.complete_step(_load(workspace), step_id)
+                      + "\n\nCall `next_step` to continue.")
+
+
+@server.tool()
+async def confirm(gate: str, selection: list[str] | None = None, documents: list[str] | None = None,
+                  workspace: str = "") -> str:
+    """Record a person's decision at a gate. Only call this with the user's explicit answer.
+
+    Args:
+        gate: `companions` (which companion migrations to include), `analysis` (the analysis is
+            confirmed), `plan` (the plan is approved — code changes start), `stacks` (stack-discovery:
+            which stacks to document) or `documents` (stack-discovery: the documents are accepted).
+        selection: For `companions` / `stacks`: the chosen ids (empty list = none).
+        documents: For `stacks`: brd, technical_spec, test_inventory, ui_screens.
+    """
+    return await _run(lambda: pipeline.confirm(_load(workspace), gate, selection, documents)
+                      + "\n\nCall `next_step` to continue.")
+
+
+@server.tool()
+async def refine(gate: str, feedback: str, workspace: str = "") -> str:
+    """Send a reviewed document back with the user's feedback instead of approving it.
+
+    Args:
+        gate: `analysis` or `plan`; for stack-discovery `brd`, `technical_spec` or `test_inventory`.
+        feedback: What should change, in the user's words.
+    """
+    return await _run(lambda: pipeline.refine(_load(workspace), gate, feedback))
+
+
+@server.tool()
+async def export_docx(workspace: str = "") -> str:
+    """Write Word (.docx) copies of the run's documents (BRD, Technical Specification, Test
+    Inventory, plan, reports) to `.modernizer/export/`."""
+    return await _run(lambda: cli_docs.export(_load(workspace)))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Workspace tools for the subagents
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _pattern_tools(run: Run):
+    pattern = run.state.get("current_pattern") or run.state["pattern"]
+    if pattern == P.STACK_DISCOVERY:
+        raise RunError("Stack discovery is read-only: it has no write or build tools.")
+    return pattern, P.get(pattern).tools()
+
+
+def _guard_path(path: str) -> None:
+    parts = Path(path.replace("\\", "/")).parts
+    if parts and parts[0] == RUN_DIR:
+        raise RunError(f"`{RUN_DIR}/` holds the run's state — save your output with save_output instead.")
+
+
+def _require_code_phase(run: Run) -> None:
+    if not run.state.get("plan_approved"):
+        raise RunError("No plan is approved yet — the repository is not changed before the human approves the plan.")
+
+
+@server.tool()
+async def ws_write_file(path: str, content: str, allow_full_overwrite: bool = False, workspace: str = "") -> str:
+    """Write a new file, or replace an existing file's entire content, in the repository. For an
+    edit to an existing file prefer ws_replace_in_file. Overwriting a file larger than one read
+    window is refused unless allow_full_overwrite=True after reading all of it. In a Java 8 -> 11
+    run, only `.java` sources and build files may be written (the scope fence).
+
+    Args:
+        path: File path relative to the repository root.
+        content: The complete new content of the file.
+        allow_full_overwrite: Confirm a deliberate full rewrite of a large file you read in full.
+    """
+    def body():
+        run = _load(workspace)
+        _require_code_phase(run)
+        _guard_path(path)
+        _, tools = _pattern_tools(run)
+        return tools.write_file(run.tool_context(), path, content, allow_full_overwrite)
+    return await _run(body)
+
+
+@server.tool()
+async def ws_replace_in_file(path: str, old_text: str, new_text: str, expected_count: int = 1,
+                             workspace: str = "") -> str:
+    """Replace an exact snippet in one repository file, leaving everything else untouched — the
+    preferred way to edit. In a Java 8 -> 11 run the scope fence refuses frozen files and edits
+    that break its invariants.
+
+    Args:
+        path: File path relative to the repository root.
+        old_text: The exact text to replace, copied verbatim including indentation; unique enough.
+        new_text: The replacement ("" deletes old_text).
+        expected_count: How many occurrences you expect; refused unless exactly this many.
+    """
+    def body():
+        run = _load(workspace)
+        _require_code_phase(run)
+        _guard_path(path)
+        _, tools = _pattern_tools(run)
+        return tools.replace_in_file(run.tool_context(), path, old_text, new_text, expected_count)
+    return await _run(body)
+
+
+@server.tool()
+async def ws_run_command(command: str, subdir: str = ".", workspace: str = "") -> str:
+    """Run one build command in the repository (or a subdirectory). Only the pattern's toolchain is
+    allowed (mvn/gradle/java/javac; npm/npx/node/tsc for JSP -> React). No shell: one command per
+    call, no `&&`, `|` or `;`. Java 8 -> 11 builds run on MIGRATION_JAVA_HOME with MAVEN_SETTINGS.
+
+    Args:
+        command: The command line, e.g. "mvn -q -DskipTests compile".
+        subdir: Directory relative to the repository root (e.g. "backend", "frontend").
+    """
+    def body():
+        run = _load(workspace)
+        _, tools = _pattern_tools(run)
+        if not hasattr(tools, "run_command"):
+            return "ERROR: this pattern has no build toolchain — call ws_validate for its static check."
+        return tools.run_command(run.tool_context(), command, subdir)
+    return await _run(body)
+
+
+@server.tool()
+async def ws_validate(workspace: str = "") -> str:
+    """Run the pattern's deterministic validation and return its report: Java 8 -> 11 builds with
+    `mvn clean package` on the migration JDK and classifies every problem (COMPILE / TEST / BUILD /
+    DEPENDENCY / ENVIRONMENT); Solr, Oracle and TIBCO run their static config/SQL/mapping checks.
+    Read the report and decide pass/fail yourself."""
+    def body():
+        run = _load(workspace)
+        pattern, tools = _pattern_tools(run)
+        name = P.get(pattern).validator
+        if not name:
+            return (f"No static validator for {pattern} — build with ws_run_command and read the output. "
+                    + P.get(pattern).validator_note)
+        ctx = run.tool_context()
+        report = getattr(tools, name)(ctx)
+        run.absorb(ctx, "java11_build_passed")
+        return report
+    return await _run(body)
+
+
+@server.tool()
+async def ws_check_invariants(workspace: str = "") -> str:
+    """Java 8 -> 11 only: check the workspace against the scope fence, comparing with the baseline
+    (frozen files byte-identical, packaging/finalName/WildFly plugins unchanged, Java level exactly
+    11, no Spring Boot, no jakarta.* imports). Ends with OVERALL: PASS or OVERALL: FAIL."""
+    def body():
+        run = _load(workspace)
+        pattern, tools = _pattern_tools(run)
+        if not hasattr(tools, "check_java11_invariants"):
+            return f"No scope fence for {pattern}."
+        return tools.check_java11_invariants(run.tool_context())
+    return await _run(body)
+
+
+@server.tool()
+async def ws_signal_build_success(workspace: str = "") -> str:
+    """Call ONLY after validation succeeded (exit code 0 / no errors, and for Java 11 the invariants
+    PASS). Records the pass. Refused — and validation has then FAILED — while a version this
+    migration set contradicts the approved-versions list, or a Java 11 fence invariant fails."""
+    def body():
+        run = _load(workspace)
+        current = run.state.get("current_step") or {}
+        if current.get("handler") != "validate":
+            raise RunError("Only the validator signals build success, during a validation step.")
+        _, tools = _pattern_tools(run)
+        result = tools.signal_build_success(run.tool_context())
+        if not result.startswith("ERROR"):
+            run.state["build_signalled"] = True
+            run.save()
+            return "Build success recorded. Save your JSON result with save_output."
+        return result
+    return await _run(body)
+
+
+@server.tool()
+async def ws_audit_changes(workspace: str = "") -> str:
+    """Audit what this run changed, before reviewing any file: compares the baseline with the
+    migrated repository and reports, with the matched line as evidence, changes with no migration
+    signal (scope creep), legacy APIs re-introduced (regressions), and untouched files that still
+    match a legacy marker (coverage gaps). Call this FIRST."""
+    from agents.shared import change_audit
+
+    def body():
+        run = _load(workspace)
+        return change_audit.audit_migration_changes(run.tool_context())
+    return await _run(body)
+
+
+@server.tool()
+async def ws_compare_plan_to_changes(workspace: str = "") -> str:
+    """Check what changed against the approved plan's File Change Manifest: promised files left
+    untouched, files changed without approval, files the plan said to leave alone that changed, and
+    manifest entries matching no file. Call after ws_audit_changes."""
+    from agents.shared import plan_coverage
+
+    def body():
+        run = _load(workspace)
+        return plan_coverage.compare_plan_to_actual_changes(run.tool_context())
+    return await _run(body)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Skill curator
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _curator_tools(run: Run):
+    from agents.shared.skill_curator_tools import make_skill_curator_tools
+    allowed = run.state.get("curator_skills")
+    if not allowed:
+        raise RunError("Skill files are only written during the run's skill-curation step.")
+    return make_skill_curator_tools(allowed)
+
+
+@server.tool()
+async def curator_list_skill_files(skill_name: str, workspace: str = "") -> str:
+    """List the files of one skill this run's curator may edit (SKILL.md and references/)."""
+    return await _run(lambda: _curator_tools(_load(workspace))[0](skill_name))
+
+
+@server.tool()
+async def curator_read_skill_file(skill_name: str, relative_path: str, workspace: str = "") -> str:
+    """Read one file of a skill this run's curator may edit, e.g. relative_path="SKILL.md"."""
+    return await _run(lambda: _curator_tools(_load(workspace))[1](skill_name, relative_path))
+
+
+@server.tool()
+async def curator_write_skill_file(skill_name: str, relative_path: str, content: str, workspace: str = "") -> str:
+    """Write one file of a skill this run's curator may edit. Rejected for any other skill."""
+    return await _run(lambda: _curator_tools(_load(workspace))[2](skill_name, relative_path, content))
+
+
+def main() -> None:
+    os.environ.setdefault("PYTHONUNBUFFERED", "1")
+    server.run()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,5 @@
+description = "Show the modernization run: pattern, phase, current step, documents and results"
+prompt = """
+Call `mcp_modernizer_run_status` and present the result briefly: what the run is, where it is, what it is
+waiting on (and which command continues it), and the documents and results so far.
+"""

@@ -24,14 +24,20 @@ Here, in three steps:
 
 MODERNIZER_SKILL_LEARNING=0 turns publishing off, as it does for the older one.
 """
+from __future__ import annotations
+
 import json
 import pathlib
 import re
 from datetime import datetime
 from typing import Callable, Optional
 
-from google.adk.agents.callback_context import CallbackContext
-from google.genai import types as genai_types
+from typing import TYPE_CHECKING
+
+from .adk_compat import CallbackContext
+
+if TYPE_CHECKING:  # annotations only; the Gemini CLI path has no google-genai
+    from google.genai import types as genai_types
 
 from .callbacks import _LEARNING_ENABLED, _locked, _parse_json_safely
 

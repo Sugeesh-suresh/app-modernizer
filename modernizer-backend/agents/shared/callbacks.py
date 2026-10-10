@@ -1,6 +1,8 @@
 """
 Shared ADK agent callbacks for the Stella Modernizer pipeline.
 """
+from __future__ import annotations
+
 import contextlib
 import json
 import os
@@ -9,8 +11,12 @@ import re
 from datetime import datetime
 from typing import Optional
 
-from google.adk.agents.callback_context import CallbackContext
-from google.genai import types as genai_types
+try:
+    from google.adk.agents.callback_context import CallbackContext
+    from google.genai import types as genai_types
+except ImportError:  # the Gemini CLI path (cli/) runs without google-adk; it uses only the
+    from typing import Any as CallbackContext  # skill-learning callbacks, which read `.state`
+    genai_types = None  # type: ignore[assignment]  (used by make_validation_exit_callback, ADK only)
 
 # Advisory file locking has no portable stdlib API: `fcntl` exists only on
 # Linux/macOS and `msvcrt` only on Windows. Importing `fcntl` unconditionally

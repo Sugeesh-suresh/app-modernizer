@@ -1,0 +1,7 @@
+description = "Discover and reverse-engineer this repository's stacks into a BRD, Technical Specification and Test Inventory (changes nothing)"
+prompt = """
+Start a Stella Modernizer `stack-discovery` run on the current repository: call
+`mcp_modernizer_start_run` with pattern `stack-discovery` (if a run exists, show `mcp_modernizer_run_status`
+and ask whether to continue it or restart). Discovery never changes the repository. Then drive the pipeline
+exactly as /modernize:next does.
+"""

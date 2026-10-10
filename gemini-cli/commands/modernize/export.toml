@@ -1,0 +1,4 @@
+description = "Write Word (.docx) copies of the run's documents and reports to .modernizer/export/"
+prompt = """
+Call `mcp_modernizer_export_docx` and list the files it wrote.
+"""

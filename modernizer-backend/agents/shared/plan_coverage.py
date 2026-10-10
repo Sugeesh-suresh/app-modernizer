@@ -36,7 +36,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from google.adk.tools import ToolContext
+from .adk_compat import ToolContext
 
 from .change_audit import changed_file_statuses, relevant_files
 from .plan_tasks import parse_tasks
