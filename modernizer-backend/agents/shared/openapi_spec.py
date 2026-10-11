@@ -185,8 +185,10 @@ def _operation_id(handler: str, verb: str, seen: set) -> str:
 
 
 def build(contracts: list[dict], title: str, version: str = "as-is", description: str = "",
-          servers: list[str] | None = None) -> dict:
-    """The OpenAPI 3.0.3 document for these endpoint contracts."""
+          servers: list[str] | None = None, soap: list[dict] | None = None) -> dict:
+    """The OpenAPI 3.0.3 document for these endpoint contracts. `soap`: the SOAP operations
+    (`interfaces.scan`), which OpenAPI cannot describe — named in the description and
+    listed under `x-soap-operations` with their WSDL, so nothing is silently left out."""
     paths: dict = {}
     components: dict = {}
     tags: dict[str, str] = {}
@@ -312,6 +314,19 @@ def build(contracts: list[dict], title: str, version: str = "as-is", description
     }
     if components:
         doc["components"] = {"schemas": dict(sorted(components.items()))}
+    if soap:
+        wsdls = sorted({o["wsdl"] for o in soap if o.get("wsdl")})
+        doc["info"]["description"] += (
+            f"\n\nThe application also exposes {len(soap)} SOAP operation(s), which OpenAPI does not describe: "
+            + ", ".join(f"`{o['operation']}` ({o['style']})" for o in soap) + ". Their contract is the WSDL"
+            + (": " + ", ".join(f"`{w}`" for w in wsdls) if wsdls else "") + " — listed under `x-soap-operations` "
+            "and in the Technical Specification's Interface & Job Inventory.")
+        doc["x-soap-operations"] = [
+            {k: v for k, v in {"service": o["service"], "operation": o["operation"], "style": o["style"],
+                               "namespace": o["namespace"], "address": o["address"], "wsdl": o.get("wsdl", ""),
+                               "request": o["request"] or ", ".join(o.get("params", [])),
+                               "response": o["response"], "handler": o["handler"], "x-source": o["source"]}.items()
+             if v} for o in soap]
     return doc
 
 

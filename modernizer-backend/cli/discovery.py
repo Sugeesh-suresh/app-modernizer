@@ -974,6 +974,7 @@ def _job_assemble(run: Run, job: dict, log: list[str]) -> None:
     if "openapi" in docs:
         settings = system_inventory._settings(system_inventory._files(Path(ws)))
         spec = openapi_spec.build(ui_result.get("contracts", []), f"{run.workspace.name} — as-is HTTP interface",
+                                  soap=json.loads(_computed(run, "interfaces.json") or "{}").get("soap"),
                                   servers=openapi_spec.servers_from_config(settings))
         _write(_d(run, "openapi.yaml"), openapi_spec.to_yaml(spec))
         _write(_d(run, "openapi.json"), openapi_spec.to_json(spec))

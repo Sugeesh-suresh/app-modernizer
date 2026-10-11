@@ -212,7 +212,12 @@ def scan(workspace_dir: str, ui_result: dict | None = None, database: dict | Non
         name = obj["name"].split(".")[-1]
         users = [rel for rel, t in corpus.items() if not rel.endswith((".sql", ".pls", ".pks", ".pkb"))
                  and re.search(rf"\b{re.escape(name)}\b", t, re.I)]
-        if not users:
+        # Database code that reads or writes it (a trigger's audit insert, a procedure's update) uses it too.
+        dml = re.compile(rf"\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|MERGE\s+INTO|FROM|JOIN)\s+"
+                         rf"(?:\w+\.)?{re.escape(name)}\b", re.I)
+        db_users = [rel for rel, t in corpus.items() if rel.endswith((".sql", ".pls", ".pks", ".pkb", ".plb", ".trg"))
+                    and dml.search(t)]
+        if not users and not db_users:
             add(dead, "Table or view no application code uses", name,
                 "Defined in DDL; named by no Java/JS/XML/configuration file (it may be used by other systems, "
                 "triggers or reports).", obj["where"], "Low")

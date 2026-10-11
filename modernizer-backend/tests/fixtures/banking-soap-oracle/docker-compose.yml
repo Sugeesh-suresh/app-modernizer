@@ -1,0 +1,13 @@
+services:
+  oracle:
+    image: gvenzl/oracle-xe:21-slim
+    ports: ["1521:1521"]
+    environment:
+      ORACLE_PASSWORD: oracle
+      APP_USER: bank_app
+  bank:
+    build: .
+    depends_on: [oracle]
+    ports: ["8080:8080", "8081:8081"]
+    environment:
+      DB_URL: jdbc:oracle:thin:@//oracle:1521/XEPDB1

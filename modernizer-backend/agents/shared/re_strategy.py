@@ -100,7 +100,7 @@ def detect_layers(stacks: list[dict], signals: dict | None = None) -> dict[str, 
         if layer:
             layers[layer]["stacks"].append(s["pattern"])
             layers[layer]["present"] = True
-    for layer, keys in (("ui", ("screens", "controls", "ui_files")), ("api", ("endpoints", "jobs", "listeners")),
+    for layer, keys in (("ui", ("screens", "controls", "ui_files")), ("api", ("endpoints", "soap", "jobs", "listeners")),
                         ("db", ("tables", "entities", "routines"))):
         found = {k: signals[k] for k in keys if signals.get(k)}
         layers[layer]["signals"] = found
@@ -118,6 +118,7 @@ def signals_for(workspace_dir: str, inventory: dict | None = None, ui_result: di
         out["controls"] = len(ui_contracts.ids(ui_result))
     if inventory:
         out["endpoints"] = len(inventory.get("endpoints", []))
+        out["soap"] = len(inventory.get("soap", []))
         out["jobs"] = len(inventory.get("jobs", []))
         out["listeners"] = len(inventory.get("listeners", []))
     if database:
@@ -190,10 +191,11 @@ def options(stacks: list[dict], signals: dict | None = None) -> list[dict]:
         why = [f"Layers found: {found}.",
                "All three layers are present, so a request can be followed from the screen to the database, and "
                "code that no screen, table or endpoint reaches stands out as dead-code candidates."]
-    elif api and not ui and (sig.get("endpoints") or sig.get("listeners") or sig.get("jobs") or not db):
+    elif api and not ui and (sig.get("endpoints") or sig.get("soap") or sig.get("listeners") or sig.get("jobs")
+                             or not db):
         rec = "api-first"
         why = [f"Layers found: {found}.", "No UI layer: the service contracts are the system's front door."]
-    elif db and (not api or sig.get("routines", 0) > max(5, sig.get("endpoints", 0))):
+    elif db and (not api or sig.get("routines", 0) > max(5, sig.get("endpoints", 0) + sig.get("soap", 0))):
         rec = "data-first"
         why = [f"Layers found: {found}.",
                "The logic sits largely in the database (procedures, triggers) or there is no service layer."]
@@ -286,7 +288,9 @@ def db_batches(database: dict, workspace_dir: str, max_objects: int = 15) -> lis
     entity_class = {(e["table"] or e["class"]).split(".")[-1].upper(): e["class"] for e in database.get("entities", [])}
     users: dict[str, list[str]] = {n: [] for n in names}
     root = Path(workspace_dir)
-    pattern = re.compile(r"\b(" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")\b", re.I)
+    # A file or bean name (`xsd/accounts.xsd`, `/accounts/`) is not a use of the table.
+    pattern = re.compile(r"(?<![/\w.-])(" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+                         + r")(?![\w-]|\.[a-z]{2,4}\b|/)", re.I)
     for path in sorted(root.rglob("*")) if root.is_dir() else []:
         if not path.is_file() or path.suffix.lower() not in {".java", ".kt", ".groovy", ".xml", ".sql", ".pls",
                                                              ".pks", ".pkb", ".js", ".ts", ".py", ".cs"}:
@@ -324,6 +328,7 @@ def api_batches(inventory: dict, ui_result: dict, max_classes: int = 8) -> list[
     """Endpoints, jobs and listeners grouped by handler class, each marked with the
     UI controls that call it (none = not reached from the repository's UI)."""
     called: dict[str, list[str]] = {}
+    has_ui = bool(ui_result.get("screens"))
     for c in ui_result.get("contracts", []):
         called[c["endpoint"]] = c.get("called_by", [])
     groups: dict[str, list[str]] = {}
@@ -333,9 +338,17 @@ def api_batches(inventory: dict, ui_result: dict, max_classes: int = 8) -> list[
         cls = _handler_class(e["handler"])
         files.setdefault(cls, e["source"].rsplit(":", 1)[0])
         ui = called.get(key, [])
+        # "Not called from the UI" only means something when the repository has a UI.
+        note = f" — called from UI {', '.join(ui[:12])}" if ui else \
+            " — **no UI control in this repository calls it**" if has_ui else ""
+        groups.setdefault(cls, []).append(f"- {e['kind']} `{key}` → `{e['handler']}` ({e['source']}){note}")
+    for o in inventory.get("soap", []):
+        cls = _handler_class(o["handler"])
+        files.setdefault(cls, o["source"].rsplit(":", 1)[0])
+        msg = o["request"] or ", ".join(o.get("params", []))
         groups.setdefault(cls, []).append(
-            f"- {e['kind']} `{key}` → `{e['handler']}` ({e['source']})"
-            + (f" — called from UI {', '.join(ui[:12])}" if ui else " — **no UI control in this repository calls it**"))
+            f"- SOAP ({o['style']}) operation `{o['operation']}` of `{o['service']}` at `{o['address'] or '?'}` "
+            f"({msg or 'no input'} → {o['response'] or 'void'}) → `{o['handler']}` ({o['source']})")
     for j in inventory.get("jobs", []):
         cls = _handler_class(j["handler"])
         files.setdefault(cls, j["source"].rsplit(":", 1)[0])

@@ -57,7 +57,9 @@ def build(docs: dict[str, str], openapi: dict | None, strategy_md: str, title: s
         n = sum(len(v) for v in openapi["paths"].values())
         rows.append(f"| [openapi.yaml](openapi.yaml) / [openapi.json](openapi.json) | OpenAPI 3.0.3 specification of "
                     f"every HTTP endpoint ({n} operation(s)) — import into Swagger UI / Editor, Postman or a code "
-                    "generator |")
+                    "generator" + (f"; the {len(openapi['x-soap-operations'])} SOAP operation(s), which OpenAPI cannot "
+                                   "describe, are listed under `x-soap-operations` with their WSDL"
+                                   if openapi.get("x-soap-operations") else "") + " |")
     if strategy_md.strip():
         out["STRATEGY.md"] = strategy_md
         rows.append("| [STRATEGY.md](STRATEGY.md) | The reverse-engineering strategy options and the one chosen |")

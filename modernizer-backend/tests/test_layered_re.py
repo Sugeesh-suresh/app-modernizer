@@ -244,3 +244,26 @@ def test_ui_pages_covers_single_page_applications_by_route():
     assert any(r["tag"] == "table" and r["attrs"].get("id") == "attributeGrid" for r in search["elements"])
     md = ui_page_traces.to_markdown(pages, ui)
     assert "Ajax — HTTP client `api.get`" in md and "`AttributeController.searchAttributes`" in md
+
+
+def test_soap_operations_default_address_sun_jaxws_and_excluded_methods(tmp_path):
+    src = tmp_path / "src/main/java/a"
+    src.mkdir(parents=True)
+    (src / "QuoteEndpoint.java").write_text(
+        "package a;\n@Endpoint\npublic class QuoteEndpoint {\n"
+        "  @SoapAction(\"http://a/Quote\")\n  @ResponsePayload\n"
+        "  public QuoteResponse quote(@RequestPayload QuoteRequest r) { return null; }\n}\n")
+    (src / "Legacy.java").write_text(
+        "package a;\n@WebService\npublic class Legacy {\n  public String ping() { return \"x\"; }\n"
+        "  @WebMethod(exclude = true)\n  public void internal() {}\n  private void hidden() {}\n}\n")
+    web = tmp_path / "src/main/webapp/WEB-INF"
+    web.mkdir(parents=True)
+    (web / "sun-jaxws.xml").write_text('<endpoints><endpoint name="l" implementation="a.Legacy" '
+                                       'url-pattern="/legacy"/></endpoints>')
+    from agents.shared import interfaces
+    ops = {o["operation"]: o for o in interfaces.scan(str(tmp_path))["soap"]}
+    assert set(ops) == {"http://a/Quote", "ping"}
+    assert ops["http://a/Quote"]["address"] == "/services/* (Spring Boot default)"
+    assert ops["ping"]["service"] == "LegacyService" and ops["ping"]["address"] == "/legacy"
+    md = interfaces.to_markdown(interfaces.scan(str(tmp_path)))
+    assert "### SOAP operations (2)" in md

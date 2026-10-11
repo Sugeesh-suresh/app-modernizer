@@ -1,0 +1,26 @@
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:tns="http://acme.com/bank/accounts"
+           targetNamespace="http://acme.com/bank/accounts" elementFormDefault="qualified">
+  <xs:element name="GetAccountRequest">
+    <xs:complexType><xs:sequence><xs:element name="accountNumber" type="xs:string"/></xs:sequence></xs:complexType>
+  </xs:element>
+  <xs:element name="GetAccountResponse">
+    <xs:complexType><xs:sequence>
+      <xs:element name="accountNumber" type="xs:string"/>
+      <xs:element name="balance" type="xs:decimal"/>
+      <xs:element name="status" type="xs:string"/>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+  <xs:element name="TransferFundsRequest">
+    <xs:complexType><xs:sequence>
+      <xs:element name="fromAccount" type="xs:string"/>
+      <xs:element name="toAccount" type="xs:string"/>
+      <xs:element name="amount" type="xs:decimal"/>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+  <xs:element name="TransferFundsResponse">
+    <xs:complexType><xs:sequence>
+      <xs:element name="transferId" type="xs:long"/>
+      <xs:element name="status" type="xs:string"/>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+</xs:schema>

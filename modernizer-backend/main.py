@@ -1973,7 +1973,8 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     sysinv = json.loads(state.get("system_inventory_json") or "null") or {}
     openapi_json = ""
     if "openapi" in documents:
-        spec_doc = openapi_spec.build(computed_ui.get("contracts", []), f"{_discovery_title(state)} — as-is HTTP interface")
+        spec_doc = openapi_spec.build(computed_ui.get("contracts", []), f"{_discovery_title(state)} — as-is HTTP interface",
+                                      soap=(json.loads(state.get("interfaces_json") or "null") or {}).get("soap"))
         openapi_json = openapi_spec.to_json(spec_doc)
     tech_debt = ""
     if "tech_debt" in documents:

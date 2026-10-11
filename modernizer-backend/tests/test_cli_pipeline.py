@@ -379,3 +379,64 @@ def test_cli_path_never_imports_adk_or_the_web_server():
             "import agents.shared.change_audit, agents.shared.plan_coverage, agents.shared.skill_curator_tools\n")
     result = subprocess.run([sys.executable, "-c", code], cwd=BACKEND, capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_backend_only_soap_and_oracle_repository(tmp_path):
+    """5 REST endpoints, 3 SOAP operations (Spring-WS and JAX-WS), Oracle with a PL/SQL
+    package and a trigger, no UI: API-first, no UI documents, SOAP documented everywhere."""
+    import json as _json
+    import shutil
+    repo = tmp_path / "bank"
+    shutil.copytree(FIXTURES / "banking-soap-oracle", repo)
+    pipeline.start(repo, "stack-discovery")
+    assert _next(repo)["id"] == "mapper"
+    _save(repo, "mapper", "Nothing to add.\n\n```json\n{\"stacks\": [], \"rejected\": []}\n```")
+    pipeline.complete_step(Run.load(repo), "mapper")
+    gate = _next(repo)
+    assert "ui_pages" in gate["text"]
+    run = Run.load(repo)
+    assert {s["pattern"] for s in run.state["recommendations"]} == {"java", "oracle"}
+    assert run.state.get("screens_offer") is None                         # no UI: no screenshots offered
+    pipeline.confirm(run, "stacks", ["java", "oracle"], None)
+    assert _next(repo)["id"] == "select-strategy"
+    run = Run.load(repo)
+    offered = {o["id"]: o for o in run.state["strategy_options"]}
+    assert offered["api-first"]["recommended"] and offered["api-first"]["passes"] == ["api", "db"]
+    assert not offered["layered-trace"]["available"]
+    assert run.state["strategy_signals"]["soap"] == 3 and run.state["strategy_signals"]["endpoints"] == 5
+    pipeline.confirm(run, "strategy", ["api-first"])
+
+    api_step = _next(repo)
+    assert api_step["id"] == "layer-api-1"
+    api_request = (repo / ".modernizer/discovery/layers/api/request-0001.md").read_text()
+    for op in ("`GetAccount`", "`TransferFunds`", "`getStatement`"):
+        assert op in api_request
+    assert "no UI control" not in api_request                            # there is no UI to be called from
+    pack = ("### Flow Traces\n- SOAP TransferFunds → AccountEndpoint.transferFunds → AccountService.transfer → "
+            "PKG_TRANSFER.TRANSFER_FUNDS updates ACCOUNTS, inserts TRANSACTIONS "
+            "(src/main/java/com/acme/bank/service/AccountService.java:29)\n\n"
+            "### Tech Debt & Dead Code\n- A failed transfer is reported as REJECTED with the cause only printed "
+            "(src/main/java/com/acme/bank/soap/AccountEndpoint.java:41)\n\n### Limitations\nNone found.\n")
+    step = _drive_writers(repo, {"layer-": pack, "po_brd": "## Executive Summary\nCustomers and accounts.\n",
+                                 "ea_spec": "## Architecture Overview\nOne Spring Boot service.\n",
+                                 "ea_diagrams": '{"diagrams": []}', "setup": "## Prerequisites\nJDK 11 (pom.xml).\n"})
+    assert step["id"] == "documents-review"
+    out = repo / ".modernizer/deliverables"
+    names = {p.name for p in out.iterdir()}
+    assert {"SETUP.md", "BRD.md", "TECHNICAL_SPECIFICATION.md", "openapi.yaml", "TECH_DEBT_AND_DEAD_CODE.md"} <= names
+    assert not names & {"UI_PAGES.md", "UI_SCREENS.md"}                  # no UI layer
+    spec = _json.loads((out / "openapi.json").read_text())
+    assert sum(len(v) for v in spec["paths"].values()) == 5
+    assert [o["operation"] for o in spec["x-soap-operations"]] == ["GetAccount", "TransferFunds", "getStatement"]
+    assert "3 SOAP operation(s)" in spec["info"]["description"] and "/ws/accounts.wsdl" in spec["info"]["description"]
+    tech = (out / "TECHNICAL_SPECIFICATION.md").read_text()
+    assert "### SOAP operations (3)" in tech and "http://0.0.0.0:8081/soap/statements" in tech
+    assert "| request `TransferFundsRequest` | `amount` | decimal | required |" in tech
+    assert "`pkg_transfer`" in tech and "`trg_accounts_audit`" in tech
+    debt = (out / "TECH_DEBT_AND_DEAD_CODE.md").read_text()
+    assert "InterestCalculator" in debt and "findByEmailContaining" in debt
+    assert "| Table or view no application code uses | `audit_log`" not in debt     # written by the trigger
+    assert "SQL built by string concatenation" in debt and "Welcome1" not in debt
+    assert "REST endpoint no UI control calls" not in debt
+    setup = (out / "SETUP.md").read_text()
+    assert "DB_PASSWORD" in setup and "oracle" in setup and "Welcome1" not in setup
