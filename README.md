@@ -353,6 +353,97 @@ cd ~/src/legacy-app && gemini               # then: /modernize:start java-8-to-1
 
 The run works in place on the repository you opened (a baseline copy is kept under `~/.modernizer/`), and nothing changes before you approve the plan. Details, commands and the differences from the web pipeline: [gemini-cli/README.md](gemini-cli/README.md).
 
+### Workflow 1 — Reverse engineering (`/reverse-engineer`)
+
+`/reverse-engineer [strategy] [docs=...]` runs the `stack-discovery` pipeline (`cli/discovery.py`). It documents the repository as it is and never changes it. Agents only read code where the diagram says so; the writers work from the collected evidence, not the code.
+
+```mermaid
+flowchart TD
+    START["/reverse-engineer [strategy] [docs=…]<br/>start_run stack-discovery"] --> PRE[[Pre-scan: repository fingerprint<br/>+ stack detection]]
+    PRE --> MAP["Dependency mapper (analyst)<br/>dependency-mapper skill"]
+    MAP --> G1{{"HUMAN: confirm stacks<br/>+ choose deliverables (docs=)"}}
+    G1 --> COMP[["Computed sections — no model<br/>interfaces · endpoint & UI→backend traces · UI pages<br/>system inventory (DB, Solr, integrations, security)<br/>config matrix · setup facts"]]
+    COMP --> G2{{"HUMAN: choose the strategy<br/>(recommended one from the computed signals)"}}
+
+    G2 -->|layered-trace| L1["UI top-down → data bottom-up → API & logic"]
+    G2 -->|api-first| L2["API & logic → data (→ UI)"]
+    G2 -->|data-first| L3["data → API & logic → UI"]
+    G2 -->|stack-by-stack| L4["one evidence pass per stack"]
+    L1 & L2 & L3 & L4 --> EV["Evidence packs (analyst, batched per layer / unit)<br/>reads the code"]
+
+    EV --> GR[[Grounding: every cited file and line checked]]
+    GR --> RULES["Business-rules ledger<br/>(analyst per batch, verified in code)"]
+    RULES --> HEALTH[[Tech debt & dead code — computed]]
+    HEALTH --> SHOT[[UI screenshots — only with docs=ui_screens]]
+    SHOT --> WR["Writers, from the evidence only<br/>Product Owner BRD · Enterprise Architect spec & test inventory<br/>UI interaction contracts · diagrams · setup guide"]
+    WR --> ASM[[Assembly: scrub, place computed sections,<br/>check citations, redact credentials]]
+    ASM --> OUT["Deliverables in .modernizer/deliverables/<br/>BRD · TECHNICAL_SPECIFICATION · SETUP · openapi.yaml/json<br/>TECH_DEBT_AND_DEAD_CODE · UI_PAGES · UI_SCREENS · EVIDENCE"]
+    OUT --> G3{{"HUMAN: review the deliverables"}}
+    G3 -->|"/modernize:refine &lt;doc&gt; &lt;feedback&gt;"| WR
+    G3 -->|/modernize:approve| DONE([Done — repository unchanged])
+
+    style G1 fill:#7c3aed,color:#fff
+    style G2 fill:#7c3aed,color:#fff
+    style G3 fill:#7c3aed,color:#fff
+    style PRE fill:#0f766e,color:#fff
+    style COMP fill:#0f766e,color:#fff
+    style GR fill:#0f766e,color:#fff
+    style HEALTH fill:#0f766e,color:#fff
+    style SHOT fill:#0f766e,color:#fff
+    style ASM fill:#0f766e,color:#fff
+```
+
+A refine re-runs only that document's writer from the stored evidence; the code is not read again.
+
+### Workflow 2 — Migration (`/modernize:start <pattern>`)
+
+`cli/pipeline.py` drives every migration pattern. Each migration is one skill (`agents/skills/<migration>/`) whose step files (`references/steps/plan.md`, `modify.md`, `validate.md`, `fix.md`, `report.md`, …) are loaded by the subagent of that step.
+
+```mermaid
+flowchart TD
+    START["/modernize:start &lt;pattern&gt;<br/>baseline copy → ~/.modernizer/baselines/"] --> CD[[Companion detection<br/>Oracle · Solr · TIBCO · JSP, with evidence]]
+    CD --> G0{{"HUMAN: pick companion migrations"}}
+    G0 --> PF[["Environment check (Java patterns)<br/>8→11: JDK 11 · 8→25: a JDK per stage release (8 / 17 / 25)<br/>baseline build of the upload"]]
+    PF -->|"no JDK / dependencies cannot download"| STOP([Blocked — nothing changed])
+    PF --> AN[["Analysis per pattern<br/>inventory (no model): Legacy Stack Blockers, Repo Facts<br/>or analyst agent for JSP → React"]]
+    AN -->|agent analysis| GA{{"HUMAN: review the analysis"}}
+    AN -->|inventory| PL
+    GA --> PL["Planner per pattern<br/>&lt;migration&gt; › plan step"]
+    PL --> CHK[["Plan checks — no model<br/>six completeness questions<br/>+ every blocker file in the File Change Manifest"]]
+    CHK --> G2{{"HUMAN GATE: approve or refine the plans"}}
+
+    G2 --> ORD{Code order}
+    ORD -->|"Java 8→25 incremental + companions"| J1["Java stages 1–3<br/>build modernisation · OpenRewrite · Java 17"]
+    J1 --> COMPN["Companions: Oracle, Solr, …<br/>(need Java 11+)"]
+    COMPN --> J2["Java stages 4–8<br/>Boot 2.7 · Boot 3 · Java 25 · Boot 4 · executable JAR"]
+    ORD -->|"otherwise"| SEQ["Companions first, then the primary<br/>(one pass, or Java 8→11's fenced pass)"]
+
+    subgraph LOOP["each pass / stage"]
+        direction LR
+        MOD["Modifier, once per plan task<br/>ws_replace_in_file · ws_write_file · ws_delete_file"] --> VAL["Validator<br/>ws_run_command on the stage's JDK"]
+        VAL -->|errors| FIX[Fixer] --> VAL
+        VAL -->|"ws_signal_build_success<br/>(approved versions, fence)"| OK([stage passed])
+    end
+    J1 & COMPN & J2 & SEQ -.-> LOOP
+
+    J2 & SEQ --> REV
+    COMPN --> REV
+    REV[["Review evidence — no model<br/>change audit vs. baseline · plan conformance<br/>(files only another migration changed are set aside)"]] --> CR[Code reviewer]
+    CR --> REP[Reporter] --> CUR[Skill curator]
+    CUR --> FIN([changes.md + changes.patch · repository changed in place])
+
+    style G0 fill:#7c3aed,color:#fff
+    style GA fill:#7c3aed,color:#fff
+    style G2 fill:#7c3aed,color:#fff
+    style CD fill:#0f766e,color:#fff
+    style PF fill:#0f766e,color:#fff
+    style AN fill:#0f766e,color:#fff
+    style CHK fill:#0f766e,color:#fff
+    style REV fill:#0f766e,color:#fff
+```
+
+Each pattern gets its own review, report and curation, in the order its code pass ends. In an incremental Java 8 → 25 run, the companions are reviewed after their own pass. The Java review covers all eight stages once the last one has passed. The web pipeline (`main.py`) follows the same order.
+
 ---
 
 ## Monorepos and large repositories
