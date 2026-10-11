@@ -1,0 +1,27 @@
+description = "Reverse-engineer this repository (changes nothing): /reverse-engineer [layered-trace|api-first|data-first|stack-by-stack] [docs=brd,technical_spec,setup,openapi,tech_debt,ui_pages,ui_screens]"
+prompt = """
+The user asked to reverse engineer the current repository. Their arguments: `{{args}}`
+
+Reverse engineering is the Stella Modernizer `stack-discovery` run: it documents the repository as it is and never
+changes it. Deliverables go to `.modernizer/deliverables/` — SETUP.md, BRD.md, TECHNICAL_SPECIFICATION.md,
+openapi.yaml / openapi.json, TECH_DEBT_AND_DEAD_CODE.md, and UI_PAGES.md / UI_SCREENS.md when there is a UI.
+
+1. Read the arguments (all optional):
+   - a strategy id: `layered-trace`, `api-first`, `data-first` or `stack-by-stack`;
+   - `docs=` a comma-separated list of document ids: `brd`, `technical_spec`, `test_inventory`, `setup`, `openapi`,
+     `tech_debt`, `ui_pages`, `ui_screens` (default: all but `ui_screens`).
+   Anything else: tell the user what is accepted and ask; do not guess.
+2. Call `mcp_modernizer_start_run` with pattern `stack-discovery`. If a run already exists, show
+   `mcp_modernizer_run_status` and ask whether to continue it or restart (restart=true).
+3. Drive the pipeline exactly as `/modernize:next` does: loop on `mcp_modernizer_next_step` until it returns a step
+   for a person, the run is blocked, or it is done.
+4. At the stacks gate (`select-stacks`): show the detected stacks with their evidence and ask the user which to keep —
+   always; the stack list is never confirmed for them. Pass the `docs=` list as `documents` if they gave one.
+5. At the strategy gate (`select-strategy`): show every option from `.modernizer/discovery/strategy.md` with the
+   recommendation and why. If the user named a strategy in the arguments and it is available, say so and confirm it
+   (gate=`strategy`); if it is not available, show the reason and ask them to choose. With no strategy in the
+   arguments, ask them to choose.
+6. At the review gate (`documents-review`): list the files in `.modernizer/deliverables/` and ask the user to review
+   them; they finish with `/modernize:approve` or ask for changes with `/modernize:refine <brd|technical_spec|setup>
+   <feedback>`.
+"""

@@ -34,7 +34,7 @@ interactions and backend traces) and `UI_SCREENS.md` (a screenshot of each page)
 
 ## Driving the pipeline
 
-Commands: `/modernize:start <pattern> [...]`, `/modernize:discover`, `/modernize:next`, `/modernize:status`,
+Commands: `/reverse-engineer [strategy] [docs=...]`, `/modernize:start <pattern> [...]`, `/modernize:discover`, `/modernize:next`, `/modernize:status`,
 `/modernize:approve [...]`, `/modernize:refine <feedback>`, `/modernize:export`.
 
 When continuing a run, loop:

@@ -40,7 +40,9 @@ once you approve the plan) and start Gemini CLI there:
 /modernize:start java-8-to-11
 /modernize:start java-8-to-25 incremental springboot
 /modernize:start solr-4-to-9 context=docs/search-api.yaml
-/modernize:discover                       # stack discovery: documents only, changes nothing
+/reverse-engineer                         # reverse engineering: documents only, changes nothing
+/reverse-engineer layered-trace docs=brd,technical_spec,openapi,ui_pages   # strategy and documents up front
+/modernize:discover                       # the same run, without arguments
 ```
 
 The run goes as far as it can and stops at each human gate:
