@@ -1,10 +1,10 @@
-description = "Send the document under review back with feedback: /modernize:refine [brd|technical_spec|test_inventory] <feedback>"
+description = "Send the document under review back with feedback: /modernize:refine [brd|technical_spec|test_inventory|setup] <feedback>"
 prompt = """
 The user wants the document under review revised instead of approved. Their words: `{{args}}`
 
 1. Call `mcp_modernizer_run_status` to see which review it waits on.
 2. Call `mcp_modernizer_refine`: gate `analysis` or `plan` for a migration run; for stack discovery, gate
-   `brd`, `technical_spec` or `test_inventory` (the first word of the arguments, if it is one of those —
+   `brd`, `technical_spec`, `test_inventory` or `setup` (the first word of the arguments, if it is one of those —
    otherwise ask which). `feedback` is the rest of the user's words, unchanged.
 3. Continue exactly as /modernize:next: the planner or writer runs again with the feedback.
 """

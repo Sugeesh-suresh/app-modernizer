@@ -219,7 +219,8 @@ class TestRunnerWiring:
         from agents import PATTERN_RUNNERS
 
         assert set(PATTERN_RUNNERS["stack-discovery"]) == {
-            "mapper", "discover", "discover_unit", "discover_merge", "po_brd", "ea_spec", "ea_ui", "ea_diagrams", "rules"}
+            "mapper", "discover", "discover_unit", "discover_merge", "po_brd", "ea_spec", "ea_ui", "ea_diagrams", "rules",
+            "layer_ui", "layer_db", "layer_api", "setup"}
 
     def test_dedicated_runners_exist(self):
         from agents import PATTERN_RUNNERS

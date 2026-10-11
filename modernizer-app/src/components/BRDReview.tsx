@@ -2,13 +2,16 @@ import { useRef, useState } from 'react';
 import {
   CheckCircle2, MessageSquare, FileText, Loader2, Pencil, Eye,
   Download, Paperclip, X, AlertCircle, Network, Sparkles, ClipboardList, Camera,
+  Wrench, Bug, Braces, Package,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  brdDownloadUrl, businessRulesDownloadUrl, decisionPointsDownloadUrl, diagramUrl, technicalSpecDownloadUrl, uiScreenUrl, uiScreensDownloadUrl,
+  brdDownloadUrl, businessRulesDownloadUrl, decisionPointsDownloadUrl, deliverablesDownloadUrl, diagramUrl,
+  openapiDownloadUrl, setupDownloadUrl, techDebtDownloadUrl, technicalSpecDownloadUrl, uiScreenUrl, uiScreensDownloadUrl,
   uploadContextFiles,
 } from '../api';
+import type { RefineTarget } from '../api';
 
 const DOWNLOAD_CLS = 'flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 bg-slate-900/5 hover:bg-slate-900/10 border border-slate-900/10 rounded-lg px-2.5 py-1 transition-colors';
 
@@ -145,19 +148,29 @@ interface Props {
   testInventory: string;
   /** stack-discovery with screenshots chosen: the UI Screens document ('' otherwise — no tab) */
   uiScreens?: string;
+  /** stack-discovery deliverables ('' when not generated — no tab) */
+  setupGuide?: string;
+  techDebt?: string;
+  /** OpenAPI 3.0.3, as YAML */
+  openapi?: string;
+  /** The reverse-engineering strategy the run used */
+  strategyName?: string;
   refining: boolean;
   refiningContent: string;
   onConfirm: (brdContent: string, techSpecContent: string, feedback?: string) => Promise<void>;
   /** `target` (stack-discovery): the document being refined — the BRD is the
    * Product Owner agent's, the technical documents the Enterprise Architect's. */
-  onRefine: (feedback: string, target?: 'brd' | 'technical_spec') => Promise<void>;
+  onRefine: (feedback: string, target?: RefineTarget) => Promise<void>;
   /** Reverse-engineering-only run (stack-discovery): confirming finishes the run
    * rather than advancing to plan generation, so the button must not promise a
    * plan that will never be generated. */
   reOnly?: boolean;
 }
 
-type ActiveTab = 'brd' | 'techspec' | 'tests' | 'screens';
+type ActiveTab = 'brd' | 'techspec' | 'tests' | 'setup' | 'openapi' | 'debt' | 'screens';
+const TAB_ORDER: ActiveTab[] = ['brd', 'techspec', 'tests', 'setup', 'openapi', 'debt', 'screens'];
+/** Computed by the pipeline rather than written by a model: nothing to refine. */
+const COMPUTED_TABS: ActiveTab[] = ['openapi', 'debt', 'screens'];
 
 /** The review screen's introduction, naming only the documents this run generated. */
 function describeDocuments(brd: boolean, technical: boolean, screens: boolean): string {
@@ -174,7 +187,10 @@ function describeDocuments(brd: boolean, technical: boolean, screens: boolean): 
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScreens = '', refining, refiningContent, onConfirm, onRefine, reOnly = false }: Props) {
+export function BRDReview({
+  sessionId, brd, technicalSpec, testInventory, uiScreens = '', setupGuide = '', techDebt = '', openapi = '',
+  strategyName = '', refining, refiningContent, onConfirm, onRefine, reOnly = false,
+}: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('brd');
   // Reset the editable drafts whenever freshly (re)generated content arrives —
   // adjusting state during render per https://react.dev/learn/you-might-not-need-an-effect
@@ -199,10 +215,14 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
     brd: !reOnly || !!brd,
     techspec: !reOnly || !!technicalSpec,
     tests: !reOnly || !!testInventory,
+    setup: !!setupGuide,
+    openapi: !!openapi,
+    debt: !!techDebt,
     screens: !!uiScreens,
   };
-  const firstTab = (['brd', 'techspec', 'tests', 'screens'] as const).find((t) => shown[t]) ?? 'brd';
+  const firstTab = TAB_ORDER.find((t) => shown[t]) ?? 'brd';
   const tab: ActiveTab = shown[activeTab] ? activeTab : firstTab;
+  const computedTab = COMPUTED_TABS.includes(tab);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFilesSelected = async (selected: FileList | null) => {
@@ -234,7 +254,7 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
 
   const handleRefine = async () => {
     if (!feedback.trim()) return;
-    await onRefine(feedback, tab === 'brd' ? 'brd' : 'technical_spec');
+    await onRefine(feedback, tab === 'brd' ? 'brd' : tab === 'setup' ? 'setup' : 'technical_spec');
     setFeedback('');
   };
 
@@ -255,13 +275,14 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
           <p className="text-sm text-slate-600 mt-0.5">
             {reOnly
               ? describeDocuments(!!brd, !!(technicalSpec || testInventory), !!uiScreens)
+                + (strategyName ? ` Reverse-engineering strategy: ${strategyName}.` : '')
               : 'Review and edit the AI-generated BRD and Technical Specification. Upload additional context files (Swagger, OpenAPI, design diagrams) to enrich the migration plan.'}
           </p>
         </div>
       </div>
 
       {/* Tab switcher */}
-      <div className="flex gap-1 mb-4">
+      <div className="flex gap-1 mb-4 flex-wrap items-center">
         {shown.brd && <button
           onClick={() => setActiveTab('brd')}
           className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -290,6 +311,33 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
           <ClipboardList size={14} />
           Existing Test Cases
         </button>}
+        {shown.setup && <button
+          onClick={() => setActiveTab('setup')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            tab === 'setup' ? 'bg-sky-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Wrench size={14} />
+          Setup & Deployment
+        </button>}
+        {shown.openapi && <button
+          onClick={() => setActiveTab('openapi')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            tab === 'openapi' ? 'bg-teal-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Braces size={14} />
+          OpenAPI 3.0
+        </button>}
+        {shown.debt && <button
+          onClick={() => setActiveTab('debt')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            tab === 'debt' ? 'bg-rose-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Bug size={14} />
+          Tech Debt & Dead Code
+        </button>}
         {uiScreens && (
           <button
             onClick={() => setActiveTab('screens')}
@@ -300,6 +348,14 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
             <Camera size={14} />
             UI Screens
           </button>
+        )}
+        {reOnly && (
+          <a href={deliverablesDownloadUrl(sessionId)} download
+            title="Every document as its own Markdown file, openapi.yaml/json and an index (README.md)"
+            className="ml-auto flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-slate-900 text-white hover:bg-slate-700 transition-colors">
+            <Package size={14} />
+            All deliverables (.zip)
+          </a>
         )}
       </div>
 
@@ -420,6 +476,75 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
               ? <MarkdownWithDiagrams content={testInventory} />
               : <p className="text-slate-600 text-sm italic">No existing test inventory was generated for this repository.</p>
             }
+          </div>
+        </div>
+      )}
+
+      {/* Setup & Deployment Panel */}
+      {tab === 'setup' && setupGuide && (
+        <div className="glass rounded-2xl overflow-hidden mb-6">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-900/10 glass-inset">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-slate-600">SETUP.md</span>
+              <span className="text-[10px] text-slate-600 bg-slate-400/10 border border-slate-400/20 rounded-full px-2 py-0.5">
+                Every step cites the file it comes from
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Downloads links={[
+                { href: setupDownloadUrl(sessionId, 'md'), label: '.md' },
+                { href: setupDownloadUrl(sessionId, 'docx'), label: '.docx' },
+              ]} />
+            </div>
+          </div>
+          <div className="p-6 max-h-[62vh] overflow-y-auto">
+            <MarkdownWithDiagrams content={setupGuide} />
+          </div>
+        </div>
+      )}
+
+      {/* OpenAPI Panel */}
+      {tab === 'openapi' && openapi && (
+        <div className="glass rounded-2xl overflow-hidden mb-6">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-900/10 glass-inset">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-slate-600">openapi.yaml</span>
+              <span className="text-[10px] text-slate-600 bg-slate-400/10 border border-slate-400/20 rounded-full px-2 py-0.5">
+                OpenAPI 3.0.3 — import into Swagger UI / Editor or Postman
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Downloads links={[
+                { href: openapiDownloadUrl(sessionId, 'yaml'), label: '.yaml' },
+                { href: openapiDownloadUrl(sessionId, 'json'), label: '.json' },
+              ]} />
+            </div>
+          </div>
+          <div className="p-6 max-h-[62vh] overflow-y-auto">
+            <pre className="m-0 font-mono text-xs leading-relaxed text-slate-800 whitespace-pre overflow-x-auto">{openapi}</pre>
+          </div>
+        </div>
+      )}
+
+      {/* Tech Debt & Dead Code Panel */}
+      {tab === 'debt' && techDebt && (
+        <div className="glass rounded-2xl overflow-hidden mb-6">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-900/10 glass-inset">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-slate-600">TECH_DEBT_AND_DEAD_CODE.md</span>
+              <span className="text-[10px] text-slate-600 bg-slate-400/10 border border-slate-400/20 rounded-full px-2 py-0.5">
+                Candidates for human review
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Downloads links={[
+                { href: techDebtDownloadUrl(sessionId, 'md'), label: '.md' },
+                { href: techDebtDownloadUrl(sessionId, 'docx'), label: '.docx' },
+              ]} />
+            </div>
+          </div>
+          <div className="p-6 max-h-[62vh] overflow-y-auto">
+            <MarkdownWithDiagrams content={techDebt} />
           </div>
         </div>
       )}
@@ -571,19 +696,21 @@ export function BRDReview({ sessionId, brd, technicalSpec, testInventory, uiScre
         </button>
         <button
           onClick={handleRefine}
-          disabled={confirming || refining || anyUploading || !feedback.trim() || tab === 'screens'}
+          disabled={confirming || refining || anyUploading || !feedback.trim() || (reOnly && computedTab)}
           title={!feedback.trim() ? 'Add feedback above first' : undefined}
           className="flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:bg-slate-900/5 disabled:text-slate-500 text-white font-semibold px-5 py-3 rounded-xl transition-colors text-sm cursor-pointer disabled:cursor-not-allowed"
         >
           {refining ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-          {refining ? 'Refining…' : reOnly ? (tab === 'brd' ? 'Refine BRD (Product Owner)' : 'Refine Technical Docs (Architect)') : 'Refine with Planner'}
+          {refining ? 'Refining…' : reOnly
+            ? (tab === 'brd' ? 'Refine BRD (Product Owner)' : tab === 'setup' ? 'Refine Setup Guide' : 'Refine Technical Docs (Architect)')
+            : 'Refine with Planner'}
         </button>
         <p className="text-xs text-slate-500">
           {anyUploading
             ? 'Waiting for file uploads to finish…'
             : reOnly
-              ? tab === 'screens'
-                ? 'The UI Screens document is rendered from the code, not written by a model, so it has nothing to refine; Confirm finishes the run.'
+              ? computedTab
+                ? 'This document is computed from the code, not written by a model, so it has nothing to refine; Confirm finishes the run.'
                 : 'Refine re-writes the document on this tab from the gathered evidence, with your feedback; Confirm finishes the run — this pattern produces no plan or code.'
               : 'Refine re-runs the planner with your feedback; Confirm advances to plan generation.'}
         </p>

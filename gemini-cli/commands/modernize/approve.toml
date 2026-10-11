@@ -1,12 +1,15 @@
-description = "Approve the step waiting on you: /modernize:approve [ids...] (companions, stacks, analysis, plan, documents)"
+description = "Approve the step waiting on you: /modernize:approve [ids...] (companions, stacks, strategy, analysis, plan, documents)"
 prompt = """
 The user approves the gate the Stella Modernizer run is waiting on. Their words: `{{args}}`
 
 1. Call `mcp_modernizer_run_status` to see which step it waits on (`select-companions`, `select-stacks`,
-   `analysis-review`, `plan-review` or `documents-review`).
-2. Call `mcp_modernizer_confirm` with the matching gate: `companions`, `stacks`, `analysis`, `plan` or
-   `documents`. For `companions` / `stacks`, `selection` is the ids the user named (an empty list if they
+   `select-strategy`, `analysis-review`, `plan-review` or `documents-review`).
+2. Call `mcp_modernizer_confirm` with the matching gate: `companions`, `stacks`, `strategy`, `analysis`, `plan`
+   or `documents`. For `companions` / `stacks`, `selection` is the ids the user named (an empty list if they
    chose none; if they named nothing, ask — never pick for them). For `stacks`, `documents` is what they asked
-   for (default: brd, technical_spec, test_inventory).
+   for (default: brd, technical_spec, test_inventory, setup, openapi, tech_debt). For `strategy`, `selection`
+   is the one strategy id the user chose (layered-trace, api-first, data-first or stack-by-stack); if they did
+   not name one, show the options from `.modernizer/discovery/strategy.md` and ask — the recommendation is a
+   suggestion, never a choice made for them.
 3. If the gate was `plan`, say once that code changes start now. Then continue exactly as /modernize:next.
 """

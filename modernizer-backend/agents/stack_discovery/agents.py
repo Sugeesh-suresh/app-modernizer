@@ -180,6 +180,41 @@ discover_merge_agent = LlmAgent(
 # No tools — every statement must come from the evidence — and the skill text is
 # the instruction itself (a callable also keeps the code in the evidence out of
 # {...} templating).
+def _layer_agent(name: str, skill: str, description: str) -> LlmAgent:
+    """One pass of a layered reverse-engineering strategy (agents/shared/re_strategy.py):
+    a batch of computed starting points to trace, read with the workspace tools."""
+    return LlmAgent(
+        name=name,
+        model=_MODEL,
+        description=description,
+        instruction=(
+            f"Load and execute the `{skill}` skill on the request below, using the list_files, search_files and "
+            "read_file tools to follow every flow through the workspace. Return the skill's Evidence Pack. Describe "
+            "only what the repository contains; record tech debt and dead code as observed facts in their own "
+            "section.\n\n{layer_request}"
+        ),
+        tools=[
+            _skill(skill),
+            FunctionTool(fs_tools.list_files),
+            FunctionTool(fs_tools.search_files),
+            FunctionTool(fs_tools.read_file),
+        ],
+        output_key="layer_findings",
+        include_contents="none",
+    )
+
+
+layer_ui_agent = _layer_agent(
+    "layer_ui_trace", "layer-ui-trace",
+    "Traces every screen and control of a batch top-down to the database reads and writes it causes.")
+layer_db_agent = _layer_agent(
+    "layer_data_trace", "layer-data-trace",
+    "Traces every table, procedure and trigger of a batch bottom-up to the code and flows that change it.")
+layer_api_agent = _layer_agent(
+    "layer_api_logic", "layer-api-logic",
+    "Analyses every endpoint, job and listener of a batch for its business logic, and what nothing reaches.")
+
+
 def _skill_text(name: str) -> str:
     return (_SKILLS_DIR / name / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[-1]
 
@@ -213,6 +248,15 @@ ea_writer_agent = LlmAgent(
 
 # One batch of screens -> the UI Interaction Contracts of every control on them.
 # Batched (main._write_ui_contracts) so no single answer has to hold every control.
+setup_writer_agent = LlmAgent(
+    name="setup_guide",
+    model=_MODEL,
+    description="Lead engineer: writes the Setup & Deployment guide from the computed setup facts and the evidence.",
+    instruction=_writer_instruction("setup-guide"),
+    output_key="setup",
+    include_contents="none",
+)
+
 ea_ui_writer_agent = LlmAgent(
     name="ea_ui",
     model=_MODEL,

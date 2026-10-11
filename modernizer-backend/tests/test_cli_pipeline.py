@@ -230,6 +230,11 @@ def test_stack_discovery_end_to_end(tmp_path, monkeypatch):
     stacks = [s["pattern"] for s in Run.load(repo).state["recommendations"]]
     assert "java" in stacks
     pipeline.confirm(Run.load(repo), "stacks", ["java"], ["brd", "technical_spec", "test_inventory"])
+    strategy = _next(repo)
+    assert strategy["id"] == "select-strategy" and strategy["kind"] == "ask_user"
+    with pytest.raises(RunError):
+        pipeline.confirm(Run.load(repo), "strategy", ["no-such-strategy"])
+    pipeline.confirm(Run.load(repo), "strategy", ["stack-by-stack"])
 
     ev = _next(repo)
     assert ev["id"] == "evidence-java" and "stack-discovery-re" in ev["query"]
@@ -272,6 +277,72 @@ def test_stack_discovery_end_to_end(tmp_path, monkeypatch):
     assert "migrating to Java 25" not in spec                             # migration advice scrubbed
     assert run.read_doc("evidence", "stack-discovery")
     assert "confirmed" in discovery.confirm(run, "documents", None, None)
+    assert _next(repo)["kind"] == "done"
+
+
+def _drive_writers(repo: Path, outputs: dict[str, str]) -> dict:
+    """Answer every subagent step until a non-subagent step, with `outputs` by step-id prefix."""
+    step = _next(repo)
+    while step["kind"] == "subagent":
+        text = next((v for k, v in outputs.items() if step["id"].startswith(k)), "None found.")
+        _save(repo, step["id"], text)
+        pipeline.complete_step(Run.load(repo), step["id"])
+        step = _next(repo)
+    return step
+
+
+def test_layered_trace_strategy_produces_every_deliverable(tmp_path):
+    import json as _json
+    import shutil
+    repo = tmp_path / "orders"
+    shutil.copytree(FIXTURES / "thymeleaf-ui-pages", repo)
+    pipeline.start(repo, "stack-discovery")
+    assert _next(repo)["id"] == "mapper"
+    _save(repo, "mapper", "Nothing to add.\n\n```json\n{\"stacks\": [], \"rejected\": []}\n```")
+    pipeline.complete_step(Run.load(repo), "mapper")
+    _next(repo)
+    stacks = [s["pattern"] for s in Run.load(repo).state["recommendations"]]
+    pipeline.confirm(Run.load(repo), "stacks", stacks, None)            # default documents: all six
+    gate = _next(repo)
+    assert gate["id"] == "select-strategy"
+    run = Run.load(repo)
+    offered = {o["id"]: o for o in run.state["strategy_options"]}
+    assert offered["layered-trace"]["recommended"] and offered["layered-trace"]["passes"] == ["ui", "db", "api"]
+    assert "Reverse-Engineering Strategy Options" in (repo / ".modernizer/discovery/strategy.md").read_text()
+    pipeline.confirm(Run.load(repo), "strategy", ["layered-trace"])
+
+    ui_step = _next(repo)
+    assert ui_step["id"] == "layer-ui-1" and "`layer-ui-trace`" in ui_step["query"]
+    ui_request = (repo / ".modernizer/discovery/layers/ui/request-0001.md").read_text()
+    assert "UI-001" in ui_request
+    pack = ("### Flow Traces\n- UI-002 cancel → POST /api/orders/{id}/cancel → OrderApiController.cancel "
+            "(src/main/java/com/acme/orders/api/OrderApiController.java:18)\n\n"
+            "### Business Behaviour\n- An open order can be cancelled "
+            "(src/main/java/com/acme/orders/api/OrderApiController.java:18)\n\n"
+            "### Tech Debt & Dead Code\n- DashboardController.attributeSearch page is reached by no flow "
+            "(src/main/java/com/acme/orders/web/DashboardController.java:9)\n\n### Limitations\nNone found.\n")
+    step = _drive_writers(repo, {"layer-": pack, "po_brd": "## Executive Summary\nOrders are managed.\n",
+                                 "ea_spec": "## Architecture Overview\nOne Spring MVC application.\n",
+                                 "ea_diagrams": '{"diagrams": []}',
+                                 "setup": "## Prerequisites\nA JDK (pom.xml).\n"})
+    assert step["id"] == "documents-review"
+    run = Run.load(repo)
+    # the db pass had nothing computed to start from and no data stack: it is recorded, not asked
+    assert (repo / ".modernizer/discovery/evidence/db.md").read_text().startswith("### Limitations")
+    assert "EV-ui-0001" in (repo / ".modernizer/discovery/evidence/ui.md").read_text()
+    out = repo / ".modernizer/deliverables"
+    names = {p.name for p in out.iterdir()}
+    assert {"README.md", "SETUP.md", "BRD.md", "TECHNICAL_SPECIFICATION.md", "TECH_DEBT_AND_DEAD_CODE.md",
+            "openapi.yaml", "openapi.json", "STRATEGY.md", "EVIDENCE.md"} <= names
+    spec = _json.loads((out / "openapi.json").read_text())
+    assert spec["openapi"] == "3.0.3" and "/api/orders/{id}/cancel" in spec["paths"]
+    debt = (out / "TECH_DEBT_AND_DEAD_CODE.md").read_text()
+    assert "Layered trace" in debt and "EV-ui-" in debt and "reached by no flow" in debt
+    assert "## Setup & Deployment Facts (computed)" in (out / "SETUP.md").read_text()
+    assert "# Existing Test Inventory" in (out / "TECHNICAL_SPECIFICATION.md").read_text()
+    index = (out / "README.md").read_text()
+    assert "[openapi.yaml](openapi.yaml)" in index and "Layered trace" in index
+    pipeline.confirm(run, "documents")
     assert _next(repo)["kind"] == "done"
 
 

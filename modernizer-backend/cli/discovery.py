@@ -27,7 +27,7 @@ from agents import config
 from agents.shared import (
     arch_diagrams, config_matrix, current_state, dependency_graph, evidence_pack, existing_tests, external_rules,
     grounding, interfaces, plain_language, repo_fingerprint, rule_candidates, rules_ledger, stack_detector,
-    system_inventory, ui_contracts, ui_pages, ui_screens,
+    code_health, deliverables, openapi_spec, re_strategy, setup_facts, system_inventory, ui_contracts, ui_pages, ui_screens,
 )
 from agents.shared.pipeline_text import (
     DISCOVERY_GRAPHS, ELIDED_SPEC, ELIDED_TESTS, ELIDED_UI, SPEC_DIAGRAMS_BEFORE, SPEC_UI_CONTRACTS_BEFORE,
@@ -40,8 +40,10 @@ from agents.shared.pipeline_text import (
 from .pipeline import ANALYST, WRITER, _output_rule, _step, _sub
 from .runstate import Run, RunError
 
-DOCUMENTS = ("brd", "technical_spec", "test_inventory", "ui_screens")
-DEFAULT_DOCUMENTS = ("brd", "technical_spec", "test_inventory")
+DOCUMENTS = ("brd", "technical_spec", "test_inventory", "setup", "openapi", "tech_debt", "ui_screens")
+DEFAULT_DOCUMENTS = ("brd", "technical_spec", "test_inventory", "setup", "openapi", "tech_debt")
+#: The final deliverables, one file each, in `.modernizer/deliverables/`.
+DELIVERABLES_DIR = "deliverables"
 TITLE = "Technology Stack Discovery"
 
 
@@ -187,9 +189,12 @@ def _job_select(run: Run, job: dict, log: list[str]) -> dict:
                    else "\n\nUI Screens are not available") + (f": {offer['reason']}" if offer.get("reason") else ".")
     return _step(run, "select-stacks", "ask_user", title="Confirm the stacks to document", text=(
         f"The dependency mapper found these stacks (inventory: `.modernizer/discovery/stack_inventory.md`):\n\n{rows}"
-        f"\n\nDocuments: `brd`, `technical_spec`, `test_inventory` (default: all three), `ui_screens`.{screens}\n\n"
+        f"\n\nDocuments: `brd` (BRD.md), `technical_spec` (TECHNICAL_SPECIFICATION.md), `test_inventory`, `setup` "
+        f"(SETUP.md), `openapi` (openapi.yaml / openapi.json), `tech_debt` (TECH_DEBT_AND_DEAD_CODE.md) — default: all "
+        f"of these — and `ui_screens`.{screens}\n\n"
         "Ask the user which stacks to document and which documents to produce, then call `confirm` with "
-        "gate=`stacks`, `selection` = the stack ids and `documents` = the document ids."))
+        "gate=`stacks`, `selection` = the stack ids and `documents` = the document ids. The reverse-engineering "
+        "strategy is offered next, before anything is read."))
 
 
 def confirm(run: Run, gate: str, selection: list[str] | None, documents: list[str] | None) -> str:
@@ -212,9 +217,25 @@ def confirm(run: Run, gate: str, selection: list[str] | None, documents: list[st
         chosen = set(selection or [])
         run.state.update({"selection": [s["pattern"] for s in run.state["recommendations"] if s["pattern"] in chosen],
                           "documents": docs, "current_step": None})
-        run.state["jobs"] = _plan_jobs(run) + jobs[1:]
+        run.state["jobs"] = [{"kind": "computed"}, {"kind": "strategy"}] + jobs[1:]
         run.save()
-        return f"Documenting {len(run.state['selection'])} stack(s); producing {', '.join(docs)}."
+        return (f"Documenting {len(run.state['selection'])} stack(s); producing {', '.join(docs)}. The "
+                "reverse-engineering strategy options come next.")
+    if gate == "strategy":
+        if not jobs or jobs[0]["kind"] != "strategy":
+            raise RunError("The strategy is chosen once, after the stacks are confirmed.")
+        if not selection or len(selection) != 1:
+            raise RunError("Choose exactly one strategy id.")
+        try:
+            chosen = re_strategy.get(selection[0], run.state.get("strategy_options") or [])
+        except ValueError as exc:
+            raise RunError(str(exc))
+        run.state.update({"strategy": chosen["id"], "current_step": None})
+        run.state["jobs"] = _plan_jobs(run) + jobs[1:]
+        _write(_d(run, "strategy.md"), re_strategy.to_markdown(run.state["strategy_options"])
+               + f"\n**Chosen:** {chosen['name']} (`{chosen['id']}`).\n")
+        run.save()
+        return f"Strategy: {chosen['name']}."
     if gate == "documents":
         if not jobs or jobs[0]["kind"] != "review":
             raise RunError("Nothing is waiting for review.")
@@ -222,7 +243,8 @@ def confirm(run: Run, gate: str, selection: list[str] | None, documents: list[st
         run.state["current_step"] = None
         run.save()
         return "Documents confirmed."
-    raise RunError("Discovery gates: `stacks` (after the mapper) and `documents` (the final review).")
+    raise RunError("Discovery gates: `stacks` (after the mapper), `strategy` (before reverse engineering) and "
+                   "`documents` (the final review).")
 
 
 def refine(run: Run, gate: str, feedback: str) -> str:
@@ -230,9 +252,9 @@ def refine(run: Run, gate: str, feedback: str) -> str:
     jobs = run.state.get("jobs") or []
     if not jobs or jobs[0]["kind"] != "review":
         raise RunError("Refine applies once the documents are waiting for review.")
-    target = {"brd": "po_brd", "technical_spec": "ea_spec", "test_inventory": "ea_spec"}.get(gate)
+    target = {"brd": "po_brd", "technical_spec": "ea_spec", "test_inventory": "ea_spec", "setup": "setup"}.get(gate)
     if not target:
-        raise RunError("Refine the `brd`, the `technical_spec` or the `test_inventory`.")
+        raise RunError("Refine the `brd`, the `technical_spec`, the `test_inventory` or the `setup` guide.")
     run.state["feedback"] = {"target": target, "text": feedback}
     new = [{"kind": "writer", "writer": target}]
     if target == "ea_spec" and "technical_spec" in _documents(run):
@@ -243,25 +265,128 @@ def refine(run: Run, gate: str, feedback: str) -> str:
     return f"The {gate} will be rewritten with this feedback — call next_step."
 
 
+def _strategy(run: Run) -> dict:
+    sid = run.state.get("strategy") or re_strategy.STACK_BY_STACK
+    return next((s for s in run.state.get("strategy_options") or [] if s["id"] == sid),
+                {"id": sid, "passes": [], "name": sid})
+
+
 def _plan_jobs(run: Run) -> list[dict]:
+    """The work after the strategy is chosen (the computed sections already ran)."""
     docs = _documents(run)
     jobs: list[dict] = []
-    if docs & {"brd", "technical_spec", "test_inventory"}:
-        jobs += [{"kind": "evidence", "stack": s["pattern"]} for s in _stacks(run)]
+    if docs & {"brd", "technical_spec", "test_inventory", "setup", "tech_debt"}:
+        passes = _strategy(run)["passes"]
+        if passes:
+            jobs += [{"kind": "layer", "pass": p} for p in passes]
+        else:
+            jobs += [{"kind": "evidence", "stack": s["pattern"]} for s in _stacks(run)]
         jobs.append({"kind": "ground"})
         if "brd" in docs and config.RULES_EXTRACTION == "on":
             jobs.append({"kind": "rules_prepare"})
     if "ui_screens" in docs:
         jobs.append({"kind": "screens"})
-    jobs.append({"kind": "computed"})
+    if "tech_debt" in docs:
+        jobs.append({"kind": "health"})
     if "brd" in docs:
         jobs.append({"kind": "writer", "writer": "po_brd"})
     if docs & {"technical_spec", "test_inventory"}:
         jobs.append({"kind": "writer", "writer": "ea_spec"})
     if "technical_spec" in docs:
         jobs += [{"kind": "ui_prepare"}, {"kind": "writer", "writer": "ea_diagrams"}]
+    if "setup" in docs:
+        jobs.append({"kind": "writer", "writer": "setup"})
     jobs += [{"kind": "assemble"}, {"kind": "review"}]
     return jobs
+
+
+# ── strategy ─────────────────────────────────────────────────────────────────
+
+def _job_strategy(run: Run, job: dict, log: list[str]) -> dict:
+    inv = json.loads(_computed(run, "interfaces.json") or "{}")
+    ui_result = json.loads(_computed(run, "ui_contracts.json") or "{}")
+    sysinv = json.loads(_computed(run, "system_inventory.json") or "{}")
+    signals = re_strategy.signals_for(str(run.workspace), inv, ui_result, sysinv.get("database"))
+    offered = re_strategy.options(_stacks(run), signals)
+    run.state["strategy_options"] = offered
+    run.state["strategy_signals"] = signals
+    _write(_d(run, "strategy.md"), re_strategy.to_markdown(offered))
+    rows = "\n".join(f"- `{s['id']}` — {s['name']}" + (" **(recommended)**" if s["recommended"] else "")
+                      + ("" if s["available"] else " (not available)") for s in offered)
+    return _step(run, "select-strategy", "ask_user", title="Choose the reverse-engineering strategy", text=(
+        "Before any code is read, choose how this repository is reverse engineered. The options, with what each "
+        f"does, when it fits and why one is recommended here, are in `.modernizer/discovery/strategy.md`:\n\n{rows}"
+        f"\n\nComputed signals: {', '.join(f'{k} {v}' for k, v in signals.items() if v) or 'none'}.\n\n"
+        "Show the user the options (read the file for the details) and ask which to use, then call `confirm` with "
+        "gate=`strategy` and `selection` = [the strategy id]."))
+
+
+# ── layered passes ───────────────────────────────────────────────────────────
+
+def _layer_batches(run: Run, pass_id: str) -> list[dict]:
+    ws = str(run.workspace)
+    inv = json.loads(_computed(run, "interfaces.json") or "{}")
+    ui_result = json.loads(_computed(run, "ui_contracts.json") or "{}")
+    sysinv = json.loads(_computed(run, "system_inventory.json") or "{}")
+    layer_stacks = [s for s in _stacks(run) if re_strategy.LAYER_OF_KIND.get(s.get("kind", "")) == pass_id]
+    files = sorted({f for s in layer_stacks for f in (stack_files(ws, s) or [])})
+    return re_strategy.pass_batches(pass_id, files, inv, ui_result, sysinv.get("database") or {}, ws,
+                                    config.UI_CONTRACTS_BATCH_ELEMENTS, config.UI_CONTRACTS_BATCH_CHARS,
+                                    config.DISCOVERY_UNIT_MAX_FILES)
+
+
+def _job_layer(run: Run, job: dict, log: list[str]) -> dict | None:
+    pass_id = job["pass"]
+    spec = re_strategy.PASSES[pass_id]
+    if "batches" not in job:
+        batches = _layer_batches(run, pass_id)
+        for i, b in enumerate(batches, 1):
+            _write(_d(run, "layers", pass_id, f"request-{i:04d}.md"), f"# {spec.label}: {b['title']}\n\n{b['request']}")
+        job.update({"batches": [b["title"] for b in batches], "done": 0})
+        log.append(f"{spec.label}: {len(batches)} batch(es) to trace.")
+        run.save()
+        if not batches:
+            _write(_d(run, "evidence", f"{pass_id}.md"), re_strategy.empty_pass_pack(pass_id))
+            return None
+    i = job["done"]
+    request = _d(run, "layers", pass_id, f"request-{i + 1:04d}.md")
+    sid = f"layer-{pass_id}-{i + 1}"
+    q = (f"Activate the `{spec.skill}` skill and execute it on the request in `{run.rel(request)}` (read the whole "
+         f"file). {spec.summary} Explore the repository with read_file / glob / grep_search / list_directory (the "
+         "workspace root; ignore `.modernizer/`). Do not assume any file contents you have not read. Describe the "
+         "system as it is; record debt and dead code as observed facts in their own section."
+         + _output_rule(sid, "Evidence Pack, in the thirteen sections the skill specifies"))
+    return _sub(run, sid, ANALYST, q, f"{spec.label}: {job['batches'][i]}", "layer")
+
+
+def _done_layer(run: Run, job: dict, output: str) -> str:
+    pass_id = job["pass"]
+    spec = re_strategy.PASSES[pass_id]
+    i = job["done"]
+    per_unit = min(config.RE_FINDINGS_MAX_CHARS * 2, max(config.RE_SYNTHESIS_MAX_CHARS, 2) // 2)
+    _write(_d(run, "layers", pass_id, f"pack-{i + 1:04d}.md"),
+           clip_findings(output, per_unit, f"{spec.label}, batch {i + 1}"))
+    job["done"] = i + 1
+    if job["done"] < len(job["batches"]):
+        _push_front(run, job)
+        return f"{spec.label}: batch {i + 1}/{len(job['batches'])} recorded."
+    text = "\n\n".join(_read(_d(run, "layers", pass_id, f"pack-{n + 1:04d}.md")) for n in range(len(job["batches"])))
+    text = evidence_pack.assign_ids(text, pass_id)
+    _write(_d(run, "evidence", f"{pass_id}.md"), text)
+    return f"{spec.label}: {len(evidence_pack.ids(text))} numbered evidence item(s)."
+
+
+# ── tech debt and dead code ──────────────────────────────────────────────────
+
+def _job_health(run: Run, job: dict, log: list[str]) -> None:
+    ui_result = json.loads(_computed(run, "ui_contracts.json") or "{}")
+    sysinv = json.loads(_computed(run, "system_inventory.json") or "{}")
+    found = code_health.scan(str(run.workspace), ui_result, sysinv.get("database"), sysinv.get("observability"),
+                             sysinv.get("security"))
+    observations = re_strategy.debt_observations(_packs(run))
+    _write(_d(run, "tech_debt.md"), code_health.to_markdown(found, observations, TITLE, _strategy(run)["name"]))
+    log.append(f"Tech debt & dead code: {len(found['dead'])} dead-code candidate(s), {len(found['debt'])} debt "
+               f"finding(s), {len(observations)} observation(s) from the passes.")
 
 
 # ── evidence ─────────────────────────────────────────────────────────────────
@@ -329,13 +454,21 @@ def _done_evidence(run: Run, job: dict, output: str) -> str:
     return f"Evidence Pack for {label}: {len(evidence_pack.ids(text))} numbered item(s)."
 
 
+def _pack_ids(run: Run) -> list[tuple[str, str]]:
+    """(pack id, label): one per layer pass for a layered strategy, else one per stack."""
+    passes = _strategy(run)["passes"]
+    if passes:
+        return [(p, re_strategy.PASSES[p].label) for p in passes]
+    return [(s["pattern"], _label(run, s["pattern"])) for s in _stacks(run)]
+
+
 def _packs(run: Run, grounded: bool = True) -> list[tuple[str, str, str]]:
     folder = "grounded" if grounded else "evidence"
     out = []
-    for s in _stacks(run):
-        text = _read(_d(run, folder, f"{evidence_pack.slug(s['pattern'])}.md"))
+    for pid, label in _pack_ids(run):
+        text = _read(_d(run, folder, f"{evidence_pack.slug(pid)}.md"))
         if text:
-            out.append((s["pattern"], _label(run, s["pattern"]), text))
+            out.append((pid, label, text))
     return out
 
 
@@ -493,14 +626,18 @@ def _job_computed(run: Run, job: dict, log: list[str]) -> None:
     _write(_d(run, "computed", "interfaces.json"), json.dumps(inv))
     _write(_d(run, "computed", "interfaces.md"), interfaces.to_markdown(inv))
     _write(_d(run, "computed", "config_matrix.md"), config_matrix.to_markdown(config_matrix.scan(ws), None) or "")
-    _write(_d(run, "computed", "system_inventory.md"), system_inventory.to_markdown(system_inventory.scan(ws)))
+    sysinv = system_inventory.scan(ws)
+    _write(_d(run, "computed", "system_inventory.json"), json.dumps(sysinv))
+    _write(_d(run, "computed", "system_inventory.md"), system_inventory.to_markdown(sysinv))
+    _write(_d(run, "computed", "setup_facts.md"), setup_facts.to_markdown(setup_facts.scan(ws)))
     ui_result = {"screens": [], "contracts": [], "unmatched": [], "uncalled": [], "pages": []}
     pages_md, covered = "", {}
+    try:
+        # Needed by every document: the strategy signals, the UI pass, the OpenAPI file, the debt scan.
+        ui_result = ui_contracts.scan(ws, inv)
+    except Exception as exc:                                  # noqa: BLE001 — the documents do not depend on it
+        log.append(f"UI contracts scan failed: {type(exc).__name__}: {exc}")
     if "technical_spec" in docs:
-        try:
-            ui_result = ui_contracts.scan(ws, inv)
-        except Exception as exc:                              # noqa: BLE001 — the documents do not depend on it
-            log.append(f"UI contracts scan failed: {type(exc).__name__}: {exc}")
         try:
             pages = ui_pages.scan(ws, inv, ui_result)
             pages_md, covered = ui_pages.to_markdown(pages), ui_pages.covered(pages)
@@ -524,7 +661,7 @@ def _computed(run: Run, name: str) -> str:
 def _facts(run: Run) -> arch_diagrams.Facts:
     inv = json.loads(_computed(run, "interfaces.json") or "{}")
     ui_result = json.loads(_computed(run, "ui_contracts.json") or "{}")
-    return diagram_facts([s for s, _, _ in _packs(run)], inv.get("endpoints", []),
+    return diagram_facts(list(run.state.get("selection") or []), inv.get("endpoints", []),
                          json.loads(_computed(run, "modules.json") or "[]"), _computed(run, "config_matrix.md"),
                          ui_result, "\n".join([_read(_d(run, "stack_inventory.md")), _computed(run, "interfaces.md"),
                                                _computed(run, "endpoint_contracts.md"),
@@ -533,16 +670,26 @@ def _facts(run: Run) -> arch_diagrams.Facts:
 
 # ── writers ──────────────────────────────────────────────────────────────────
 
-_WRITER_SKILLS = {"po_brd": "as-is-brd", "ea_spec": "current-state-architecture", "ea_diagrams": "architecture-diagrams"}
+_WRITER_SKILLS = {"po_brd": "as-is-brd", "ea_spec": "current-state-architecture", "ea_diagrams": "architecture-diagrams",
+                  "setup": "setup-guide"}
 _WRITER_TITLES = {"po_brd": "Product Owner: as-is BRD", "ea_spec": "Enterprise Architect: Technical Specification",
-                  "ea_diagrams": "Enterprise Architect: architecture diagrams"}
+                  "ea_diagrams": "Enterprise Architect: architecture diagrams",
+                  "setup": "Lead engineer: Setup & Deployment guide"}
+_SETUP_SECTIONS = ("Components", "Integrations & Configuration", "Security", "Logging, Monitoring & Auditing",
+                   "Tests", "Limitations")
 
 
 def _writer_request(run: Run, writer: str, retry_note: str = "") -> str:
     packs = _packs(run)
     stack_info = {s["pattern"]: s for s in run.state["recommendations"]}
-    stacks = "\n".join(f"- {label} (id `{sid}`, kind {stack_info.get(sid, {}).get('kind') or 'unspecified'})"
-                       for sid, label, _ in packs)
+    stacks = "\n".join(f"- {_label(run, s['pattern'])} (id `{s['pattern']}`, kind "
+                       f"{stack_info.get(s['pattern'], {}).get('kind') or 'unspecified'})" for s in _stacks(run))
+    strategy = _strategy(run)
+    if strategy["passes"]:
+        stacks += ("\n\n## How the evidence was gathered\nStrategy: " + strategy["name"] + ". The evidence is "
+                   "organised by pass — " + "; ".join(f"{re_strategy.PASSES[p].label}: {re_strategy.PASSES[p].summary}"
+                                                     for p in strategy["passes"])
+                   + " Use the Flow Traces for end-to-end flows.")
     docs = _documents(run)
     if writer == "po_brd":
         extra = ("## Business-Rules Catalog (brief)\n"
@@ -564,6 +711,12 @@ def _writer_request(run: Run, writer: str, retry_note: str = "") -> str:
                   + for_writer(_computed(run, "system_inventory.md"), 120000)
                   + for_writer(_computed(run, "test_files.md"), 30000))
         sections = evidence_pack.EA_SECTIONS
+    elif writer == "setup":
+        extra = ("## Repository Facts (computed by the pipeline)\n"
+                 + for_writer(_computed(run, "setup_facts.md"), 80000)
+                 + for_writer(_computed(run, "system_inventory.md"), 60000)
+                 + for_writer(_computed(run, "config_matrix.md"), 30000))
+        sections = _SETUP_SECTIONS
     else:
         extra = ("## Repository Facts (computed by the pipeline)\n" + for_writer(_read(_d(run, "stack_inventory.md")), 40000)
                  + for_writer(_computed(run, "interfaces.md"), 40000) + for_writer(_computed(run, "ui_to_backend.md"), 20000)
@@ -596,7 +749,7 @@ def _job_writer(run: Run, job: dict, log: list[str]) -> dict:
     request = _write(_d(run, "requests", f"{writer}.md"), _writer_request(run, writer, job.get("retry_note", "")))
     sid = writer + ("-retry" if job.get("retry_note") else "")
     what = {"po_brd": "BRD (markdown)", "ea_spec": "Technical Specification and Test Inventory, as the skill specifies",
-            "ea_diagrams": "JSON object only"}[writer]
+            "ea_diagrams": "JSON object only", "setup": "Setup & Deployment guide (markdown)"}[writer]
     q = (f"Activate the `{skill}` skill and execute it on the request in `{run.rel(request)}` (read the whole file; it "
          "may take several read_file calls). Write the document from the evidence in that file — do not read the "
          "repository's code." + _output_rule(sid, what))
@@ -764,7 +917,8 @@ def _job_assemble(run: Run, job: dict, log: list[str]) -> None:
                                   spec_untraced if contracts_md else None, elisions,
                                   diagram_rejected if ea_diagrams else None))
     graphs = []
-    for stack_id, label, _ in packs:
+    for stack_id in run.state.get("selection") or []:
+        label = _label(run, stack_id)
         graph_pattern = DISCOVERY_GRAPHS.get(stack_id)
         if graph_pattern:
             graph_json = json.dumps(dependency_graph.build_dependency_graph(ws, graph_pattern))
@@ -790,34 +944,71 @@ def _job_assemble(run: Run, job: dict, log: list[str]) -> None:
         log.append(f"Grounding: {len(withheld)} evidence item(s) withheld, {len(untraced)} BRD and "
                    f"{len(spec_untraced)} UI statement(s) removed, {len(elisions)} abbreviated list(s) replaced — "
                    "details under Grounding Checks in evidence.md.")
+    if "setup" in docs:
+        setup_md = current_state_only(_read(_d(run, "writers", "setup.md")), "Setup & Deployment guide", keep)
+        setup_md = setup_md or ("> The setup guide was not written; the computed facts follow.\n\n"
+                                + _computed(run, "setup_facts.md"))
+        run.write_doc("setup", setup_md.rstrip() + "\n\n---\n\n" + _computed(run, "setup_facts.md") + "\n",
+                      "stack-discovery")
+    if "openapi" in docs:
+        settings = system_inventory._settings(system_inventory._files(Path(ws)))
+        spec = openapi_spec.build(ui_result.get("contracts", []), f"{run.workspace.name} — as-is HTTP interface",
+                                  servers=openapi_spec.servers_from_config(settings))
+        _write(_d(run, "openapi.yaml"), openapi_spec.to_yaml(spec))
+        _write(_d(run, "openapi.json"), openapi_spec.to_json(spec))
+        log.append(f"OpenAPI 3.0: {len(spec['paths'])} path(s), {sum(len(v) for v in spec['paths'].values())} "
+                   "operation(s).")
+    if "tech_debt" in docs:
+        run.write_doc("tech_debt", _read(_d(run, "tech_debt.md")), "stack-discovery")
+    written = export_deliverables(run)
+    log.append(f"Deliverables in `.modernizer/{DELIVERABLES_DIR}/`: " + ", ".join(written))
     run.state.pop("feedback", None)
 
 
+def export_deliverables(run: Run) -> list[str]:
+    """The final documents as separate files in `.modernizer/deliverables/`, with an index."""
+    out = run.dir / DELIVERABLES_DIR
+    out.mkdir(parents=True, exist_ok=True)
+    docs = {d: run.read_doc(d, "stack-discovery").replace("../../discovery/", "../discovery/")
+            for d in ("setup", "brd", "technical_spec", "test_inventory", "tech_debt", "ui_screens", "evidence")}
+    spec_file = _d(run, "openapi.json")
+    spec = json.loads(spec_file.read_text(encoding="utf-8")) if spec_file.is_file() else None
+    files = deliverables.build(docs, spec, _read(_d(run, "strategy.md")), run.workspace.name, _strategy(run)["name"],
+                               [f"{_label(run, s)} (`{s}`)" for s in run.state.get("selection") or []])
+    for old in out.glob("*"):
+        if old.is_file() and old.name not in files:
+            old.unlink()
+    for name, text in files.items():
+        (out / name).write_text(text, encoding="utf-8")
+    return list(files)
+
+
 def _job_review(run: Run, job: dict, log: list[str]) -> dict:
-    docs = "\n".join(f"- `{run.rel(run.doc_path(n, 'stack-discovery'))}`"
-                     for n in ("brd", "technical_spec", "test_inventory", "ui_screens")
-                     if run.doc_path(n, "stack-discovery").is_file())
-    return _step(run, "documents-review", "review_gate", title="Review the discovery documents", text=(
-        f"Ask the user to review the documents:\n{docs}\n\n(The code references behind the BRD — traceability, the "
+    out = run.dir / DELIVERABLES_DIR
+    docs = "\n".join(f"- `{run.rel(p)}`" for p in sorted(out.glob("*")) if p.is_file())
+    return _step(run, "documents-review", "review_gate", title="Review the reverse-engineering deliverables", text=(
+        f"Ask the user to review the deliverables (edit the sources under `.modernizer/docs/stack-discovery/` if "
+        f"needed):\n{docs}\n\n(The code references behind the BRD — traceability, the "
         "rules catalog, coverage and the evidence check — are in "
         f"`{run.rel(run.doc_path('evidence', 'stack-discovery'))}`.)\n\nThen either `/modernize:approve` (calls "
-        "`confirm` with gate=`documents`) or `/modernize:refine <brd|technical_spec|test_inventory> <feedback>` "
+        "`confirm` with gate=`documents`) or `/modernize:refine <brd|technical_spec|test_inventory|setup> <feedback>` "
         "(calls `refine`; only that document's writer runs again, from the stored evidence). "
         "`/modernize:export` writes Word copies."))
 
 
 def _done_text(run: Run) -> str:
-    docs = "\n".join(f"- `{run.rel(run.doc_path(n, 'stack-discovery'))}`"
-                     for n in ("brd", "technical_spec", "test_inventory", "ui_screens", "evidence")
-                     if run.doc_path(n, "stack-discovery").is_file())
-    return f"Discovery is complete. Nothing in the repository was changed. Documents:\n{docs}"
+    out = run.dir / DELIVERABLES_DIR
+    docs = "\n".join(f"- `{run.rel(p)}`" for p in sorted(out.glob("*")) if p.is_file())
+    return f"Discovery is complete. Nothing in the repository was changed. Deliverables:\n{docs}"
 
 
 _JOBS = {
     "mapper": _job_mapper, "select": _job_select, "evidence": _job_evidence, "ground": _job_ground,
     "rules_prepare": _job_rules_prepare, "rules_batch": _job_rules_batch, "rules_finalize": _job_rules_finalize,
     "screens": _job_screens, "computed": _job_computed, "writer": _job_writer, "ui_prepare": _job_ui_prepare,
-    "ui_batch": _job_ui_batch, "assemble": _job_assemble, "review": _job_review,
+    "ui_batch": _job_ui_batch, "assemble": _job_assemble, "review": _job_review, "strategy": _job_strategy,
+    "layer": _job_layer, "health": _job_health,
 }
-_DONE = {"mapper": _done_mapper, "evidence": _done_evidence, "rules_batch": _done_rules, "writer": _done_writer,
+_DONE = {"mapper": _done_mapper, "evidence": _done_evidence, "layer": _done_layer, "rules_batch": _done_rules,
+         "writer": _done_writer,
          "ui_batch": _done_ui}

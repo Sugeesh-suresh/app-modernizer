@@ -1,7 +1,9 @@
-description = "Discover and reverse-engineer this repository's stacks into a BRD, Technical Specification and Test Inventory (changes nothing)"
+description = "Reverse-engineer this repository (layered trace or other strategy you choose) into SETUP.md, BRD.md, TECHNICAL_SPECIFICATION.md, openapi.yaml and a tech-debt/dead-code review (changes nothing)"
 prompt = """
 Start a Stella Modernizer `stack-discovery` run on the current repository: call
 `mcp_modernizer_start_run` with pattern `stack-discovery` (if a run exists, show `mcp_modernizer_run_status`
 and ask whether to continue it or restart). Discovery never changes the repository. Then drive the pipeline
-exactly as /modernize:next does.
+exactly as /modernize:next does. It stops for the user three times: to confirm the stacks and documents, to
+choose the reverse-engineering strategy (the options and a recommendation are computed for this repository —
+present them, let the user pick), and to review the deliverables in `.modernizer/deliverables/`.
 """

@@ -134,7 +134,7 @@ _RECORDED: dict[str, list[dict]] = {}
 
 
 def _run(sid: str, selected: list[str] | None, screenshots: bool | None = None,
-         documents: list[str] | None = None) -> None:
+         documents: list[str] | None = None, strategy: str | None = None) -> None:
     """Drive the workflow, releasing each gate the way the HTTP endpoints do.
 
     Gates are released off the step-change events the workflow itself emits
@@ -164,9 +164,9 @@ def _run(sid: str, selected: list[str] | None, screenshots: bool | None = None,
                 if event.get("type") != "step-change":
                     continue
                 if event.get("step") == "companion-selection" and selected is not None:
-                    if documents is not None:
+                    if documents is not None or strategy is not None:
                         await main.select_companions(sid, SelectCompanionsRequest(
-                            selected=selected, documents=documents))
+                            selected=selected, documents=documents, strategy=strategy))
                         continue
                     if screenshots is not None:
                         # Through the endpoint itself, which decides whether the choice counts.
@@ -218,7 +218,7 @@ class TestStackDiscoveryWorkflow:
 
         _run(sid, ["java", "wildfly"])
 
-        assert [w for w, _ in harness.writers] == ["po_brd", "ea_spec", "ea_diagrams"]
+        assert [w for w, _ in harness.writers] == ["po_brd", "ea_spec", "ea_diagrams", "setup"]
         for writer in ("po_brd", "ea_spec"):
             request = harness.request(writer)
             assert "WildFly / JBoss (app server) (id `wildfly`" in request and "Java application (id `java`" in request
@@ -585,7 +585,8 @@ class TestRefineTargetsOneWriter:
         with TestClient(main.app) as client:
             client.post(f"/api/sessions/{sid}/refine-brd", json={"feedback": "x"})
 
-        assert sorted(w for w, _ in harness.writers) == ["ea_diagrams", "ea_spec", "po_brd"] and harness.stacks == []
+        assert sorted(w for w, _ in harness.writers) == ["ea_diagrams", "ea_spec", "po_brd", "setup"] \
+            and harness.stacks == []
 
 
 class TestUiInteractionContracts:
@@ -762,7 +763,9 @@ class TestChosenDocuments:
         h, rules, sid = self._setup(monkeypatch)
         _run(sid, ["java"], screenshots=False)
         state = _state(sid)
-        assert json.loads(state["documents_json"]) == ["brd", "technical_spec", "test_inventory"]
+        assert json.loads(state["documents_json"]) == ["brd", "technical_spec", "test_inventory", "setup", "openapi",
+                                                       "tech_debt"]
+        assert state["setup_doc"] and state["tech_debt"] and json.loads(state["openapi_json"])["openapi"] == "3.0.3"
         assert state["brd"] and state["technical_spec"] and state["test_inventory"]
 
     def test_refine_and_download_respect_the_choice(self, monkeypatch):
@@ -774,3 +777,52 @@ class TestChosenDocuments:
             assert refused.status_code == 400
             combined = client.get(f"/api/sessions/{sid}/download/reverse-engineering?format=md").text
             assert "# Technical Specification" in combined and "# Business Requirements" not in combined
+
+
+class TestReverseEngineeringStrategy:
+    """The strategy is offered with the stacks, chosen before anything is read, and
+    decides how the evidence is gathered; every deliverable downloads on its own
+    and together."""
+
+    def test_strategies_are_offered_and_the_recommended_one_is_the_default(self, monkeypatch):
+        _Harness(monkeypatch)
+        sid = _session(PRESCAN)
+        _run(sid, ["java", "oracle", "wildfly"], strategy="")
+        offered = next(e for e in _RECORDED[sid] if e.get("type") == "companion-recommendations")["strategies"]
+        assert {o["id"] for o in offered} == {"layered-trace", "api-first", "data-first", "stack-by-stack"}
+        assert offered[0]["recommended"]
+        # Nothing computed to trace (no workspace): the recommended default is taken.
+        assert _state(sid)["strategy"] == offered[0]["id"] == "stack-by-stack"
+
+    def test_a_layered_strategy_gathers_the_evidence_by_pass(self, monkeypatch):
+        _Harness(monkeypatch)
+        sid = _session(PRESCAN)
+        _run(sid, ["java", "oracle", "wildfly"], strategy="api-first")
+        state = _state(sid)
+        assert state["strategy"] == "api-first"
+        assert any(e.get("type") == "brd-ready" and e.get("strategy") for e in _RECORDED[sid])
+
+    def test_an_unavailable_strategy_is_refused(self, monkeypatch):
+        _Harness(monkeypatch)
+        sid = _session(PRESCAN)
+        asyncio.run(main._update_state(sid, {"companion_recommendations_json": json.dumps(PRESCAN)}))
+        with pytest.raises(main.HTTPException) as err:
+            asyncio.run(main.select_companions(sid, SelectCompanionsRequest(selected=["java"],
+                                                                             strategy="layered-trace")))
+        assert err.value.status_code == 400 and "not available" in err.value.detail
+
+    def test_every_deliverable_downloads(self, monkeypatch):
+        _Harness(monkeypatch)
+        sid = _session(PRESCAN)
+        _run(sid, ["java"])
+        with TestClient(main.app) as client:
+            for path in ("setup", "tech-debt", "setup?format=docx"):
+                assert client.get(f"/api/sessions/{sid}/download/{path}").status_code == 200, path
+            spec = client.get(f"/api/sessions/{sid}/download/openapi?format=json").json()
+            assert spec["openapi"] == "3.0.3"
+            assert client.get(f"/api/sessions/{sid}/download/openapi").text.startswith("openapi: 3.0.3")
+            zipped = client.get(f"/api/sessions/{sid}/download/deliverables")
+            assert zipped.status_code == 200
+        names = set(zipfile.ZipFile(io.BytesIO(zipped.content)).namelist())
+        assert {"README.md", "SETUP.md", "BRD.md", "TECHNICAL_SPECIFICATION.md", "TECH_DEBT_AND_DEAD_CODE.md",
+                "openapi.yaml", "openapi.json", "STRATEGY.md", "EVIDENCE.md"} <= names

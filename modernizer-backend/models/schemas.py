@@ -69,7 +69,8 @@ class ConfirmRequest(BaseModel):
 class RefineRequest(BaseModel):
     feedback: str
     # stack-discovery only: which writer re-runs — "brd" (Product Owner) or
-    # "technical_spec" (Enterprise Architect). Anything else re-runs both.
+    # "technical_spec" (Enterprise Architect) or "setup" (the Setup & Deployment
+    # guide). Anything else re-runs every writer.
     target: Optional[str] = None
 
 
@@ -83,6 +84,10 @@ class SelectCompanionsRequest(BaseModel):
     # Technical Specification and the Test Inventory, and UI Screens when
     # `screenshots` is set. Only what a chosen document needs is run.
     documents: Optional[List[str]] = None
+    # Stack discovery: the reverse-engineering strategy (agents/shared/re_strategy.py) —
+    # "layered-trace", "api-first", "data-first" or "stack-by-stack". None: the one
+    # recommended for the stacks kept.
+    strategy: Optional[str] = None
 
 
 class ChangedFile(BaseModel):

@@ -89,15 +89,42 @@ upload → RE (Java 11 blockers + frozen-zone inventory) → HUMAN: review → p
 
 | Pattern | From | To | Validation | Strategies |
 |---|---|---|---|---|
-| **Discover & Reverse Engineer My Stack** | An unknown or mixed-stack repo | One combined reverse-engineering document | None — nothing is generated or modified | Single pass, RE only |
+| **Discover & Reverse Engineer My Stack** | An unknown or mixed-stack repo | Separate deliverables: SETUP.md, BRD.md, TECHNICAL_SPECIFICATION.md, openapi.yaml/json, TECH_DEBT_AND_DEAD_CODE.md | None — nothing is generated or modified | Layered trace, API-first, data-first or stack-by-stack — chosen per repository |
 
 `stack-discovery` is the one pattern that is not a migration, for the case where you do not know what is in a repository or it is several things at once. You upload it without choosing a migration; a dependency mapper works out which stacks are actually present, you confirm them, and each one is documented as it is. The run **ends at the analysis review** — no plan, no code generation, nothing written to the workspace.
 
 ```
-upload → dependency mapper → HUMAN: confirm stacks → evidence per stack (+ business-rules ledger)
-       → Product Owner writes the BRD ∥ Enterprise Architect writes the technical documents
-       → evidence check → HUMAN: review → done
+upload → dependency mapper → HUMAN: confirm stacks, pick the strategy and the deliverables
+       → evidence by layer pass (UI ↓ → DB ↑ → API) or per stack (+ business-rules ledger)
+       → Product Owner writes the BRD ∥ Enterprise Architect writes the technical documents ∥ setup guide
+       → OpenAPI 3.0, tech debt & dead code (computed) → evidence check → HUMAN: review → deliverables
 ```
+
+#### Reverse-engineering strategies (layer by layer)
+
+Before any agent reads the code, the confirmation screen offers the strategies that fit **this** repository (`agents/shared/re_strategy.py`), the recommended one first and preselected. The recommendation comes from the layers found — each confirmed stack's kind (web tier / front end → UI, service / application / server → API, database / search → data) — and the computed counts (screens, controls, endpoints, jobs, listeners, tables, entities, routines). A strategy the repository cannot support is shown disabled with the reason.
+
+| Strategy | Passes | Best for |
+|---|---|---|
+| **Layered trace** | (1) **UI top-down** (`skills/layer-ui-trace`): every screen and control traced through the API, services and data access to the rows it reads and writes. (2) **Data bottom-up** (`skills/layer-data-trace`): every table, view, procedure and trigger up to whatever changes it. (3) **API & business logic** (`skills/layer-api-logic`): every endpoint, job and listener for its logic, marking what the UI and data passes did not reach | Full-stack monoliths with a UI, a service layer and a database |
+| **API-first** | API & logic → data (→ UI when present) | Back-end services and APIs |
+| **Data-first** | Data → API & logic (→ UI) | Database-centric systems (much logic in procedures and triggers) |
+| **Stack-by-stack** | One evidence specialist per stack (the earlier behaviour) | Repositories with no layering to trace, e.g. a broker configuration |
+
+Each pass is batched from computed starting points — screens and their controls with the endpoints they call (`ui_contracts`), tables with the files that name them (`system_inventory`), endpoint handlers with the UI controls that call them, or *"no UI control in this repository calls it"* — and every pass returns an Evidence Pack with two extra sections, **Flow Traces** (UI → API → service → repository → table, step by step) and **Tech Debt & Dead Code** (what the trace found unreachable or risky). The pack ids are `EV-ui-…`, `EV-db-…`, `EV-api-…`; grounding, writers and assembly are the same as for stack-by-stack. The choice is stored with the run and written to `STRATEGY.md`.
+
+#### Deliverables
+
+The run produces separate Markdown files, listed by an index (`README.md`), downloadable together as one zip (`GET /api/sessions/{id}/download/deliverables`) or written to `.modernizer/deliverables/` from Gemini CLI:
+
+| File | Contents | Written by |
+|---|---|---|
+| `SETUP.md` | Local setup and deployment to other environments: prerequisites, configuration (env vars and placeholders, defaults redacted), services, database setup, build, run, verify, tests, deployment (Docker/Compose, Kubernetes/Helm, Terraform, PaaS, app server, CI/CD), troubleshooting — every step citing its file | `skills/setup-guide` from computed setup facts (`shared/setup_facts.py`) |
+| `BRD.md` | Product Owner standard BRD: purpose & scope, executive summary, stakeholders, business context, capabilities, current processes, scenarios, functional requirements (FR table), non-functional requirements as observed, business rules by capability, business data, external parties, assumptions, risks, glossary, open questions | `skills/as-is-brd` |
+| `TECHNICAL_SPECIFICATION.md` | Enterprise Architect technical documentation, with the computed inventories and the Existing Test Inventory | `skills/current-state-architecture` |
+| `openapi.yaml` / `openapi.json` | OpenAPI **3.0.3** of every HTTP endpoint — paths, parameters, request/response schemas with Bean Validation constraints, errors, access rules (`x-access-rule`), UI callers (`x-ui-callers`), source (`x-source`). Validated with `openapi-spec-validator`; import into Swagger UI/Editor or Postman | No model (`shared/openapi_spec.py`) |
+| `TECH_DEBT_AND_DEAD_CODE.md` | Dead-code candidates (unreferenced classes, unused private and repository methods, unimported modules, unrendered templates, unused tables, REST endpoints no UI calls, commented-out code) and tech debt (TODO/FIXME, deprecated APIs, swallowed exceptions, SQL concatenation, credentials in code — never shown —, hard-coded URLs, large classes, field injection, risky configuration…), each with location and confidence and an empty **Decision** column, plus what the tracing agents observed | No model (`shared/code_health.py`) + the passes' observations |
+| `UI_SCREENS.md`, `STRATEGY.md`, `EVIDENCE.md` | Rendered screens (when chosen), the strategy options and the one chosen, traceability | — |
 
 The document describes **only what the repository contains** — no migration, upgrade, target-version or other change suggestions. Three things keep it that way:
 
@@ -175,8 +202,12 @@ The skills tell both agents the same, so most answers pass first time. Everythin
 | Whole reverse-engineering document — `…/download/reverse-engineering?format=` | ✓ (default) | ✓, with the UI Screens and their images as a fourth part |
 | UI Screens — `…/download/ui-screens?format=` | `zip` (default): Markdown + `screens/*.png` | ✓, images embedded |
 | Evidence file (`evidence.md`; API only, not in the UI) — `…/download/evidence?format=` | ✓ (default) | ✓ |
+| Setup & Deployment Guide — `…/download/setup?format=` | ✓ (default) | ✓ |
+| Tech Debt & Dead Code — `…/download/tech-debt?format=` | ✓ (default) | ✓ |
+| OpenAPI 3.0.3 — `…/download/openapi?format=yaml\|json` | `yaml` (default) or `json` | — |
+| All deliverables — `…/download/deliverables` | zip of the separate files above, with diagrams and screens | — |
 
-**Documents to generate.** The stack-confirmation screen also asks which documents to produce — **Business Requirements Document**, **Technical Specification**, **Test Cases** (Existing Test Inventory) and **UI Screens** (the first three ticked by default) — and only those are generated, running only the work they need:
+**Documents to generate.** The stack-confirmation screen also asks which documents to produce — **Business Requirements Document**, **Technical Specification**, **Test Cases** (Existing Test Inventory), **Setup & Deployment Guide**, **OpenAPI 3.0 Specification**, **Tech Debt & Dead Code** and **UI Screens** (all but UI Screens ticked by default) — and only those are generated, running only the work they need:
 
 | Chosen | What runs |
 |---|---|
@@ -562,8 +593,9 @@ Pick **Discover & Reverse Engineer My Stack** when you do not know what is in th
 1. Upload the `.zip` — no migration to choose, and no strategy or toggles (the API rejects them for this pattern)
 2. Watch the **dependency mapper** read the build files and descriptors
 3. Confirm the **detected stacks**, each with its file evidence; uncheck anything you do not want documented
-4. Watch one reverse-engineering run per confirmed stack
-5. Review and edit the combined document, then confirm to finish — or download it from `GET /api/sessions/{id}/download/reverse-engineering` (`?format=docx` for Word), which returns the BRD, Technical Specification and Test Inventory as one file
+4. Pick the **reverse-engineering strategy** (the recommended one is preselected) and the deliverables (`POST /api/sessions/{id}/select-companions` with `selected`, `documents`, `strategy`)
+5. Watch the layer passes (or one run per stack for stack-by-stack)
+6. Review each deliverable on its tab (BRD, Technical Specification, Test Cases, Setup & Deployment, OpenAPI 3.0, Tech Debt & Dead Code), refine the BRD, technical documents or setup guide with feedback, then confirm to finish — **All deliverables (.zip)** downloads them as separate files; `GET /api/sessions/{id}/download/reverse-engineering` still returns the combined document
 
 ---
 

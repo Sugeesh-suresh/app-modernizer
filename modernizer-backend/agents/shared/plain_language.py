@@ -191,8 +191,9 @@ def business_only(markdown: str) -> tuple[str, list[tuple[str, list[str]]], int]
 
 
 def place_section(markdown: str, section: str, heading: str,
-                  before: tuple[str, ...] = ("## Business Data", "## External Parties", "## Observed Risks",
-                                             "## Open Questions")) -> str:
+                  before: tuple[str, ...] = ("## Non-Functional Requirements", "## Business Data",
+                                             "## External Parties", "## Assumptions", "## Observed Risks",
+                                             "## Glossary", "## Open Questions")) -> str:
     """`section` (starting with `heading`) in its place in the document: replacing a
     section of that heading the writer produced, else before the first of `before`
     present, else at the end."""

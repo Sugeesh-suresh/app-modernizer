@@ -13,6 +13,7 @@ import {
   confirmBrd, confirmPlan, refineBrd, refinePlan, selectCompanions, createSSEConnection,
   reverseEngineeringDownloadUrl,
 } from './api';
+import type { RefineTarget } from './api';
 import { PATTERNS } from './data/patterns';
 import type {
   DiscoveryDocument, PatternId, JavaMigrationOptions as JavaOptions, WorkflowState, WorkflowStep, SSEEvent, StageResult,
@@ -52,7 +53,12 @@ const INITIAL_STATE: WorkflowState = {
   refining: false,
   companionRecommendations: [],
   screenshotsOffer: null,
+  strategies: [],
   uiScreens: '',
+  setupGuide: '',
+  techDebt: '',
+  openapi: '',
+  strategyName: '',
   error: null,
 };
 
@@ -289,6 +295,7 @@ export default function App() {
           ...s,
           companionRecommendations: event.companions ?? [],
           screenshotsOffer: event.screenshots ?? null,
+          strategies: event.strategies ?? [],
         }));
         break;
 
@@ -320,6 +327,10 @@ export default function App() {
           technicalSpec: event.technical_spec ?? '',
           testInventory: event.test_inventory ?? '',
           uiScreens: event.ui_screens ?? '',
+          setupGuide: event.setup ?? '',
+          techDebt: event.tech_debt ?? '',
+          openapi: event.openapi ?? '',
+          strategyName: event.strategy ?? '',
           step: 'brd-review',
           streamingContent: '',
           refining: false,
@@ -411,11 +422,11 @@ export default function App() {
     connectSSE(sessionId);
   };
 
-  const handleSelectCompanions = async (selected: string[], documents?: DiscoveryDocument[]) => {
+  const handleSelectCompanions = async (selected: string[], documents?: DiscoveryDocument[], strategy?: string) => {
     if (!state.sessionId) return;
     // The backend's next step-change (reverse-engineering) advances the view,
     // same as the BRD/plan confirm flows.
-    await selectCompanions(state.sessionId, selected, documents);
+    await selectCompanions(state.sessionId, selected, documents, strategy);
   };
 
   const handleConfirmBrd = async (brdContent: string, techSpecContent: string, feedback?: string) => {
@@ -424,7 +435,7 @@ export default function App() {
     setState((s) => ({ ...s, step: 'plan-generation', streamingContent: '', progress: 0 }));
   };
 
-  const handleRefineBrd = async (feedback: string, target?: 'brd' | 'technical_spec') => {
+  const handleRefineBrd = async (feedback: string, target?: RefineTarget) => {
     if (!state.sessionId) return;
     setState((s) => ({ ...s, refining: true, streamingContent: '' }));
     try {
@@ -552,6 +563,7 @@ export default function App() {
             onConfirm={handleSelectCompanions}
             discovery={reOnly}
             screenshotsOffer={reOnly ? state.screenshotsOffer : null}
+            strategies={reOnly ? state.strategies : []}
           />
         )}
 
@@ -581,13 +593,18 @@ export default function App() {
 
         {/* Reverse engineering may have been asked for other documents than the BRD. */}
         {state.step === 'brd-review' && state.sessionId
-          && (state.brd || (reOnly && (state.technicalSpec || state.testInventory || state.uiScreens))) && (
+          && (state.brd || (reOnly && (state.technicalSpec || state.testInventory || state.uiScreens
+            || state.setupGuide || state.techDebt || state.openapi))) && (
           <BRDReview
             sessionId={state.sessionId}
             brd={state.brd}
             technicalSpec={state.technicalSpec}
             testInventory={state.testInventory}
             uiScreens={state.uiScreens}
+            setupGuide={state.setupGuide}
+            techDebt={state.techDebt}
+            openapi={state.openapi}
+            strategyName={state.strategyName}
             refining={state.refining}
             refiningContent={state.streamingContent}
             onConfirm={handleConfirmBrd}

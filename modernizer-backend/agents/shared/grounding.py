@@ -345,6 +345,16 @@ def files_index(workspace_dir: str) -> "_Files":
 # ── BRD statements ──────────────────────────────────────────────────────────
 
 _EXEMPT_SECTIONS = ("executive summary", "open questions", "business rules by capability")
+#: Sections that frame the document rather than state facts about the code: like the
+#: Executive Summary they need no citation, but any value they state must be in the evidence.
+_FRAMING_SECTIONS = ("executive summary", "document purpose", "purpose and scope", "purpose & scope", "glossary")
+#: Sections that are not claims at all.
+_NOT_CLAIMS = ("open questions", "business rules by capability", "assumptions")
+
+
+def _numbered(section: str) -> str:
+    """A heading without its numbering ("3. glossary" → "glossary")."""
+    return re.sub(r"^\s*\d+(?:\.\d+)*[.)]?\s*", "", section)
 
 
 def check_brd(markdown: str, evidence: dict[str, str], rules: dict[str, str],
@@ -391,7 +401,7 @@ def check_brd(markdown: str, evidence: dict[str, str], rules: dict[str, str],
                     and not re.match(r"^\s*(?:[-*+]|\d+[.)])\s", lines[j]):
                 j += 1
         block = "\n".join(lines[i:j])
-        if section.startswith(_EXEMPT_SECTIONS[1]) or section.startswith(_EXEMPT_SECTIONS[2]):
+        if _numbered(section).startswith(_NOT_CLAIMS):
             out.extend(lines[i:j])
             i = j
             continue
@@ -403,7 +413,7 @@ def check_brd(markdown: str, evidence: dict[str, str], rules: dict[str, str],
         ev = [e for e in EV_ID.findall(block) if e in evidence]
         br = [b for b in BR_ID.findall(block) if b in rules]
         reason = None
-        if section.startswith(_EXEMPT_SECTIONS[0]):
+        if _numbered(section).startswith(_FRAMING_SECTIONS):
             problems = unsupported_values(_without_ids(block), every_text, extra_numbers=allowed_numbers)
             reason = "; ".join(problems) if problems else None
         elif not ev and not br:

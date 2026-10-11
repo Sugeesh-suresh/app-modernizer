@@ -74,7 +74,7 @@ from .stack_discovery.agents import (
     dependency_mapper_agent as stack_mapper, wildfly_re_agent as wildfly_re,
     discovery_agent as stack_discovery_agent,
     discover_unit_agent, discover_merge_agent, po_writer_agent, ea_writer_agent, ea_ui_writer_agent, ea_diagrams_agent,
-    rule_extractor_agent,
+    rule_extractor_agent, layer_ui_agent, layer_db_agent, layer_api_agent, setup_writer_agent,
 )
 
 APP_NAME = "modernizer"
@@ -178,6 +178,12 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
         "ea_ui": _runner(ea_ui_writer_agent),
         "ea_diagrams": _runner(ea_diagrams_agent),
         "rules": _runner(rule_extractor_agent),
+        # Layered strategies (agents/shared/re_strategy.py): one runner per pass, and
+        # the Setup & Deployment guide writer — see main._gather_layer_evidence.
+        "layer_ui": _runner(layer_ui_agent),
+        "layer_db": _runner(layer_db_agent),
+        "layer_api": _runner(layer_api_agent),
+        "setup": _runner(setup_writer_agent),
     },
     # A stack, not a migration: reachable only as one leg of a stack-discovery
     # fan-out (stack_detector.DEDICATED_RUNNERS), so it has an `re` runner only.

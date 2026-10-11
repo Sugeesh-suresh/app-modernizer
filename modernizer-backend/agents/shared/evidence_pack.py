@@ -33,15 +33,16 @@ import re
 
 SECTIONS = ("Components", "Entry Points & Interfaces", "Data", "Business Behaviour", "Actors & Roles",
             "Component Interactions", "Integrations & Configuration", "Security",
-            "Logging, Monitoring & Auditing", "Tests", "Limitations")
+            "Logging, Monitoring & Auditing", "Flow Traces", "Tech Debt & Dead Code", "Tests", "Limitations")
 
 #: What each writer is given. Both see interfaces and data — they describe the
 #: same system from two sides — and both see the limitations.
-PO_SECTIONS = ("Actors & Roles", "Business Behaviour", "Entry Points & Interfaces", "Data", "Limitations")
+PO_SECTIONS = ("Actors & Roles", "Business Behaviour", "Flow Traces", "Entry Points & Interfaces", "Data",
+               "Limitations")
 #: The Enterprise Architect documents how the system is built: its components and how they
 #: talk, its integrations, data, security and observability — so it also sees the roles
 #: (the security model is written in them).
-EA_SECTIONS = ("Components", "Component Interactions", "Entry Points & Interfaces", "Data",
+EA_SECTIONS = ("Components", "Component Interactions", "Flow Traces", "Entry Points & Interfaces", "Data",
                "Integrations & Configuration", "Security", "Actors & Roles", "Logging, Monitoring & Auditing",
                "Tests", "Limitations")
 
@@ -62,6 +63,9 @@ _ALIASES = {
     "logging, monitoring and auditing": "Logging, Monitoring & Auditing",
     "logging monitoring & auditing": "Logging, Monitoring & Auditing",
     "logging & monitoring": "Logging, Monitoring & Auditing", "observability": "Logging, Monitoring & Auditing",
+    "flow traces": "Flow Traces", "flows": "Flow Traces", "traces": "Flow Traces", "data lifecycle": "Flow Traces",
+    "tech debt & dead code": "Tech Debt & Dead Code", "tech debt and dead code": "Tech Debt & Dead Code",
+    "tech debt": "Tech Debt & Dead Code", "dead code": "Tech Debt & Dead Code",
     "tests": "Tests", "limitations": "Limitations", "unit limitations": "Limitations",
     "discovery limitations": "Limitations",
 }

@@ -8,7 +8,13 @@ analyse → (analysis review) → plan → **plan approval** → modify → buil
 
 Patterns: `java-8-to-25` (bigbang or incremental, optional Spring Boot 4 / JUnit), `java-8-to-11` (JDK only;
 JSP and WildFly frozen), `solr-4-to-9`, `oracle-19c-to-23ai`, `tibco-ems-to-pubsub`, `jsp-to-react-bff`, and
-`stack-discovery` (documents the repository as it is; changes nothing).
+`stack-discovery` (reverse engineering: documents the repository as it is; changes nothing).
+
+Reverse engineering (`stack-discovery`) asks the user for a **strategy** before reading any code, with options
+computed for the repository: `layered-trace` (UI top-down → data bottom-up → API & logic; recommended for
+full-stack applications), `api-first`, `data-first` or `stack-by-stack`. Its deliverables are separate files in
+`.modernizer/deliverables/`: `SETUP.md`, `BRD.md`, `TECHNICAL_SPECIFICATION.md`, `openapi.yaml`/`openapi.json`
+(OpenAPI 3.0), `TECH_DEBT_AND_DEAD_CODE.md` (for human review), `STRATEGY.md`, `EVIDENCE.md` and a `README.md` index.
 
 ## What does what
 
@@ -38,7 +44,8 @@ When continuing a run, loop:
    pipeline wrote (skill, inputs, rules, step_id). Do not summarise or extend it. Then call
    `mcp_modernizer_complete_step` with the `step_id`, and go back to 1.
 3. If it is `ask_user` or `review_gate`: stop. Tell the user what to decide or review (with the file paths)
-   and which command answers it. **Never confirm a gate on the user's behalf** — the analysis review and the
+   and which command answers it. For the strategy choice, show every option with what it does, when it fits
+   and why one is recommended (from `.modernizer/discovery/strategy.md`). **Never confirm a gate on the user's behalf** — the analysis review and the
    plan approval are the human checkpoints of this process; nothing in the repository changes before the plan
    is approved.
 4. If it is `blocked`: stop and explain what to fix. If it is `done`: summarise and point to the reports.

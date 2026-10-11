@@ -65,7 +65,25 @@ export interface ScreenshotsOffer {
 }
 
 /** stack-discovery: a document the reviewer can choose to generate. */
-export type DiscoveryDocument = 'brd' | 'technical_spec' | 'test_inventory' | 'ui_screens';
+export type DiscoveryDocument =
+  'brd' | 'technical_spec' | 'test_inventory' | 'setup' | 'openapi' | 'tech_debt' | 'ui_screens';
+
+/** stack-discovery: a reverse-engineering strategy offered for this repository
+ * (agents/shared/re_strategy.py), sent with companion-recommendations. */
+export interface StrategyOption {
+  id: string;
+  name: string;
+  /** Layers traced, in order (ui, db, api); empty for stack-by-stack. */
+  passes: string[];
+  pass_labels: string[];
+  summary: string;
+  best_for: string;
+  standards: string;
+  available: boolean;
+  recommended: boolean;
+  /** Why it is recommended, or why it is unavailable. */
+  reasons: string[];
+}
 
 export interface CompanionRecommendation {
   /** A PatternId for a companion migration; for stack-discovery, a stack id found
@@ -181,8 +199,16 @@ export interface WorkflowState {
   companionRecommendations: CompanionRecommendation[];
   /** stack-discovery: the UI screenshots option, when the repository has a UI */
   screenshotsOffer: ScreenshotsOffer | null;
+  /** stack-discovery: the reverse-engineering strategies offered for this repository */
+  strategies: StrategyOption[];
   /** stack-discovery: the UI Screens document, when screenshots were chosen */
   uiScreens: string;
+  /** stack-discovery deliverables: setup guide, tech debt / dead code, OpenAPI (YAML) */
+  setupGuide: string;
+  techDebt: string;
+  openapi: string;
+  /** stack-discovery: the name of the strategy the run used */
+  strategyName: string;
   error: string | null;
 }
 
@@ -197,6 +223,13 @@ export interface SSEEvent {
   ui_screens?: string;
   /** Sent with stack-discovery's companion-recommendations when the repository has a UI */
   screenshots?: ScreenshotsOffer;
+  /** Sent with stack-discovery's companion-recommendations */
+  strategies?: StrategyOption[];
+  /** stack-discovery's brd-ready: the other deliverables and the strategy used */
+  setup?: string;
+  tech_debt?: string;
+  openapi?: string;
+  strategy?: string;
   progress?: number;
   message?: string;
   files?: GeneratedFile[];

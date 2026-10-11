@@ -199,9 +199,12 @@ async def confirm(gate: str, selection: list[str] | None = None, documents: list
     Args:
         gate: `companions` (which companion migrations to include), `analysis` (the analysis is
             confirmed), `plan` (the plan is approved — code changes start), `stacks` (stack-discovery:
-            which stacks to document) or `documents` (stack-discovery: the documents are accepted).
-        selection: For `companions` / `stacks`: the chosen ids (empty list = none).
-        documents: For `stacks`: brd, technical_spec, test_inventory, ui_screens.
+            which stacks to document), `strategy` (stack-discovery: how to reverse engineer — one id
+            from the offered options, before any code is read) or `documents` (stack-discovery: the
+            deliverables are accepted).
+        selection: For `companions` / `stacks`: the chosen ids (empty list = none). For `strategy`:
+            [the strategy id] — layered-trace, api-first, data-first or stack-by-stack.
+        documents: For `stacks`: brd, technical_spec, test_inventory, setup, openapi, tech_debt, ui_screens.
     """
     return await _run(lambda: pipeline.confirm(_load(workspace), gate, selection, documents)
                       + "\n\nCall `next_step` to continue.")
@@ -212,7 +215,7 @@ async def refine(gate: str, feedback: str, workspace: str = "") -> str:
     """Send a reviewed document back with the user's feedback instead of approving it.
 
     Args:
-        gate: `analysis` or `plan`; for stack-discovery `brd`, `technical_spec` or `test_inventory`.
+        gate: `analysis` or `plan`; for stack-discovery `brd`, `technical_spec`, `test_inventory` or `setup`.
         feedback: What should change, in the user's words.
     """
     return await _run(lambda: pipeline.refine(_load(workspace), gate, feedback))

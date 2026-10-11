@@ -1,5 +1,8 @@
 import type { DiscoveryDocument, PatternId, JavaMigrationOptions } from './types';
 
+/** What a refine request rewrites. */
+export type RefineTarget = 'brd' | 'technical_spec' | 'setup';
+
 const BASE = 'http://localhost:8000';
 
 /** The server's own explanation (FastAPI `detail`) when it gives one — e.g. why a
@@ -79,20 +82,20 @@ export async function confirmBrd(
 
 /** `documents`: stack-discovery's chosen documents; omitted for a migration's companions. */
 export async function selectCompanions(
-  sessionId: string, selected: string[], documents?: DiscoveryDocument[],
+  sessionId: string, selected: string[], documents?: DiscoveryDocument[], strategy?: string,
 ): Promise<void> {
   const res = await fetch(`${BASE}/api/sessions/${sessionId}/select-companions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(documents
-      ? { selected, documents, screenshots: documents.includes('ui_screens') }
+      ? { selected, documents, screenshots: documents.includes('ui_screens'), strategy }
       : { selected }),
   });
   if (!res.ok) throw await apiError(res, 'Failed to confirm companion migrations');
 }
 
 export async function refineBrd(
-  sessionId: string, feedback: string, target?: 'brd' | 'technical_spec',
+  sessionId: string, feedback: string, target?: RefineTarget,
 ): Promise<void> {
   const res = await fetch(`${BASE}/api/sessions/${sessionId}/refine-brd`, {
     method: 'POST',
@@ -166,6 +169,22 @@ export const decisionPointsDownloadUrl = (sessionId: string) =>
 /** stack-discovery: the UI Screens document — Markdown and images as one zip, or Word with the images inside. */
 export const uiScreensDownloadUrl = (sessionId: string, format: 'zip' | 'docx' = 'docx') =>
   `${BASE}/api/sessions/${sessionId}/download/ui-screens?format=${format}`;
+
+/** stack-discovery: how to set the application up locally and deploy it to other environments. */
+export const setupDownloadUrl = (sessionId: string, format: DocFormat = 'md') =>
+  `${BASE}/api/sessions/${sessionId}/download/setup?format=${format}`;
+
+/** stack-discovery: tech debt and dead-code candidates for human review. */
+export const techDebtDownloadUrl = (sessionId: string, format: DocFormat = 'md') =>
+  `${BASE}/api/sessions/${sessionId}/download/tech-debt?format=${format}`;
+
+/** stack-discovery: OpenAPI 3.0.3 of every HTTP endpoint, ready for Swagger UI / Editor or Postman. */
+export const openapiDownloadUrl = (sessionId: string, format: 'yaml' | 'json' = 'yaml') =>
+  `${BASE}/api/sessions/${sessionId}/download/openapi?format=${format}`;
+
+/** stack-discovery: every deliverable as separate Markdown files (plus openapi.yaml/json) in one zip. */
+export const deliverablesDownloadUrl = (sessionId: string) =>
+  `${BASE}/api/sessions/${sessionId}/download/deliverables`;
 
 /** One rendered screen of the UI Screens document (`screens/SCR-0001.png` in its Markdown). */
 export const uiScreenUrl = (sessionId: string, name: string) =>

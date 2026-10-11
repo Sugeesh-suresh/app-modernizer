@@ -51,7 +51,8 @@ from agents.java_8_to_11 import preflight as java11_preflight
 from agents.shared import (arch_diagrams, config_matrix, current_state, docx_export, evidence_pack, external_rules,
                            grounding, interfaces,
                            existing_tests, migration_inventory, plain_language, repo_fingerprint, rule_candidates,
-                           rules_ledger, ui_contracts, ui_pages, ui_screens, system_inventory)
+                           rules_ledger, ui_contracts, ui_pages, ui_screens, system_inventory,
+                           code_health, deliverables, openapi_spec, re_strategy, setup_facts)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
@@ -1468,8 +1469,8 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
 
 
 #: The documents a stack-discovery run can produce, in the order the review screen shows them.
-DISCOVERY_DOCUMENTS = ("brd", "technical_spec", "test_inventory", "ui_screens")
-_DEFAULT_DOCUMENTS = ("brd", "technical_spec", "test_inventory")
+DISCOVERY_DOCUMENTS = ("brd", "technical_spec", "test_inventory", "setup", "openapi", "tech_debt", "ui_screens")
+_DEFAULT_DOCUMENTS = ("brd", "technical_spec", "test_inventory", "setup", "openapi", "tech_debt")
 
 
 def _documents(state: dict) -> set[str]:
@@ -1610,20 +1611,26 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
 
     documents = _documents(state)
     # Evidence serves the written documents; UI Screens alone needs none (no model at all).
-    gather = bool(documents & {"brd", "technical_spec", "test_inventory"})
-    packs: list[tuple[str, str, str]] = []          # (stack id, label, numbered pack)
-    for stack_id in (bundle if gather else []):
-        label = _label(stack_id, True, labels)
-        path = evidence_dir / f"{evidence_pack.slug(stack_id)}.md"
+    gather = bool(documents & {"brd", "technical_spec", "test_inventory", "setup", "tech_debt"})
+    strategy = _strategy_of(state)
+    # One pack per layer pass for a layered strategy, else one per stack.
+    pack_ids = [(p, re_strategy.PASSES[p].label) for p in strategy["passes"]] if strategy["passes"] else \
+        [(s, _label(s, True, labels)) for s in bundle]
+    packs: list[tuple[str, str, str]] = []          # (pack id, label, numbered pack)
+    for pack_id, label in (pack_ids if gather else []):
+        path = evidence_dir / f"{evidence_pack.slug(pack_id)}.md"
         if feedback and path.is_file():
             text = path.read_text(encoding="utf-8")
         else:
             await _push(session_id, "re-stream", content=f"\n\n### Gathering evidence: {label}\n")
-            raw = await _gather_stack_evidence(session_id, stack_id, stack_info.get(stack_id, {"pattern": stack_id}),
-                                               label)
-            text = evidence_pack.assign_ids(raw, stack_id)
+            if strategy["passes"]:
+                raw = await _gather_layer_evidence(session_id, pack_id)
+            else:
+                raw = await _gather_stack_evidence(session_id, pack_id, stack_info.get(pack_id, {"pattern": pack_id}),
+                                                   label)
+            text = evidence_pack.assign_ids(raw, pack_id)
             path.write_text(text, encoding="utf-8")
-        packs.append((stack_id, label, text))
+        packs.append((pack_id, label, text))
     # Grounding: the writers get only evidence items traceable to the repository —
     # the file each cites exists (and the line), and the code it quotes is in it.
     withheld: list[tuple[str, str]] = []
@@ -1706,7 +1713,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         await _update_state(session_id, {"modules_json": json.dumps(modules)})
     else:
         modules = json.loads(state["modules_json"])
-    facts = _diagram_facts([sid for sid, _, _ in packs], endpoints_jobs.get("endpoints", []), modules, config_md,
+    facts = _diagram_facts(list(bundle), endpoints_jobs.get("endpoints", []), modules, config_md,
                            ui_result, "\n".join([state.get("stack_inventory_markdown", ""), inventory_md,
                                                 endpoint_contracts_md, contracts_md, config_md or ""]))
 
@@ -1715,8 +1722,13 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     rule_ids = {r["id"] for r in rules_ledger.verified_rules(ledger)}
     if packs:
         budget = max(config.RE_SYNTHESIS_MAX_CHARS, 2)
-        stacks = "\n".join(f"- {label} (id `{sid}`, kind {stack_info.get(sid, {}).get('kind') or 'unspecified'})"
-                           for sid, label, _ in packs)
+        stacks = "\n".join(f"- {_label(sid, True, labels)} (id `{sid}`, kind "
+                           f"{stack_info.get(sid, {}).get('kind') or 'unspecified'})" for sid in bundle)
+        if strategy["passes"]:
+            stacks += ("\n\n## How the evidence was gathered\nStrategy: " + strategy["name"] + ". The evidence is "
+                       "organised by pass — " + "; ".join(f"{re_strategy.PASSES[p].label}: {re_strategy.PASSES[p].summary}"
+                                                         for p in strategy["passes"])
+                       + " Use the Flow Traces for end-to-end flows.")
         write_brd = "brd" in documents and (target in ("all", "brd") or not po_brd)
         write_spec = bool(documents & {"technical_spec", "test_inventory"}) and (
             target in ("all", "technical_spec") or not (ea_spec or ea_tests))
@@ -1778,7 +1790,22 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
                                         "; answer with the JSON object only.\n\n", ea_diagrams)
                 return text
             jobs["diagrams"] = diagrams_job()
+        if "setup" in documents and (target in ("all", "setup") or not state.get("setup_guide")):
+            await _push(session_id, "re-stream", content="\n\n### Lead engineer agent: Setup & Deployment guide\n")
+            if not state.get("setup_facts_markdown"):
+                setup_md_facts = await asyncio.to_thread(lambda: setup_facts.to_markdown(setup_facts.scan(workspace_dir)))
+                await _update_state(session_id, {"setup_facts_markdown": setup_md_facts})
+            else:
+                setup_md_facts = state["setup_facts_markdown"]
+            jobs["setup"] = writer("setup", ("Components", "Integrations & Configuration", "Security",
+                                             "Logging, Monitoring & Auditing", "Tests", "Limitations"),
+                                   "## Repository Facts (computed by the pipeline)\n"
+                                   + _for_writer(setup_md_facts, 80000) + _for_writer(system_md, 60000)
+                                   + _for_writer(config_md, 30000), state.get("setup_guide", ""))
         results = dict(zip(jobs, await asyncio.gather(*jobs.values())))
+        if "setup" in results:
+            await _update_state(session_id, {"setup_guide": _current_state_only(results["setup"],
+                                                                              "Setup & Deployment guide", keep)})
         if "brd" in results:
             po_brd = _current_state_only(results["brd"], "BRD (Product Owner)", keep)
         if "spec" in results:
@@ -1890,7 +1917,8 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     evidence_file.write_text(evidence_md, encoding="utf-8")
 
     graphs = []
-    for stack_id, label, _ in packs:
+    for stack_id in bundle:
+        label = _label(stack_id, True, labels)
         graph_pattern = _DISCOVERY_GRAPHS.get(stack_id)
         if graph_pattern:
             graph_json = json.dumps(dependency_graph.build_dependency_graph(workspace_dir, graph_pattern))
@@ -1912,12 +1940,34 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         if tech_spec:
             _, tech_spec = _with_ingestion_warning(state, "", tech_spec)
     ui_md = await _ui_screens_document(session_id, ledger)
+    # The other deliverables: the Setup & Deployment guide, the OpenAPI file, the
+    # tech-debt and dead-code review (agents/shared/deliverables.py).
+    state = await _get_state(session_id)
+    setup_doc = ""
+    if "setup" in documents:
+        setup_doc = ((state.get("setup_guide") or "> The setup guide was not written; the computed facts follow.")
+                     .rstrip() + "\n\n---\n\n" + (state.get("setup_facts_markdown") or ""))
+    computed_ui = json.loads(state.get("ui_contracts_json") or "null") or {}
+    sysinv = json.loads(state.get("system_inventory_json") or "null") or {}
+    openapi_json = ""
+    if "openapi" in documents:
+        spec_doc = openapi_spec.build(computed_ui.get("contracts", []), f"{_discovery_title(state)} — as-is HTTP interface")
+        openapi_json = openapi_spec.to_json(spec_doc)
+    tech_debt = ""
+    if "tech_debt" in documents:
+        found = await asyncio.to_thread(code_health.scan, workspace_dir, computed_ui, sysinv.get("database"),
+                                        sysinv.get("observability"), sysinv.get("security"))
+        tech_debt = code_health.to_markdown(found, re_strategy.debt_observations(packs), _discovery_title(state),
+                                            strategy["name"])
     await _update_state(session_id, {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory,
-                                     "ui_screens": ui_md, "evidence_path": str(evidence_file)})
+                                     "ui_screens": ui_md, "evidence_path": str(evidence_file),
+                                     "setup_doc": setup_doc, "openapi_json": openapi_json, "tech_debt": tech_debt})
     if announce:
         extra = {"ui_screens": ui_md} if ui_md else {}
         await _push(session_id, "brd-ready", brd=brd, technical_spec=tech_spec, test_inventory=test_inventory,
-                    **extra)
+                    setup=setup_doc, tech_debt=tech_debt,
+                    openapi=openapi_spec.to_yaml(json.loads(openapi_json)) if openapi_json else "",
+                    strategy=strategy["name"], **extra)
 
 
 async def _run_ui_screens(session_id: str) -> None:
@@ -2337,6 +2387,90 @@ async def _merge_to_budget(pieces: list[str], budget: int, label: str) -> list[s
     return pieces
 
 
+def _computed_facts(workspace_dir: str, inv: dict | None = None) -> tuple[dict, dict, dict]:
+    """Interfaces, UI contracts and the System Inventory — what the strategy, the
+    layer passes, the OpenAPI file and the tech-debt scan start from. The UI
+    contracts are matched against `inv` when the session already has one."""
+    inv = inv or interfaces.scan(workspace_dir)
+    try:
+        ui_result = ui_contracts.scan(workspace_dir, inv)
+    except Exception as exc:                                  # noqa: BLE001 — the documents do not depend on it
+        print(f"[discovery] UI contracts scan failed: {type(exc).__name__}: {exc}", flush=True)
+        ui_result = {"screens": [], "contracts": [], "unmatched": [], "uncalled": []}
+    return inv, ui_result, system_inventory.scan(workspace_dir)
+
+
+async def _offer_strategies(session_id: str, stacks: list[dict]) -> list[dict]:
+    state = await _get_state(session_id)
+    workspace_dir = state.get("workspace_dir", "")
+    # Facts already computed for this session are kept (they are what the documents use).
+    inv, ui_result, sysinv = await asyncio.to_thread(_computed_facts, workspace_dir,
+                                                     json.loads(state.get("interfaces_json") or "null"))
+    ui_result = json.loads(state.get("ui_contracts_json") or "null") or ui_result
+    signals = re_strategy.signals_for(workspace_dir, inv, ui_result, sysinv.get("database"))
+    offered = re_strategy.options(stacks, signals)
+    await _update_state(session_id, {"interfaces_json": json.dumps(inv), "ui_contracts_json": json.dumps(ui_result),
+                                     "system_inventory_json": json.dumps(sysinv),
+                                     "strategy_signals_json": json.dumps(signals),
+                                     "strategy_options_json": json.dumps(offered)})
+    return offered
+
+
+def _strategy_of(state: dict) -> dict:
+    sid = state.get("strategy") or re_strategy.STACK_BY_STACK
+    offered = json.loads(state.get("strategy_options_json") or "[]")
+    return next((s for s in offered if s["id"] == sid), {"id": sid, "name": sid, "passes": []})
+
+
+async def _gather_layer_evidence(session_id: str, pass_id: str) -> str:
+    """One pass of a layered strategy: its batches (computed starting points), each
+    traced by the pass's agent — RE_CONCURRENCY at once — and returned together."""
+    state = await _get_state(session_id)
+    workspace_dir = state.get("workspace_dir", "")
+    spec = re_strategy.PASSES[pass_id]
+    inv = json.loads(state.get("interfaces_json") or "null")
+    ui_result = json.loads(state.get("ui_contracts_json") or "null")
+    sysinv = json.loads(state.get("system_inventory_json") or "null")
+    if inv is None or ui_result is None or sysinv is None:
+        inv, ui_result, sysinv = await asyncio.to_thread(_computed_facts, workspace_dir)
+    layer_stacks = [s for s in _confirmed_stacks(state) if re_strategy.LAYER_OF_KIND.get(s.get("kind", "")) == pass_id]
+    files = sorted({f for s in layer_stacks for f in (_stack_files(workspace_dir, s) or [])})
+    batches = await asyncio.to_thread(re_strategy.pass_batches, pass_id, files, inv, ui_result,
+                                      sysinv.get("database") or {}, workspace_dir, config.UI_CONTRACTS_BATCH_ELEMENTS,
+                                      config.UI_CONTRACTS_BATCH_CHARS, config.DISCOVERY_UNIT_MAX_FILES)
+    if not batches:
+        return re_strategy.empty_pass_pack(pass_id)
+    await _push(session_id, "re-stream", content=f"\n**{spec.label}:** {len(batches)} batch(es), "
+                                                 f"{config.RE_CONCURRENCY} at a time.\n")
+    per_batch = min(config.RE_FINDINGS_MAX_CHARS * 2, max(config.RE_SYNTHESIS_MAX_CHARS, 2) // 2)
+    gate = asyncio.Semaphore(config.RE_CONCURRENCY)
+    finished = 0
+
+    async def trace(index: int, batch: dict) -> str:
+        nonlocal finished
+        async with gate:
+            try:
+                text = await _run_isolated(f"layer_{pass_id}", _STACK_DISCOVERY,
+                                           {"workspace_dir": workspace_dir,
+                                            "layer_request": f"# {spec.label}: {batch['title']}\n\n{batch['request']}"},
+                                           "Trace this batch.", "layer_findings")
+                reason = "the run returned no evidence"
+            except Exception as exc:
+                traceback.print_exc()
+                text, reason = "", _describe_error(exc)
+            finished += 1
+            await _push(session_id, "progress", message=f"{spec.label}: batch {finished}/{len(batches)}",
+                        progress=int(5 + 60 * finished / max(len(batches), 1)))
+        if not text.strip():
+            return f"### Limitations\n- **Not traced** — {batch['title']}: {reason}."
+        return _clip_findings(text, per_batch, f"{spec.label}, batch {index} ({batch['title']})")
+
+    parts = list(await asyncio.gather(*(trace(i, b) for i, b in enumerate(batches, 1))))
+    if all("**Not traced**" in p for p in parts):
+        raise RuntimeError(f"{spec.label} failed for every batch. Last: {parts[-1][:400]}")
+    return "\n\n".join(parts)
+
+
 async def _run_stack_discovery_workflow(session_id: str) -> None:
     """The stack-discovery pipeline: map -> confirm -> reverse-engineer -> stop.
 
@@ -2361,12 +2495,16 @@ async def _run_stack_discovery_workflow(session_id: str) -> None:
         if offer is not None:
             await _update_state(session_id, {"ui_screens_offer_json": json.dumps(offer)})
             extra["screenshots"] = offer
+        # How to reverse engineer: options for this repository, chosen on the same screen,
+        # before any agent reads the code (agents/shared/re_strategy.py).
+        extra["strategies"] = await _offer_strategies(session_id, stacks)
         await _push(session_id, "companion-recommendations", companions=stacks, **extra)
         await _push(session_id, "step-change", step="companion-selection")
         await _companion_gates[session_id].wait()
     else:
         # Nothing to choose between. Gating here would park the run on a
         # confirmation screen with no options on it.
+        await _update_state(session_id, {"strategy": re_strategy.STACK_BY_STACK})
         _companion_gates[session_id].set()
 
     state = await _get_state(session_id)
@@ -2784,11 +2922,25 @@ async def select_companions(session_id: str, body: SelectCompanionsRequest = Sel
                             + (" — UI Screens cannot be produced for this repository." if "ui_screens" in wanted
                                else "."))
 
+    strategy_delta, strategy = {}, None
+    if state.get("pattern") == _STACK_DISCOVERY:
+        # The options are recomputed for the stacks kept: removing the UI stack, say,
+        # makes the UI-first trace unavailable.
+        kept = [s for s in json.loads(state.get("companion_recommendations_json", "[]")) if s["pattern"] in selected]
+        offered = re_strategy.options(kept, json.loads(state.get("strategy_signals_json") or "{}"))
+        wanted_strategy = body.strategy or next(s["id"] for s in offered if s["recommended"])
+        try:
+            strategy = re_strategy.get(wanted_strategy, offered)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        strategy_delta = {"strategy": strategy["id"], "strategy_options_json": json.dumps(offered)}
+
     await _update_state(session_id, {"companion_patterns_json": json.dumps(selected),
                                      "ui_screenshots": "true" if screenshots else "",
-                                     "documents_json": json.dumps(documents)})
+                                     "documents_json": json.dumps(documents), **strategy_delta})
     _companion_gates[session_id].set()
-    return {"ok": True, "selected": selected, "screenshots": screenshots, "documents": documents}
+    return {"ok": True, "selected": selected, "screenshots": screenshots, "documents": documents,
+            "strategy": strategy["id"] if strategy else None}
 
 
 @app.post("/api/sessions/{session_id}/confirm-brd")
@@ -2832,10 +2984,10 @@ async def refine_brd(session_id: str, body: RefineRequest):
     bundle = _bundle_for(state)
     if state.get("pattern") == _STACK_DISCOVERY:
         # Only the writer of the tab being refined re-runs, from the stored evidence.
-        target = body.target if body.target in ("brd", "technical_spec") else "all"
+        target = body.target if body.target in ("brd", "technical_spec", "setup") else "all"
         documents = _documents(state)
         if target == "brd" and "brd" not in documents or target == "technical_spec" and not (
-                documents & {"technical_spec", "test_inventory"}):
+                documents & {"technical_spec", "test_inventory"}) or target == "setup" and "setup" not in documents:
             raise HTTPException(status_code=400, detail="That document was not chosen for this run.")
         return await _refine(session_id, _run_discovery_documents(session_id, bundle, body.feedback, target))
     return await _refine(session_id, _run_bundle_re(session_id, bundle, feedback=body.feedback))
@@ -3042,6 +3194,77 @@ async def download_ui_screens(session_id: str, format: str = "zip"):
                 archive.write(folder / name, f"screens/{name}")
     return Response(content=buffer.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="ui-screens-{session_id[:8]}.zip"'})
+
+
+async def _document_download(session_id: str, key: str, fmt: str, stem: str, title: str, missing: str):
+    state = await _get_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    text = state.get(key, "")
+    if not text:
+        raise HTTPException(status_code=404, detail=missing)
+    name = f"{stem}-{session_id[:8]}"
+    if fmt == "docx":
+        return await _docx_response(name, f"{title} — {_discovery_title(state)}", [(None, text)])
+    return _markdown_response(text, name)
+
+
+@app.get("/api/sessions/{session_id}/download/setup")
+async def download_setup(session_id: str, format: str = "md"):
+    """SETUP.md — local setup and deployment to other environments (`?format=docx` for Word)."""
+    return await _document_download(session_id, "setup_doc", _download_format(format, ("md", "docx")), "setup",
+                                     "Setup & Deployment Guide", "Setup guide not yet generated.")
+
+
+@app.get("/api/sessions/{session_id}/download/tech-debt")
+async def download_tech_debt(session_id: str, format: str = "md"):
+    """TECH_DEBT_AND_DEAD_CODE.md — tech debt and dead-code candidates for review."""
+    return await _document_download(session_id, "tech_debt", _download_format(format, ("md", "docx")), "tech-debt",
+                                    "Tech Debt & Dead Code", "Tech-debt review not yet generated.")
+
+
+@app.get("/api/sessions/{session_id}/download/openapi")
+async def download_openapi(session_id: str, format: str = "yaml"):
+    """The OpenAPI 3.0.3 specification — `openapi.yaml` (default) or `?format=json`."""
+    fmt = _download_format(format, ("yaml", "json"))
+    state = await _get_state(session_id)
+    if not state or not state.get("openapi_json"):
+        raise HTTPException(status_code=404, detail="OpenAPI specification not yet generated.")
+    doc = json.loads(state["openapi_json"])
+    body, media = (openapi_spec.to_yaml(doc), "application/yaml") if fmt == "yaml" else \
+        (openapi_spec.to_json(doc), "application/json")
+    return Response(content=body, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="openapi-{session_id[:8]}.{fmt}"'})
+
+
+@app.get("/api/sessions/{session_id}/download/deliverables")
+async def download_deliverables(session_id: str):
+    """Every reverse-engineering deliverable as separate files in one zip: README.md
+    (index), SETUP.md, BRD.md, TECHNICAL_SPECIFICATION.md, openapi.yaml / .json,
+    TECH_DEBT_AND_DEAD_CODE.md, UI_SCREENS.md, STRATEGY.md, EVIDENCE.md, and the images."""
+    state = await _get_state(session_id)
+    if not state or not (state.get("brd") or state.get("technical_spec") or state.get("setup_doc")):
+        raise HTTPException(status_code=404, detail="No deliverables yet.")
+    evidence = Path(state.get("evidence_path", "") or "/nonexistent")
+    docs = {"setup": state.get("setup_doc", ""), "brd": state.get("brd", ""),
+            "technical_spec": state.get("technical_spec", ""), "test_inventory": state.get("test_inventory", ""),
+            "tech_debt": state.get("tech_debt", ""), "ui_screens": state.get("ui_screens", ""),
+            "evidence": evidence.read_text(encoding="utf-8") if evidence.is_file() else ""}
+    strategy = _strategy_of(state)
+    offered = json.loads(state.get("strategy_options_json") or "[]")
+    strategy_md = (re_strategy.to_markdown(offered) + f"\n**Chosen:** {strategy['name']} (`{strategy['id']}`).\n") \
+        if offered else ""
+    files = deliverables.build(docs, json.loads(state["openapi_json"]) if state.get("openapi_json") else None,
+                               strategy_md, _discovery_title(state), strategy["name"],
+                               [f"{_label(s, True)} (`{s}`)" for s in _bundle_for(state)])
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, text in files.items():
+            archive.writestr(name, text)
+        for ref, path in {**_diagram_images(state), **_screen_images(state)}.items():
+            archive.write(path, ref)
+    return Response(content=buffer.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="deliverables-{session_id[:8]}.zip"'})
 
 
 @app.get("/api/sessions/{session_id}/download/reverse-engineering")
