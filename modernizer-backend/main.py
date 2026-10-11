@@ -51,13 +51,15 @@ from agents.java_8_to_11 import preflight as java11_preflight
 from agents.shared import (arch_diagrams, config_matrix, current_state, docx_export, evidence_pack, external_rules,
                            grounding, interfaces,
                            existing_tests, migration_inventory, plain_language, repo_fingerprint, rule_candidates,
-                           rules_ledger, ui_contracts, ui_pages, ui_screens)
+                           rules_ledger, ui_contracts, ui_pages, ui_screens, system_inventory)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
     companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
 )
 from agents.shared.file_parser import extract_text
 from agents.shared.pipeline_text import (  # noqa: E402 — shared with the Gemini CLI path (cli/)
+    SPEC_DIAGRAMS_BEFORE as _SPEC_DIAGRAMS_BEFORE,
+    SPEC_UI_CONTRACTS_BEFORE as _SPEC_UI_CONTRACTS_BEFORE,
     rule_languages as _rule_languages,
     stack_files as _stack_files,
     file_units as _file_units,
@@ -914,6 +916,7 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         "evidence_path": "",
         "interfaces_json": "",
         "config_matrix_markdown": "",
+        "system_inventory_markdown": "",
         # UI screens (agents/shared/ui_screens.py): what was offered at stack
         # confirmation, whether the reviewer chose it, the capture manifest,
         # the folder holding the images, and the document built from them.
@@ -1651,6 +1654,12 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         await _update_state(session_id, {"config_matrix_markdown": config_md or " "})
     else:
         config_md = state["config_matrix_markdown"].strip()
+    # Database, integrations, security, logging/monitoring/auditing — every item with file:line, no model.
+    if not state.get("system_inventory_markdown"):
+        system_md = await asyncio.to_thread(lambda: system_inventory.to_markdown(system_inventory.scan(workspace_dir)))
+        await _update_state(session_id, {"system_inventory_markdown": system_md or " "})
+    else:
+        system_md = state["system_inventory_markdown"].strip()
     # Each UI control, the handler it calls and that handler's contract, from the code.
     if "technical_spec" not in documents:
         ui_result = {"screens": [], "contracts": [], "unmatched": [], "uncalled": [], "pages": []}
@@ -1746,6 +1755,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
                                   + (_for_writer(config_md, 30000) + "Use the matrix for per-environment behaviour; "
                                      "never print a value it shows as redacted.\n\n" if config_md else "")
                                   + _for_writer(contracts_md, 30000)
+                                  + _for_writer(system_md, 120000)
                                   + _for_writer(test_files_md, 30000),
                                   ea_spec + "\n\n" + ea_tests)
             if ui_result.get("screens") and spec_wanted:
@@ -1756,7 +1766,8 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
             diagram_facts = ("## Repository Facts (computed by the pipeline)\n"
                              + _for_writer(state.get("stack_inventory_markdown", ""), 40000)
                              + _for_writer(inventory_md, 40000) + _for_writer(contracts_md, 20000)
-                             + _for_writer(config_md, 15000) + _for_writer(_diagram_refs(facts), 40000))
+                             + _for_writer(config_md, 15000) + _for_writer(system_md, 40000)
+                             + _for_writer(_diagram_refs(facts), 40000))
 
             async def diagrams_job() -> str:
                 text = await writer("ea_diagrams", evidence_pack.EA_SECTIONS, diagram_facts, ea_diagrams)
@@ -1819,9 +1830,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         intros, blocks = ui_contracts.parse_answer(checked_section, ui_result)
         ui_section, ui_filled = ui_contracts.assemble(ui_result, intros, blocks)
         ea_spec = plain_language.place_section(ea_spec, ui_section, ui_contracts.SECTION_HEADING,
-                                               before=("## Data Architecture", "## Integrations", "## Security",
-                                                       "## Runtime", "## Per-Stack Detail",
-                                                       "## Discovery Limitations"))
+                                               before=_SPEC_UI_CONTRACTS_BEFORE)
         if spec_untraced:
             print(f"[discovery] grounding: removed {len(spec_untraced)} UI contract statement(s) not traceable "
                   "to the code", flush=True)
@@ -1838,10 +1847,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     diagrams_md = arch_diagrams.to_markdown(diagrams)
     if ea_spec and diagrams_md:
         ea_spec = plain_language.place_section(ea_spec, diagrams_md, arch_diagrams.HEADING,
-                                               before=("## Interface Overview", ui_contracts.SECTION_HEADING,
-                                                       "## Data Architecture", "## Integrations", "## Security",
-                                                       "## Runtime", "## Per-Stack Detail",
-                                                       "## Discovery Limitations"))
+                                               before=_SPEC_DIAGRAMS_BEFORE)
     if diagram_rejected:
         print(f"[discovery] grounding: left {len(diagram_rejected)} diagram element(s) out", flush=True)
     # An abbreviated list ("[...27 more web pages]") points at the complete computed list instead.
@@ -1892,7 +1898,8 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
             if section:
                 graphs.append(section.replace("## Dependency Graph & Build Order",
                                               f"## Dependency Graph & Build Order — {label}", 1))
-    tech_spec = "\n\n".join(graphs + [md for md in (inventory_md, endpoint_contracts_md, contracts_md, pages_md, config_md) if md]
+    tech_spec = "\n\n".join(graphs + [md for md in (inventory_md, endpoint_contracts_md, contracts_md, pages_md, config_md,
+                                                         system_md) if md]
                             + ([ea_spec] if ea_spec else [])) if "technical_spec" in documents else ""
     test_inventory = "\n\n".join(md for md in (test_files_md, ea_tests) if md) \
         if "test_inventory" in documents else ""

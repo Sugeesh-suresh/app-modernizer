@@ -14,3 +14,7 @@ What to record:
 - Connection configuration with credentials redacted, pool sizing, and how the connection is obtained (JNDI, direct, Spring)
 - Which application capabilities depend on which tables and procedures
 - Tests that touch the database and what they need (embedded DB, real instance, mocks)
+- Security in the database: schema owners and application users, roles and `GRANT`s, synonyms that expose objects, Virtual Private Database / row-level policies, encrypted columns or tablespaces (TDE), wallet use, password handling in scripts (redacted)
+- Auditing in the database: `AUDIT` statements and unified audit policies, history/journal tables and the triggers or procedures that fill them, `created_by`/`updated_at`-style columns and what sets them
+- Logging and monitoring from PL/SQL: `DBMS_OUTPUT`, logging tables and packages, `DBMS_APPLICATION_INFO`, error-logging tables (`LOG ERRORS`), scheduler jobs (`DBMS_SCHEDULER`/`DBMS_JOB`) and their logs
+- Links to other systems: database links, external tables, `UTL_HTTP`/`UTL_FILE`/`UTL_SMTP`, Advanced Queuing — each is an integration

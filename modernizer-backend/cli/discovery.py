@@ -27,10 +27,11 @@ from agents import config
 from agents.shared import (
     arch_diagrams, config_matrix, current_state, dependency_graph, evidence_pack, existing_tests, external_rules,
     grounding, interfaces, plain_language, repo_fingerprint, rule_candidates, rules_ledger, stack_detector,
-    ui_contracts, ui_pages, ui_screens,
+    system_inventory, ui_contracts, ui_pages, ui_screens,
 )
 from agents.shared.pipeline_text import (
-    DISCOVERY_GRAPHS, ELIDED_SPEC, ELIDED_TESTS, ELIDED_UI, WRITER_RULES_INDEX_CHARS,
+    DISCOVERY_GRAPHS, ELIDED_SPEC, ELIDED_TESTS, ELIDED_UI, SPEC_DIAGRAMS_BEFORE, SPEC_UI_CONTRACTS_BEFORE,
+    WRITER_RULES_INDEX_CHARS,
     clip_findings, current_state_only, diagram_facts, diagram_refs, file_units, for_writer,
     inject_dependency_graph, merge_mapper_result, module_names, rule_languages, stack_files, unit_label,
     without_result_block,
@@ -492,6 +493,7 @@ def _job_computed(run: Run, job: dict, log: list[str]) -> None:
     _write(_d(run, "computed", "interfaces.json"), json.dumps(inv))
     _write(_d(run, "computed", "interfaces.md"), interfaces.to_markdown(inv))
     _write(_d(run, "computed", "config_matrix.md"), config_matrix.to_markdown(config_matrix.scan(ws), None) or "")
+    _write(_d(run, "computed", "system_inventory.md"), system_inventory.to_markdown(system_inventory.scan(ws)))
     ui_result = {"screens": [], "contracts": [], "unmatched": [], "uncalled": [], "pages": []}
     pages_md, covered = "", {}
     if "technical_spec" in docs:
@@ -558,12 +560,15 @@ def _writer_request(run: Run, writer: str, retry_note: str = "") -> str:
                   + for_writer(_read(_d(run, "stack_inventory.md")), 60000) + for_writer(_computed(run, "interfaces.md"), 40000)
                   + (for_writer(config_md, 30000) + "Use the matrix for per-environment behaviour; never print a value "
                      "it shows as redacted.\n\n" if config_md else "")
-                  + for_writer(_computed(run, "ui_to_backend.md"), 30000) + for_writer(_computed(run, "test_files.md"), 30000))
+                  + for_writer(_computed(run, "ui_to_backend.md"), 30000)
+                  + for_writer(_computed(run, "system_inventory.md"), 120000)
+                  + for_writer(_computed(run, "test_files.md"), 30000))
         sections = evidence_pack.EA_SECTIONS
     else:
         extra = ("## Repository Facts (computed by the pipeline)\n" + for_writer(_read(_d(run, "stack_inventory.md")), 40000)
                  + for_writer(_computed(run, "interfaces.md"), 40000) + for_writer(_computed(run, "ui_to_backend.md"), 20000)
-                 + for_writer(_computed(run, "config_matrix.md"), 15000) + for_writer(diagram_refs(_facts(run)), 40000)
+                 + for_writer(_computed(run, "config_matrix.md"), 15000)
+                 + for_writer(_computed(run, "system_inventory.md"), 40000) + for_writer(diagram_refs(_facts(run)), 40000)
                  + retry_note)
         sections = evidence_pack.EA_SECTIONS
     request = f"## Confirmed Stacks\n{stacks}\n\n{extra}"
@@ -685,6 +690,7 @@ def _job_assemble(run: Run, job: dict, log: list[str]) -> None:
     endpoint_contracts_md, contracts_md = _computed(run, "endpoint_contracts.md"), _computed(run, "ui_to_backend.md")
     inventory_md, pages_md = _computed(run, "interfaces.md"), _computed(run, "ui_pages.md")
     config_md, test_files_md = _computed(run, "config_matrix.md"), _computed(run, "test_files.md")
+    system_md = _computed(run, "system_inventory.md")
 
     po_brd = current_state_only(_read(_d(run, "writers", "po_brd.md")), "BRD (Product Owner)", keep)
     spec, tests = evidence_pack.split_spec(_read(_d(run, "writers", "ea_spec.md")))
@@ -716,8 +722,7 @@ def _job_assemble(run: Run, job: dict, log: list[str]) -> None:
         intros, blocks = ui_contracts.parse_answer(checked_section, ui_result)
         ui_section, ui_filled = ui_contracts.assemble(ui_result, intros, blocks)
         ea_spec = plain_language.place_section(ea_spec, ui_section, ui_contracts.SECTION_HEADING,
-                                               before=("## Data Architecture", "## Integrations", "## Security",
-                                                       "## Runtime", "## Per-Stack Detail", "## Discovery Limitations"))
+                                               before=SPEC_UI_CONTRACTS_BEFORE)
     facts = _facts(run)
     raw_diagrams, diagram_problem = arch_diagrams.parse(ea_diagrams)
     diagrams, diagram_rejected = arch_diagrams.validate(raw_diagrams, evidence_text, facts)
@@ -730,9 +735,7 @@ def _job_assemble(run: Run, job: dict, log: list[str]) -> None:
     diagrams_md = arch_diagrams.to_markdown(diagrams, image_prefix="../../discovery/diagrams/")
     if ea_spec and diagrams_md:
         ea_spec = plain_language.place_section(ea_spec, diagrams_md, arch_diagrams.HEADING,
-                                               before=("## Interface Overview", ui_contracts.SECTION_HEADING,
-                                                       "## Data Architecture", "## Integrations", "## Security",
-                                                       "## Runtime", "## Per-Stack Detail", "## Discovery Limitations"))
+                                               before=SPEC_DIAGRAMS_BEFORE)
     ea_spec, cut = grounding.replace_elisions(ea_spec, ELIDED_SPEC)
     elisions += cut
     ea_tests, cut = grounding.replace_elisions(ea_tests, ELIDED_TESTS)
@@ -770,7 +773,7 @@ def _job_assemble(run: Run, job: dict, log: list[str]) -> None:
                 graphs.append(section.replace("## Dependency Graph & Build Order",
                                               f"## Dependency Graph & Build Order — {label}", 1))
     tech_spec = "\n\n".join(graphs + [md for md in (inventory_md, endpoint_contracts_md, contracts_md, pages_md,
-                                                    config_md) if md] + ([ea_spec] if ea_spec else [])) \
+                                                    config_md, system_md) if md] + ([ea_spec] if ea_spec else [])) \
         if "technical_spec" in docs else ""
     test_inventory = "\n\n".join(md for md in (test_files_md, ea_tests) if md) if "test_inventory" in docs else ""
     out = {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory, "evidence": evidence_md}

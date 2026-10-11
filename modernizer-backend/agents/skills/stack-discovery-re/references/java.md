@@ -37,3 +37,10 @@ Also look at and record:
 - File formats the application reads or writes (Apache POI Excel workbooks, CSV): sheet names, column order and meaning, validations applied per column — these are data contracts
 - Logging configuration (`log4j2*.xml`, Logback): appenders, levels, what is logged
 - Actuator endpoints and health checks, if present
+
+## Security, logging, monitoring and auditing (every Java application)
+
+- Security: `SecurityFilterChain` / `WebSecurityConfigurerAdapter` / `security-context.xml` — every `authorizeRequests`/`authorizeHttpRequests` matcher with its rule, `formLogin`/`httpBasic`/`oauth2Login`/`oauth2ResourceServer`/`saml2Login`/JWT filters, `csrf`, `cors`, `headers`, `sessionManagement`, `rememberMe`, `logout`; `AuthenticationProvider`/`UserDetailsService` implementations and the user store (LDAP, JDBC table, in-memory); `PasswordEncoder`; `@PreAuthorize`/`@PostAuthorize`/`@Secured`/`@RolesAllowed`; `web.xml` `<security-constraint>`, `<login-config>`, `<security-role>`; servlet filters and interceptors that check identity or permissions; `server.ssl.*`, keystores and truststores; `Cipher`/`MessageDigest`/`KeyStore` use; CSRF tokens in forms
+- Logging: `logback*.xml`, `log4j2*.xml`, `log4j.properties`, `logging.*` keys — each appender (type, target file/host, rolling policy, max size/history), pattern, levels per logger and profile; the logging facade used in code; MDC keys; what is logged on errors and in request flows; sensitive data written to logs
+- Monitoring: Actuator dependency and `management.*` keys (exposed endpoints, base path, port, security), `HealthIndicator` implementations, Micrometer registries (Prometheus, StatsD, Datadog…), JMX MBeans, Dropwizard metrics, APM/tracing agents (`-javaagent`, New Relic, Dynatrace, AppDynamics, Elastic APM, OpenTelemetry, Sleuth/Zipkin)
+- Auditing: Spring Data auditing (`@EnableJpaAuditing`, `@CreatedBy`, `@CreatedDate`, `@LastModifiedBy`, `@LastModifiedDate`, `AuditorAware`), Hibernate Envers (`@Audited`, `_AUD` tables), `@EntityListeners`, audit/history tables and the code that writes them, `@Aspect` advice that records actions, application events published for audit

@@ -1,0 +1,26 @@
+spring:
+  datasource:
+    url: jdbc:oracle:thin:@db.acme.internal:1521/CLAIMS
+    username: claims_app
+    password: s3cret
+    hikari:
+      maximum-pool-size: 20
+  jms:
+    listener:
+      concurrency: 3
+payments:
+  url: https://api.stripe.com/v1
+policy:
+  service-url: http://policy-svc.corp:8080/api
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+server:
+  ssl:
+    key-store: classpath:keystore.p12
+    key-store-password: ENC(abc123)
+logging:
+  level:
+    com.acme.claims: DEBUG

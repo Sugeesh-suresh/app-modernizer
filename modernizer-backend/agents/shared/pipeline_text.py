@@ -551,3 +551,15 @@ def unit_label(files: list[str]) -> str:
     dirs = sorted({str(PurePosixPath(f).parent) for f in files})
     common = os.path.commonpath(dirs) if dirs else ""
     return f"{common or '(root)'} ({len(files)} files)"
+
+
+#: Where the pipeline places its own sections in the Enterprise Architect's
+#: specification (plain_language.place_section: before the first of these present).
+#: The current headings of the current-state-architecture skill first, then the ones
+#: earlier versions of it wrote, so a stored specification still places correctly.
+SPEC_UI_CONTRACTS_BEFORE = ("## Third-Party Integrations", "## Internal System Integrations", "## Database Details",
+                            "## Security Mechanisms", "## Logging, Monitoring", "## Configuration & Environments",
+                            "## Data Architecture", "## Integrations", "## Security", "## Runtime",
+                            "## Per-Stack Detail", "## Discovery Limitations")
+SPEC_DIAGRAMS_BEFORE = ("## System Components", "## Component Communication", "## Interface Overview",
+                        ui_contracts.SECTION_HEADING) + SPEC_UI_CONTRACTS_BEFORE

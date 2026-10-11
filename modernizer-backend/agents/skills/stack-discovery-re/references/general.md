@@ -17,3 +17,5 @@ What to record:
 - Business rules and processing steps, cited
 - How it interacts with the other stacks in the repository (calls, shared files, shared databases)
 - Tests: framework, location, what they cover, how they run
+- Security: how users or callers are authenticated and authorised, where credentials and keys are kept (redacted), encryption and TLS
+- Logging, monitoring and auditing: logging library and configuration, where logs go, health checks and metrics, audit records of who did what

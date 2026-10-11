@@ -18,7 +18,10 @@ Pack format (the skills ask for exactly this):
     ### Data
     ### Business Behaviour
     ### Actors & Roles
+    ### Component Interactions
     ### Integrations & Configuration
+    ### Security
+    ### Logging, Monitoring & Auditing
     ### Tests
     ### Limitations
 
@@ -29,13 +32,18 @@ gets the same ids.
 import re
 
 SECTIONS = ("Components", "Entry Points & Interfaces", "Data", "Business Behaviour", "Actors & Roles",
-            "Integrations & Configuration", "Tests", "Limitations")
+            "Component Interactions", "Integrations & Configuration", "Security",
+            "Logging, Monitoring & Auditing", "Tests", "Limitations")
 
 #: What each writer is given. Both see interfaces and data — they describe the
 #: same system from two sides — and both see the limitations.
 PO_SECTIONS = ("Actors & Roles", "Business Behaviour", "Entry Points & Interfaces", "Data", "Limitations")
-EA_SECTIONS = ("Components", "Entry Points & Interfaces", "Data", "Integrations & Configuration", "Tests",
-               "Limitations")
+#: The Enterprise Architect documents how the system is built: its components and how they
+#: talk, its integrations, data, security and observability — so it also sees the roles
+#: (the security model is written in them).
+EA_SECTIONS = ("Components", "Component Interactions", "Entry Points & Interfaces", "Data",
+               "Integrations & Configuration", "Security", "Actors & Roles", "Logging, Monitoring & Auditing",
+               "Tests", "Limitations")
 
 _ALIASES = {
     "components": "Components",
@@ -47,6 +55,13 @@ _ALIASES = {
     "integrations & configuration": "Integrations & Configuration",
     "integrations and configuration": "Integrations & Configuration", "integrations": "Integrations & Configuration",
     "configuration": "Integrations & Configuration",
+    "component interactions": "Component Interactions", "interactions": "Component Interactions",
+    "communication": "Component Interactions", "component communication": "Component Interactions",
+    "security": "Security", "security mechanisms": "Security",
+    "logging, monitoring & auditing": "Logging, Monitoring & Auditing",
+    "logging, monitoring and auditing": "Logging, Monitoring & Auditing",
+    "logging monitoring & auditing": "Logging, Monitoring & Auditing",
+    "logging & monitoring": "Logging, Monitoring & Auditing", "observability": "Logging, Monitoring & Auditing",
     "tests": "Tests", "limitations": "Limitations", "unit limitations": "Limitations",
     "discovery limitations": "Limitations",
 }

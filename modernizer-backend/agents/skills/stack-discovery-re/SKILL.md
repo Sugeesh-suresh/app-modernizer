@@ -59,6 +59,11 @@ reader will use it to understand the code, not to change it.
    the rules applied along them. For a large repository, cover every module
    and every entry point, and sample within them — and say that you sampled.
 4. Locate the tests for this stack before saying anything is untested.
+5. Whatever the checklist, cover for this stack: how its components call each
+   other, every system it connects to (third-party or internal), its data stores
+   in full, its security mechanisms, and its logging, monitoring and auditing. A
+   new engineer will learn the system from what you record — record each item
+   in full; never summarise several into one bullet.
 
 ## Tool and evidence rules
 
@@ -81,7 +86,7 @@ return: a Product Owner agent writes the BRD and an Enterprise Architect agent
 the technical documents. Anything you do not record here is missing from both,
 so be complete and specific, and cite a file for every item.
 
-Return exactly these eight sections, in this order, as `###` headings. Every
+Return exactly these eleven sections, in this order, as `###` headings. Every
 item is ONE bullet starting with `- ` (continuation lines indented); no tables.
 The pipeline numbers the bullets (`[EV-…]`), so do not number them yourself.
 Write `None found.` under a section with nothing in it.
@@ -99,8 +104,18 @@ select, script call): the element and the user action, the call as written
 messages shown, redirects, client-side checks.
 
 ### Data
-Each entity/table/collection/payload/file: fields that matter, keys, where it is
-defined, who reads and writes it.
+One bullet per data source and one per entity/table/view/collection/payload/file.
+- Data source: product and version as declared, driver, JDBC URL / host (credentials
+  `[REDACTED]`), schema, connection pool (type, sizes, timeouts), per profile, where configured.
+- Entity/table: its name, every column with type, nullability, length and default
+  as declared, primary key, foreign keys and the relationships (`@OneToMany`,
+  `@ManyToOne`, join tables, cascade, fetch), unique constraints, indexes, sequences
+  and generators, where it is defined (DDL file, entity class, mapper), and every
+  component that reads or writes it (repository/DAO, query, procedure).
+- Queries that matter (named queries, `@Query`, MyBatis statements, native SQL),
+  stored procedures/functions/packages/triggers/views and what each does, schema
+  migration tooling (Flyway/Liquibase scripts, their order), transaction boundaries
+  (`@Transactional` placement, propagation, isolation, read-only) and caching of data.
 
 ### Business Behaviour
 What the system does for its users, as observed: each capability or journey, the
@@ -111,10 +126,48 @@ messages), and the outcome — cited. Say when intent is inferred.
 Users, roles, permissions and external parties, and how each interacts — from
 security configuration, authorisation checks, UI and API code.
 
+### Component Interactions
+How the components talk to each other, one bullet per interaction: the caller,
+the callee, the mechanism (in-process call / dependency injection, HTTP/REST,
+SOAP, RMI/EJB, JMS/Kafka/AMQP message, database shared between components,
+file or directory exchange, scheduled trigger, session/cache), synchronous or
+asynchronous, the data passed, the transaction and error handling around it, and
+the file:line where it happens. Also each end-to-end request flow you can trace,
+as numbered steps from the entry point to the data store and back.
+
 ### Integrations & Configuration
-External systems reached and how; configuration keys, properties, environment
-values and where they are set (credentials `[REDACTED]`, Jasypt `ENC(...)` values included; unresolved `${...}`
-expressions marked unresolved).
+One bullet per system this stack connects to, starting with **Third-party:**
+(a vendor, SaaS, public or cloud API) or **Internal:** (another system, service,
+database, queue or file share of the same organisation) — or **Unclassified:**
+when the files do not say which. For each: what it is used for, protocol and
+client (library/class), endpoint or host and the configuration key that sets it,
+authentication method (credentials `[REDACTED]`), the operations/messages/files
+exchanged with their payload, timeouts, retries, circuit breakers and error
+handling, and the components that call it. Then the configuration: keys,
+properties, environment values and where they are set (credentials `[REDACTED]`,
+Jasypt `ENC(...)` values included; unresolved `${...}` expressions marked unresolved).
+
+### Security
+One bullet per mechanism, with file:line: authentication (login flow, provider —
+form, basic, LDAP/AD, OAuth2/OIDC, SAML, JWT, container-managed, custom — user
+store and password hashing), authorisation (every URL rule with its matcher and
+required role, method-level annotations, programmatic checks), session management
+(timeouts, fixation, concurrency, remember-me), CSRF, CORS, security headers,
+input validation and output encoding, secrets handling (where credentials and
+keys are kept, encryption of configuration), cryptography and TLS/keystores,
+security of outbound calls, and servlet filters/interceptors with a security role.
+State what is observed; where something is absent from the files, say so.
+
+### Logging, Monitoring & Auditing
+One bullet per mechanism, with file:line: logging framework and facade, every
+logging configuration file with its appenders (console/file/rolling/syslog/
+socket), file paths, rotation and retention, pattern/format, levels per logger and
+per profile; what the code logs (errors, requests, business events, sensitive
+data), MDC/correlation ids; exception handling that logs; monitoring — health
+checks, metrics (Actuator, Micrometer, JMX, Dropwizard), exposed management
+endpoints, APM/tracing agents, alerting hooks; auditing — audit tables or
+columns (created/updated by/at), Envers/`@EntityListeners`/`AuditorAware`, audit
+events or log records of who did what and when, and their retention as configured.
 
 ### Tests
 Each test or test suite: path, framework, what it exercises, what it needs to run.

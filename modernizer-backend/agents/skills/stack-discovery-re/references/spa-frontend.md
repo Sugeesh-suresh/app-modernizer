@@ -16,3 +16,5 @@ What to record:
 - Integration with the server-rendered pages (JSP or otherwise): data passed into the page, DOM the scripts take over, shared templates
 - Third-party libraries in use and what the application uses each for
 - Tests: framework (Jasmine, Mocha, QUnit, Jest, Karma, Cypress), what each suite covers, how it is run
+- Security in the browser: how the user signs in, where tokens or session ids are kept (cookie, storage), how they are attached to requests (interceptors, headers), CSRF handling, route guards and permission checks in the UI, content escaping
+- Logging and monitoring in the browser: console logging, error reporting (Sentry, Rollbar, New Relic Browser…), analytics/tracking scripts, global error handlers
