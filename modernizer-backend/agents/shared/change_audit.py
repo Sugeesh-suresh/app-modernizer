@@ -228,7 +228,7 @@ _SOLR_MODERN = [
 _ORACLE_LEGACY = [
     # A column definition: a name, then LONG [RAW], then what may follow a column type. A Java `(Long)`
     # cast or `Long id;` field is not one.
-    _m("LONG / LONG RAW column", r"\b[A-Za-z_]\w*\s+LONG(?:\s+RAW)?\b(?=\s*(?:,|\)|$|NOT\b|NULL\b|DEFAULT\b))",
+    _m("LONG / LONG RAW column", r"(?<=\w)\s+LONG(?:\s+RAW)?\b(?=\s*(?:,|\)|$|NOT\b|NULL\b|DEFAULT\b))",
        "Deprecated since Oracle 8 — CLOB / BLOB.", re.IGNORECASE | re.MULTILINE),
     _m("deprecated Oracle driver class", r"\boracle\.jdbc\.driver\.OracleDriver\b",
        "The oracle.jdbc.driver package is deprecated — oracle.jdbc.OracleDriver."),
