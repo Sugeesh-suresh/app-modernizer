@@ -171,6 +171,8 @@ class Run:
             "preflight_json": self.state.get("preflight_json", ""),
             "approved_stage": self.state.get("approved_stage", ""),
             "java11_build_passed": self.state.get("java11_build_passed"),
+            "pass_changes": self.state.get("pass_changes", {}),
+            "pass_start_file": str(self.result_path(f"{pattern}/pass_start.json")),
             **extra,
         }
         return SimpleNamespace(state=state, actions=SimpleNamespace(escalate=False, skip_summarization=False))

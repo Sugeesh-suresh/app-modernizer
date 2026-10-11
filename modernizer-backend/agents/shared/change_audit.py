@@ -29,6 +29,7 @@ adjudication, a false negative hides a missed file.
 reviewer gets it automatically via `make_code_reviewer_agent`.
 """
 import difflib
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -89,6 +90,22 @@ _JAVA_LEGACY = [
        "Jakarta EE package — becomes jakarta.* in the Spring Boot 3 / Spring 6 stage. Java SE javax.sql/naming/crypto/JAXP and javax.cache (JSR-107) are NOT part of that rename."),
     _m("Spring 3/4 hibernate3 support", r"org\.springframework\.orm\.hibernate[34]\b",
        "Removed in Spring 5 — rewrite onto org.springframework.orm.hibernate5 (Java 17 stage)."),
+    _m("Spring Framework 3/4", r"<spring(?:\.framework)?\.version>\s*[34]\.|<groupId>org\.springframework</groupId>\s*<artifactId>spring-[\w-]+</artifactId>\s*<version>\s*[34]\.|"
+       r"springframework\.org/schema/[\w/-]+-[34]\.\d\.xsd",
+       "Spring 3/4 is long EOL and does not run on modern JDKs — Spring 6/7 through the Spring Boot stages "
+       "(versioned XSD locations become versionless)."),
+    _m("Hibernate 3/4", r"<hibernate\.version>\s*[34]\.|<artifactId>hibernate-(?:core|entitymanager|annotations)</artifactId>\s*<version>\s*[34]\.",
+       "Hibernate 3/4 → Hibernate 6/7 (with Spring Boot 3/4): Criteria, HibernateTemplate and positional HQL are gone."),
+    _m("HQL positional parameter", r"\"(?:from|select|update|delete)\b[^\"\n]*\?(?!\d)[^\"\n]*\"",
+       "JDBC-style `?` parameters in HQL were removed in Hibernate 5.3 — use `?1` ordinals or `:named` parameters.",
+       re.IGNORECASE),
+    _m("commons-lang 2", r"\borg\.apache\.commons\.lang\.(?!3\b)|<artifactId>commons-lang</artifactId>",
+       "commons-lang 2 is EOL — org.apache.commons.lang3 (commons-lang3)."),
+    # Only the 2.x artifact is javax-era: RI 4 (Jakarta) keeps the WSServlet class names and the
+    # sun-jaxws.xml namespace, so matching those would flag the migrated code as legacy.
+    _m("JAX-WS RI 2.x (javax)", r"<artifactId>jaxws-rt</artifactId>\s*<version>\s*2\.",
+       "The javax JAX-WS RI — jaxws-rt 4.x (Jakarta XML Web Services, same WSServlet wiring) or CXF 4 "
+       "at the Jakarta stage."),
     _m("Jackson 1", r"org\.codehaus\.jackson",
        "Jackson 1 is EOL — an API rewrite to com.fasterxml.jackson, not a version bump (Java 17 stage)."),
     _m("Jackson afterburner", r"jackson-module-afterburner|jackson\.module\.afterburner",
@@ -209,8 +226,14 @@ _SOLR_MODERN = [
 ]
 
 _ORACLE_LEGACY = [
-    _m("LONG / LONG RAW column", r"\bLONG\s+RAW\b|\bLONG\b(?=\s*(?:,|\)|$))",
-       "Deprecated since Oracle 8 — CLOB / BLOB.", re.IGNORECASE),
+    # A column definition: a name, then LONG [RAW], then what may follow a column type. A Java `(Long)`
+    # cast or `Long id;` field is not one.
+    _m("LONG / LONG RAW column", r"\b[A-Za-z_]\w*\s+LONG(?:\s+RAW)?\b(?=\s*(?:,|\)|$|NOT\b|NULL\b|DEFAULT\b))",
+       "Deprecated since Oracle 8 — CLOB / BLOB.", re.IGNORECASE | re.MULTILINE),
+    _m("deprecated Oracle driver class", r"\boracle\.jdbc\.driver\.OracleDriver\b",
+       "The oracle.jdbc.driver package is deprecated — oracle.jdbc.OracleDriver."),
+    _m("SID connect string", r"jdbc:oracle:thin:@(?!//)[\w.-]+:\d+:\w+",
+       "SID syntax — Oracle 23ai is multitenant-only: connect to the PDB by service name (@//host:port/service)."),
     _m("optimizer feature pin", r"optimizer_features_enable", "Pins the optimizer to an old release."),
     _m("legacy Oracle JDBC driver", r"\bojdbc(?:6|8|14)\b", "→ ojdbc11 for 23ai."),
 ]
@@ -316,6 +339,8 @@ class ChangeAudit:
     unexplained: list[ChangedFileAudit] = field(default_factory=list)
     regressions: list[ChangedFileAudit] = field(default_factory=list)
     residual_legacy: list[UnchangedFileAudit] = field(default_factory=list)
+    #: Changed only by another migration of the same bundle run: {path: pattern}. Not reviewed here.
+    others: dict[str, str] = field(default_factory=dict)
     error: str = ""
 
 
@@ -354,6 +379,52 @@ def relevant_files(root: Path) -> dict[str, Path]:
     return out
 
 
+def snapshot(root: str | Path) -> dict[str, str]:
+    """`{relative path: sha256}` of every relevant file — taken when a migration
+    pass starts, so the files that pass changed can be told apart afterwards."""
+    import hashlib
+    base = Path(root).resolve()
+    if not base.exists():
+        return {}
+    return {rel: hashlib.sha256(path.read_bytes()).hexdigest() for rel, path in relevant_files(base).items()}
+
+
+def changed_since(root: str | Path, before: dict[str, str]) -> list[str]:
+    """Files added, modified or deleted since `before` (a snapshot)."""
+    after = snapshot(root)
+    return sorted(rel for rel in set(before) | set(after) if before.get(rel) != after.get(rel))
+
+
+def other_migrations_files(state: dict) -> dict[str, str]:
+    """`{path: pattern}` for files that, in a bundle run, only ANOTHER migration
+    changed (`state["pass_changes"]`: pattern -> files its finished passes
+    changed; `state["pass_start_file"]`: the running pass's start snapshot). A
+    review compares the shared workspace with the upload, so without this a
+    companion's edits read as this pattern's scope creep."""
+    raw = state.get("pass_changes") or {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "{}")
+        except ValueError:
+            raw = {}
+    mine = state.get("pattern", "")
+    own = set(raw.get(mine, []))
+    start = state.get("pass_start_file") or ""
+    if start and Path(start).is_file() and state.get("workspace_dir"):
+        # The running pass's own changes so far: it is reviewed before they are recorded.
+        try:
+            own |= set(changed_since(state["workspace_dir"], json.loads(Path(start).read_text(encoding="utf-8"))))
+        except ValueError:
+            pass
+    out: dict[str, str] = {}
+    for pattern, files in raw.items():
+        if pattern != mine:
+            for rel in files:
+                if rel not in own:
+                    out.setdefault(rel, pattern)
+    return out
+
+
 def _read(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8", errors="replace")
@@ -386,9 +457,11 @@ def changed_file_statuses(baseline_dir: str, workspace_dir: str) -> dict[str, st
     return statuses
 
 
-def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str) -> ChangeAudit:
+def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str,
+                  others: dict[str, str] | None = None) -> ChangeAudit:
     """Compare the pristine baseline against the migrated workspace and classify
-    every file as explained / unexplained / regressed / residually legacy."""
+    every file as explained / unexplained / regressed / residually legacy.
+    `others` (other_migrations_files) are set aside, not classified."""
     legacy = LEGACY_MARKERS.get(pattern, [])
     modern = MODERN_MARKERS.get(pattern, [])
     forbidden = FORBIDDEN_MARKERS.get(pattern, [])
@@ -427,6 +500,9 @@ def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str) -> Change
                     audit.residual_legacy.append({"path": rel, "legacy_present": present})
             continue
 
+        if others and rel in others:
+            audit.others[rel] = others[rel]
+            continue
         audit.changed_total += 1
         if rel not in after:
             status = "deleted"
@@ -503,6 +579,9 @@ def to_markdown(audit: ChangeAudit) -> str:
         f"- Files changed: **{audit.changed_total}**",
         f"- Files unchanged: **{audit.unchanged_total}** ({audit.unchanged_scanned} of them scannable source/config)",
     ]
+    if audit.others:
+        lines.append(f"- Changed only by the run's other migrations, so not reviewed here: {len(audit.others)} — "
+                     + ", ".join(f"`{p}` ({pat})" for p, pat in sorted(audit.others.items())[:_MAX_FILES_PER_BUCKET]))
     if audit.generated_subtrees:
         trees = ", ".join(f"`{t}`" for t in audit.generated_subtrees)
         lines += [
@@ -614,8 +693,9 @@ def to_markdown(audit: ChangeAudit) -> str:
         "Markers are regex heuristics, biased towards recall: they flag candidates, they do not "
         "return verdicts. Adjudicate every entry against the confirmed plan before writing a finding, "
         "and never report a marker hit you could not confirm by reading the file. In a companion-"
-        "bundle run all patterns share one workspace, so a change another pattern's migration made "
-        "will appear here as unexplained — check before calling it scope creep.",
+        "bundle run all patterns share one workspace: files only another migration changed are set "
+        "aside above, while a file two migrations both changed appears here with both diffs — "
+        "judge only this pattern's part of it.",
     ]
     return "\n".join(lines)
 
@@ -639,4 +719,5 @@ def audit_migration_changes(tool_context: ToolContext) -> str:
         state.get("baseline_dir", ""),
         state.get("workspace_dir", ""),
         state.get("pattern", ""),
+        other_migrations_files(state),
     ))

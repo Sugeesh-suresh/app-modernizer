@@ -19,6 +19,7 @@ allows `mvn`/`gradle`, others allow nothing or a different toolchain) so
 it is built per pattern via `make_run_command`.
 """
 import fnmatch
+import inspect
 import json
 import os
 import re
@@ -359,6 +360,39 @@ def write_file(tool_context: ToolContext, path: str, content: str,
     return f"Wrote {len(content)} chars to {path}."
 
 
+def delete_file(tool_context: ToolContext, path: str) -> str:
+    """Delete one file the migration makes obsolete (a `web.xml` replaced by Java
+    config, a Spring XML context, a JSP converted to Thymeleaf). One file per
+    call — never a directory — so every removal is named in the run; a
+    directory left empty is removed with its last file.
+
+    Args:
+        path: File path relative to the workspace root.
+
+    Returns:
+        A short confirmation message, or a string starting with "ERROR:"
+        on failure.
+    """
+    try:
+        root = workspace_root(tool_context)
+        target = resolve_within_workspace(tool_context, path)
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+    if target.is_dir():
+        return f"ERROR: '{path}' is a directory — delete its files one by one."
+    if not target.is_file():
+        return f"ERROR: '{path}' does not exist."
+    try:
+        target.unlink()
+        parent = target.parent
+        while parent != root and parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+            parent = parent.parent
+    except OSError as exc:
+        return f"ERROR: could not delete '{path}': {exc}"
+    return f"Deleted {path}."
+
+
 def replace_in_file(tool_context: ToolContext, path: str, old_text: str, new_text: str,
                     expected_count: int = 1) -> str:
     """Replace an exact snippet inside one file, leaving everything else untouched.
@@ -507,11 +541,13 @@ def make_run_command(allowed_commands: set[str], env_factory=None, extra_args=No
     and relies solely on its deterministic `validate_*` tool instead).
 
     env_factory() returns the process environment (e.g. JAVA_HOME for a
-    specific JDK); extra_args(args) returns arguments to add to a Maven call
+    specific JDK) — env_factory(tool_context) when it takes an argument, so
+    the environment can follow the session (a stage's JDK); extra_args(args) returns arguments to add to a Maven call
     (e.g. `-s settings.xml`). Both default to the server's own environment.
     """
     allowed = set(allowed_commands)
     allowed_list = ", ".join(sorted(allowed))
+    env_takes_context = env_factory is not None and bool(inspect.signature(env_factory).parameters)
 
     def run_command(tool_context: ToolContext, command: str, subdir: str = ".") -> str:
         try:
@@ -542,7 +578,7 @@ def make_run_command(allowed_commands: set[str], env_factory=None, extra_args=No
                 capture_output=True,
                 text=True,
                 timeout=config.COMMAND_TIMEOUT_SECONDS,
-                env=env_factory() if env_factory else None,
+                env=(env_factory(tool_context) if env_takes_context else env_factory()) if env_factory else None,
             )
         except FileNotFoundError:
             return f"ERROR: '{executable}' is not installed in this environment."

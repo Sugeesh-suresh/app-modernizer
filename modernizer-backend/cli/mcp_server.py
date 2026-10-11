@@ -272,6 +272,26 @@ async def ws_write_file(path: str, content: str, allow_full_overwrite: bool = Fa
 
 
 @server.tool()
+async def ws_delete_file(path: str, workspace: str = "") -> str:
+    """Delete one file the migration makes obsolete (a `web.xml` replaced by Java config, a Spring
+    XML context, a JSP converted to Thymeleaf). One file per call, never a directory. Only the
+    patterns whose skills remove files offer it (Java 8 -> 25).
+
+    Args:
+        path: File path relative to the repository root.
+    """
+    def body():
+        run = _load(workspace)
+        _require_code_phase(run)
+        _guard_path(path)
+        _, tools = _pattern_tools(run)
+        if not hasattr(tools, "delete_file"):
+            return "ERROR: this migration does not delete files — leave the file in place and say why in your output."
+        return tools.delete_file(run.tool_context(), path)
+    return await _run(body)
+
+
+@server.tool()
 async def ws_replace_in_file(path: str, old_text: str, new_text: str, expected_count: int = 1,
                              workspace: str = "") -> str:
     """Replace an exact snippet in one repository file, leaving everything else untouched — the

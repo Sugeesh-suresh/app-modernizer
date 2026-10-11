@@ -31,12 +31,12 @@ from pathlib import Path
 from agents import config
 from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
-from agents.java_8_to_11 import preflight as java11_preflight
 from agents.java_8_to_11.fence_rules import FENCE_RULES, STAGE_TITLE as JAVA11_STAGE_TITLE
-from agents.java_8_to_25.stages import INCREMENTAL_STAGES, incremental_stages
+from agents.java_8_to_25.stages import COMPANIONS_AFTER_STAGE, INCREMENTAL_STAGES, incremental_stages
 from agents.shared import (
-    approved_versions, callbacks, companion_detector, dependency_graph, diffing, learned_fixes,
-    migration_inventory, plan_contract, plan_paths, plan_tasks, re_units, scope_fence, skill_manifest, skill_steps,
+    approved_versions, callbacks, change_audit, companion_detector, dependency_graph, diffing, java_preflight,
+    learned_fixes, migration_inventory, plan_contract, plan_paths, plan_tasks, re_units, scope_fence, skill_manifest,
+    skill_steps,
 )
 from agents.shared.pipeline_text import (
     file_digests, inject_dependency_graph, parse_re_sections, task_paths, unexplained_unchanged,
@@ -245,19 +245,23 @@ def _phase_select(run: Run, log: list[str]) -> dict | None:
 
 
 def _phase_preflight(run: Run, log: list[str]) -> dict | None:
-    needs = P.JAVA_8_TO_11 in _bundle(run) and config.PREFLIGHT != "off"
-    if needs and not run.state.get("preflight_ok"):
-        pf = java11_preflight.run(str(run.workspace))
+    java = next((p for p in _bundle(run) if java_preflight.module_for(p)), None) \
+        if config.PREFLIGHT != "off" else None
+    if java and not run.state.get("preflight_ok"):
+        module = java_preflight.module_for(java)
+        pf = java_preflight.run(java, str(run.workspace), run.state.get("migration_strategy") or "bigbang",
+                                bool(run.state.get("springboot_upgrade")))
         run.state["preflight_json"] = pf.to_json()
-        run.state["preflight_summary"] = java11_preflight.summary(pf)
+        run.state["preflight_summary"] = module.summary(pf)
         run.state["approved_unavailable"] = list(pf.approved_unavailable or [])
         log.append(f"Environment check: {run.state['preflight_summary']}")
         if not pf.ok:
             run.save()
             return _step(run, "preflight", "blocked", title="Environment check failed", text=(
                 f"Environment check failed — nothing was changed. {pf.stop_reason}\n\nFix the environment "
-                "(MIGRATION_JAVA_HOME, Maven, MAVEN_SETTINGS) and call next_step again; set PREFLIGHT=off to "
-                "skip the check (nothing can then be verified)."))
+                "(MIGRATION_JAVA_HOME / MIGRATION_JAVA_HOMES, Maven, MAVEN_SETTINGS) and call next_step again; set "
+                "PREFLIGHT=warn to continue with these problems reported, or PREFLIGHT=off to skip the check "
+                "(nothing can then be verified)."))
         run.state["preflight_ok"] = True
     run.state.update({"phase": "analysis", "pi": 0, "sub": 0})
     run.save()
@@ -269,12 +273,7 @@ def _phase_preflight(run: Run, log: list[str]) -> dict | None:
 def _store_analysis(run: Run, pattern: str, document: str) -> None:
     analysis, brd, tech, tests = parse_re_sections(document)
     tech = inject_dependency_graph(tech, run.state.get("dependency_graph_json", ""), pattern)
-    if pattern == P.JAVA_8_TO_11 and run.state.get("preflight_json") and "## Baseline Build on JDK 11" not in tech:
-        try:
-            pf = java11_preflight.Preflight(**json.loads(run.state["preflight_json"]))
-            tech = java11_preflight.to_markdown(pf) + "\n\n" + tech
-        except (TypeError, json.JSONDecodeError):
-            pass
+    tech = java_preflight.with_preflight(tech, pattern, run.state.get("preflight_json", ""))
     for name, text in (("analysis", document), ("brd", brd), ("technical_spec", tech), ("test_inventory", tests)):
         run.write_doc(name, text, pattern)
 
@@ -457,10 +456,16 @@ def check_plan(run: Run, pattern: str, plan: str) -> tuple[str, list[str]]:
                          + ", ".join(f"`{a}` → `{b}`" for a, b in list(fixed.items())[:10]))
         if missing:
             notes.append(f"{len(missing)} planned path(s) match no file (flagged at the top of the plan).")
-    warning = plan_contract.to_markdown(plan_contract.check(plan))
+    gaps = plan_contract.manifest_gaps(plan, run.read_doc("technical_spec", pattern))
+    warning = plan_contract.to_markdown(plan_contract.check(plan), gaps)
     if warning:
         plan = plan.rstrip() + "\n" + warning
-        notes.append("The plan does not answer every completeness question — see the warning at its end.")
+        notes.append("The plan does not answer every completeness question — see the warning at its end."
+                     if not plan_contract.check(plan).complete else "The plan is complete.")
+    if gaps:
+        notes.append(f"{len(gaps)} file(s) with legacy code are not in the File Change Manifest: "
+                     + ", ".join(f"`{p}`" for p, _ in gaps[:8]) + (" …" if len(gaps) > 8 else "")
+                     + " — listed in the warning at the plan's end.")
     return plan, notes
 
 
@@ -509,25 +514,57 @@ def _code_units(run: Run, pattern: str, plan: str) -> list[dict]:
     return [{"idx": 0, "position": 1, "total": 1, "title": spec.label, "units": units}]
 
 
-def _phase_code(run: Run, log: list[str]) -> dict | None:
+def _code_order(run: Run) -> list[dict]:
+    """The code phase's passes, in order: the bundle's patterns, companions first — except in an
+    incremental Java 8 -> 25 run, whose readiness stages build on JDK 8: there the companions (which
+    need Java 11+) run once the Java 17 stage has passed (stages.COMPANIONS_AFTER_STAGE), between the
+    Java stages' two halves. `part` "pre" ends without review; "post" carries its summaries on."""
     bundle = _bundle(run)
+    primary = run.state["pattern"]
+    companions = [p for p in bundle if p != primary]
+    if primary == P.JAVA_8_TO_25 and companions and run.state.get("migration_strategy") == "incremental":
+        return [{"pattern": primary, "part": "pre"}, *({"pattern": c} for c in companions),
+                {"pattern": primary, "part": "post"}]
+    return [{"pattern": p} for p in bundle]
+
+
+def _phase_code(run: Run, log: list[str]) -> dict | None:
     code = run.state.get("code")
     if code is None:
+        order = _code_order(run)
         pi = run.state.get("pi", 0)
-        if pi >= len(bundle):
+        if pi >= len(order):
             run.state["phase"] = "finish"
             return None
-        pattern = bundle[pi]
-        code = {"pattern": pattern, "stages": _code_units(run, pattern, run.read_doc("plan", pattern)),
-                "si": 0, "ui": 0, "retry": False, "iter": 0, "part": "modify", "summaries": [], "digests": {}}
+        pattern, part = order[pi]["pattern"], order[pi].get("part")
+        stages = _code_units(run, pattern, run.read_doc("plan", pattern))
+        if part:
+            stages = [s for s in stages if (s["idx"] <= COMPANIONS_AFTER_STAGE) == (part == "pre")]
+        carried = run.state.pop("carried_code", None) if part == "post" else None
+        code = {"pattern": pattern, "stages": stages, "split": part,
+                "si": 0, "ui": 0, "retry": False, "iter": 0, "part": "modify",
+                "summaries": (carried or {}).get("summaries", []), "written": (carried or {}).get("written", []),
+                "earlier": (carried or {}).get("stages", []), "digests": {}}
         run.state["code"] = code
         run.state["current_pattern"] = pattern
+        # What this pass changes is told apart from the bundle's other passes (see _record_pass).
+        _pass_start(run, pattern).write_text(json.dumps(change_audit.snapshot(run.workspace)), encoding="utf-8")
         run.save()
     pattern = code["pattern"]
     spec = P.get(pattern)
 
     if code["part"] in ("modify", "build", "fix"):
         if code["si"] >= len(code["stages"]):
+            _record_pass(run, code)
+            if code.get("split") == "pre":
+                # The companions run now; the Java stages resume after them, then one review over all.
+                run.state["carried_code"] = {"summaries": code["summaries"], "written": code.get("written", []),
+                                             "stages": code["stages"]}
+                log.append(f"{spec.label}: stages up to Java 17 done — the companion migrations run next, then the "
+                           "remaining stages.")
+                code["part"] = "done"
+                run.save()
+                return None
             code["part"] = "review"
             run.save()
             return None
@@ -567,12 +604,28 @@ def _phase_code(run: Run, log: list[str]) -> dict | None:
     return None
 
 
+def _pass_start(run: Run, pattern: str) -> Path:
+    return _results(run, pattern, "pass_start.json")
+
+
+def _record_pass(run: Run, code: dict) -> None:
+    """Add the files this pass changed to `pass_changes`, so each pattern's review sets aside
+    what only the bundle's other migrations changed (change_audit.other_migrations_files)."""
+    try:
+        before = json.loads(_read(_pass_start(run, code["pattern"])) or "{}")
+    except json.JSONDecodeError:
+        return
+    changes = run.state.setdefault("pass_changes", {})
+    changes[code["pattern"]] = sorted(set(changes.get(code["pattern"], [])) |
+                                      set(change_audit.changed_since(run.workspace, before)))
+
+
 def _next_stage(code: dict) -> None:
     code.update({"si": code["si"] + 1, "ui": 0, "retry": False, "iter": 0, "part": "modify"})
 
 
 def _stage_label(code: dict, stage: dict) -> str:
-    if code["pattern"] == P.JAVA_8_TO_25 and len(code["stages"]) > 1:
+    if code["pattern"] == P.JAVA_8_TO_25 and (len(code["stages"]) > 1 or code.get("split")):
         return f"stage{stage['idx']}"
     return ""
 
@@ -584,7 +637,9 @@ def _modify_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
     sid = f"modify-{pattern}{'-' + suffix if suffix else ''}-{re.sub(r'[^A-Za-z0-9.-]+', '-', unit['id'])}" \
           + ("-retry" if code["retry"] else "")
     write_tools = ("Read with read_file / grep_search / glob / list_directory; write ONLY with `ws_replace_in_file` "
-                   "(preferred for edits to existing files) and `ws_write_file`.")
+                   "(preferred for edits to existing files) and `ws_write_file`."
+                   + (" Remove a file the task makes obsolete with `ws_delete_file` (one file per call)."
+                      if pattern == P.JAVA_8_TO_25 else ""))
     plan_file = [("Confirmed Migration Plan", run.doc_path("plan", pattern))]
     if pattern == P.JAVA_8_TO_25 and run.state.get("migration_strategy") == "incremental":
         st = next(s for s in INCREMENTAL_STAGES if s.idx == stage["idx"])
@@ -806,9 +861,14 @@ def _complete_fix(run: Run, step: dict, output: str) -> str:
     return "Fix recorded — validation runs again."
 
 
+def _all_stages(code: dict) -> list[dict]:
+    """Every stage of the pattern's run, including those done before the companions ran."""
+    return code.get("earlier", []) + code["stages"]
+
+
 def _stage_results_block(run: Run, code: dict) -> list[tuple[str, Path]]:
     items = []
-    for stage in code["stages"]:
+    for stage in _all_stages(code):
         suffix = _stage_label(code, stage)
         mod = _results(run, code["pattern"], f"modify_result{'_' + suffix if suffix else ''}.md")
         build = _results(run, code["pattern"], _build_result_name(code, stage))
@@ -837,7 +897,7 @@ def _review_step(run: Run, code: dict, spec: P.Pattern) -> dict:
                  "WildFly descriptors are FROZEN — any change to one is a CRITICAL finding, as is a `jakarta.*` "
                  "import, a Java level other than 11, a changed `<packaging>`/`<finalName>`, or Spring Boot. "
                  "Untouched JSP/WildFly files are correct by design, never coverage gaps.")
-    if len(code["stages"]) > 1:
+    if len(_all_stages(code)) > 1:
         body += ("\n\nThis is the FULL final codebase after every incremental stage completed — review it as one "
                  "whole, not stage by stage.")
     q = body + _files_block(run, [("Confirmed Migration Plan", run.doc_path("plan", pattern))]
@@ -857,9 +917,9 @@ def _report_step(run: Run, code: dict, spec: P.Pattern) -> dict:
     sid = f"report-{pattern}"
     body = (skill_steps.cli_instruction(spec.report_skill) + " to produce the final migration report. Fold the "
             "Independent Code Review's findings into a dedicated report section rather than ignoring them.")
-    if len(code["stages"]) > 1:
+    if len(_all_stages(code)) > 1:
         body += " Cover every stage of this phased incremental migration."
-    if pattern == P.JAVA_8_TO_11 and run.state.get("preflight_summary"):
+    if java_preflight.module_for(pattern) and run.state.get("preflight_summary"):
         body += f"\n\n## Build Environment (preflight, before the migration)\n{run.state['preflight_summary']}"
     items = _stage_results_block(run, code) + [
         ("Independent Code Review", _results(run, pattern, "code_review.md")),

@@ -243,7 +243,7 @@ class TestWorkflow:
         with zipfile.ZipFile(buf, "w") as z:
             z.writestr("pom.xml", "<project/>")
         with TestClient(main.app) as client:
-            for pattern, expected in ((P, True), ("java-8-to-25", False)):
+            for pattern, expected in ((P, True), ("java-8-to-25", True), ("solr-4-to-9", False)):
                 res = client.post("/api/upload", data={"pattern": pattern},
                                   files={"file": ("r.zip", buf.getvalue(), "application/zip")})
                 assert res.json()["preflight"] is expected, pattern

@@ -63,7 +63,7 @@ planner_agent = LlmAgent(
     ),
     tools=[skill_steps.toolset("solr-4-to-9:plan")],
     output_key="plan",
-    after_agent_callback=make_plan_contract_callback(),
+    after_agent_callback=make_plan_contract_callback(pattern="solr-4-to-9"),
     include_contents="none",
 )
 

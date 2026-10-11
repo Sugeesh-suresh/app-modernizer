@@ -44,6 +44,7 @@ Delete the `configure(SpringApplicationBuilder)` override along with the supercl
 | `<error-page>` | `server.error.*` + an `ErrorController` or `@ControllerAdvice` | No |
 | Default servlet serving static files (`<mvc:default-servlet-handler/>`) | Boot's static resource handling from `classpath:/static/` | No |
 | Container access logs | `server.tomcat.accesslog.*` + the application's own logging | Yes |
+| A library that reads its own descriptor from `WEB-INF` through the servlet context — JAX-WS RI's `sun-jaxws.xml` (`WSServletContextListener`), and the like | The descriptor moves to the classpath (e.g. `src/main/resources/jaxws/sun-jaxws.xml`) and the listener, registered with `ServletListenerRegistrationBean`, is handed a servlet context that serves `/WEB-INF/sun-jaxws.xml` from there (a `java.lang.reflect.Proxy` over `ServletContext`). `META-INF/resources/WEB-INF/...` does **not** work: an executable JAR's embedded Tomcat has no `WEB-INF`, so the listener fails at startup with "Runtime descriptor /WEB-INF/sun-jaxws.xml is missing" — after `package` has passed | No |
 
 ## Static resources and the webapp directory
 
@@ -58,3 +59,5 @@ Delete the `configure(SpringApplicationBuilder)` override along with the supercl
 ## Validation
 
 The validator runs `package`, not just `compile`, so a broken repackage (for example a missing `repackage` execution) fails the build. After packaging, the artifact is `target/<name>.jar`.
+
+`package` does not start the application, so a resource the container used to supply and the JAR no longer has (a `WEB-INF` descriptor, a JNDI name) only fails at startup. In your summary, list every such runtime dependency you moved and how, so the reviewer and the report can name what a startup test must cover.

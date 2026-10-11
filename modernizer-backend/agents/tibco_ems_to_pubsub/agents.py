@@ -66,7 +66,7 @@ planner_agent = LlmAgent(
     ),
     tools=[skill_steps.toolset("tibco-ems-to-pubsub:plan")],
     output_key="plan",
-    after_agent_callback=make_plan_contract_callback(),
+    after_agent_callback=make_plan_contract_callback(pattern="tibco-ems-to-pubsub"),
     include_contents="none",
 )
 

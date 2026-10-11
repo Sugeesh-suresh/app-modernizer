@@ -15,8 +15,8 @@ _SECRET_LINE = re.compile(r"passw(?:or)?d|pwd|secret|token|api[_-]?key|credentia
 def redact(value: str) -> str:
     """Remove credentials from connection strings: jdbc:oracle:thin:user/pass@host
     and scheme://user:pass@host."""
-    value = re.sub(r"(jdbc:oracle:\w+:)[^@\s]*@", r"\1<redacted>@", value)
-    return re.sub(r"(//)[^@/\s]*@", r"\1<redacted>@", value)
+    value = re.sub(r"(jdbc:oracle:\w+:)[^@\s]+@", r"\1<redacted>@", value)
+    return re.sub(r"(//)[^@/\s]+@", r"\1<redacted>@", value)
 
 
 def sample(line: str, limit: int = 160) -> str:

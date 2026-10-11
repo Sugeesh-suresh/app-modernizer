@@ -175,9 +175,41 @@ def check(plan: str) -> ContractResult:
     return result
 
 
-def to_markdown(result: ContractResult) -> str:
-    """The warning block appended to a plan that does not meet the contract."""
-    if result.complete:
+_BLOCKERS_SECTION = re.compile(r"^## Legacy Stack Blockers\s*$(.*?)(?=^## |\Z)", re.M | re.S)
+_BLOCKER_ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|[^|\n]*\|\s*([^|\n]+?)\s*\|", re.M)
+
+
+def blocker_files(technical_spec: str) -> dict[str, list[str]]:
+    """{file: [findings]} from the confirmed specification's computed Legacy Stack Blockers table
+    (the deterministic inventory) — the files a complete plan has to account for."""
+    out: dict[str, list[str]] = {}
+    for section in _BLOCKERS_SECTION.findall(technical_spec or ""):
+        for path, finding in _BLOCKER_ROW.findall(section):
+            if finding not in out.setdefault(path, []):
+                out[path].append(finding)
+    return out
+
+
+def manifest_gaps(plan: str, technical_spec: str) -> list[tuple[str, list[str]]]:
+    """Blocker files the plan's manifest does not name (suffix and glob matching, as the
+    post-run conformance check does), in the table's order."""
+    from fnmatch import fnmatch
+    from .plan_coverage import parse_plan_manifest
+    blockers = blocker_files(technical_spec)
+    if not blockers:
+        return []
+    planned = [e.path.strip("/") for e in parse_plan_manifest(strip_warning(plan))]
+
+    def covered(path: str) -> bool:
+        return any(fnmatch(path, f"*{p}" if "*" in p else p) or path == p or path.endswith("/" + p)
+                   or (("*" in p) and fnmatch(path, p)) for p in planned)
+    return [(path, findings) for path, findings in blockers.items() if not covered(path)]
+
+
+def to_markdown(result: ContractResult, gaps: list[tuple[str, list[str]]] | None = None) -> str:
+    """The warning block appended to a plan that does not meet the contract, or whose File Change
+    Manifest leaves out files the computed inventory found legacy code in (`manifest_gaps`)."""
+    if result.complete and not gaps:
         return ""
     lines = [
         "", "---", "",
@@ -204,10 +236,20 @@ def to_markdown(result: ContractResult) -> str:
         for question, part, expected in result.missing_parts:
             lines.append(f"- **{question.number}. {question.heading}** is missing `{part}` — {expected}")
         lines.append("")
+    if gaps:
+        lines.append(f"**Files with legacy code the File Change Manifest does not name ({len(gaps)}):** the computed "
+                     "Legacy Stack Blockers table in the Technical Specification found these; plan each one, or list "
+                     "it under Out of Scope with the reason.")
+        lines.append("")
+        for path, findings in gaps[:60]:
+            lines.append(f"- `{path}` — {', '.join(findings)}")
+        if len(gaps) > 60:
+            lines.append(f"- … and {len(gaps) - 60} more (see the Legacy Stack Blockers table)")
+        lines.append("")
     return "\n".join(lines)
 
 
-def make_plan_contract_callback(plan_key: str = "plan"):
+def make_plan_contract_callback(plan_key: str = "plan", pattern: str | None = None):
     """after_agent_callback for a planner agent: append the completeness warning
     to the plan in session state, so the gaps are visible in the review screen.
 
@@ -224,7 +266,10 @@ def make_plan_contract_callback(plan_key: str = "plan"):
         # pass, and replace rather than append: a refine cycle that fixed the
         # gaps must not still be labelled with them.
         plan = strip_warning(raw)
-        warning = to_markdown(check(plan))
+        # A bundled run keeps each pattern's own specification beside the combined one.
+        spec = ((state or {}).get(f"technical_spec_{pattern}") if pattern else "") or \
+            (state or {}).get("technical_spec", "") or ""
+        warning = to_markdown(check(plan), manifest_gaps(plan, spec))
         updated = plan + "\n" + warning if warning else plan
         if updated != raw:
             state[plan_key] = updated

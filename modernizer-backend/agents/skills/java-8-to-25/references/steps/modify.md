@@ -24,6 +24,7 @@ Work through your task's files one at a time:
 3. Apply the change with the right tool:
    - **`replace_in_file` is the default** for an existing file — an import, an annotation, a method body, a dependency block. Copy `old_text` verbatim from what `read_file` returned, include enough surrounding lines to make it unique, and use several small replacements rather than one sweeping one.
    - **`write_file`** only for a file you are creating, or one you are genuinely rewriting end to end. Overwriting a file larger than one read window is refused unless you have read every window of it and pass `allow_full_overwrite=True` — that guard exists because a full overwrite based on a partial read silently deletes the rest of the file.
+   - **`delete_file`** for a file the task makes obsolete — a `web.xml` whose entries are now Java config, a Spring XML context converted to `@Configuration`, a JSP converted to Thymeleaf, a `log4j.properties` once log4j is gone. One file per call; name every deleted file in your summary. Never delete a file to make a build error go away.
 4. Do not change business logic, remove functionality, or alter public API contracts — this is a platform migration, not a rewrite. If the task is ambiguous about a file, prefer the smallest change that satisfies its intent.
 5. If a file listed in the task turns out not to need any change after reading it, leave it alone and note that in your summary.
 

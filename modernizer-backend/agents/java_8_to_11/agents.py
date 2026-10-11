@@ -165,7 +165,7 @@ planner_agent = LlmAgent(
     ),
     tools=[skill_steps.toolset("java-8-to-11:plan")],
     output_key="plan",
-    after_agent_callback=make_plan_contract_callback(),
+    after_agent_callback=make_plan_contract_callback(pattern="java-8-to-11"),
     include_contents="none",
 )
 

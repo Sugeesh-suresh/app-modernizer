@@ -1,0 +1,6 @@
+<ehcache xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="ehcache.xsd" updateCheck="false">
+  <diskStore path="java.io.tmpdir"/>
+  <defaultCache maxElementsInMemory="1000" eternal="false" timeToLiveSeconds="300" overflowToDisk="false"/>
+  <cache name="policies" maxElementsInMemory="5000" eternal="false" timeToLiveSeconds="600" overflowToDisk="false"/>
+  <cache name="com.acme.policy.domain.Policy" maxElementsInMemory="10000" eternal="false" timeToLiveSeconds="3600"/>
+</ehcache>

@@ -79,7 +79,7 @@ def instruction(name: str, *also: str) -> str:
     else:
         text = (f"Load the `{skill}` skill (`load_skill`) — its SKILL.md gives the migration's workflow and the rules "
                 f"every step follows — then load your step's instructions with `load_skill_resource` "
-                f"(`{step_resource(name)}`) and execute them, loading the knowledge files that step names")
+                f"(`{step_resource(name)}`, with the knowledge files that step names) and execute them")
     extra = [a for a in also if a != name]
     if extra:
         text += ". Also load and follow " + " and ".join(_also(a) for a in extra)
@@ -105,8 +105,8 @@ def cli_instruction(name: str, *also: str) -> str:
         text = f"Activate the `{skill}` skill and execute it"
     else:
         text = (f"Activate the `{skill}` skill (its SKILL.md gives the migration's workflow and the rules every step "
-                f"follows), then read its step file `{step_resource(name)}` in the skill's folder and execute it, "
-                "reading the knowledge files that step names")
+                f"follows), then read its step file `{step_resource(name)}` in the skill's folder (with the "
+                "knowledge files it names) and execute it")
     extra = [a for a in also if a != name]
     if extra:
         text += ". Also activate and follow " + " and ".join(

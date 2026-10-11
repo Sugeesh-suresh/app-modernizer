@@ -11,6 +11,7 @@ tools:
   - grep_search
   - mcp_modernizer_ws_write_file
   - mcp_modernizer_ws_replace_in_file
+  - mcp_modernizer_ws_delete_file
   - mcp_modernizer_save_output
 max_turns: 200
 timeout_mins: 90
@@ -25,7 +26,8 @@ A migration skill (e.g. `oracle-19c-to-23ai`) has one step file per pipeline ste
    their work and never redo what is in place. Read a file before you change it.
 3. Write ONLY with `mcp_modernizer_ws_replace_in_file` (preferred: exact snippet, fewest tokens, nothing else
    touched) and `mcp_modernizer_ws_write_file` (new files, or a deliberate full rewrite). These tools enforce
-   the run's rules — the approved plan, and for Java 8 → 11 the scope fence. A refusal starts with `ERROR:`:
+   the run's rules — the approved plan, and for Java 8 → 11 the scope fence. Remove a file the migration makes
+   obsolete (Java 8 → 25: `web.xml`, Spring XML contexts, converted JSPs) with `mcp_modernizer_ws_delete_file`. A refusal starts with `ERROR:`:
    read why and adjust; never work around a refusal. If the work cannot be done within the rules, say exactly
    what and why in your output.
 4. Use exactly the approved versions the query lists for those artifacts.

@@ -119,7 +119,7 @@ planner_agent = LlmAgent(
     ),
     tools=[skill_steps.toolset("jsp-to-react-bff:plan")],
     output_key="plan",
-    after_agent_callback=make_plan_contract_callback(),
+    after_agent_callback=make_plan_contract_callback(pattern="jsp-to-react-bff"),
     include_contents="none",
     # Attaches the user's UX designs (if any) so the page/component map follows them.
     before_model_callback=make_ux_design_callback(),

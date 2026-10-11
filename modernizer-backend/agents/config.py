@@ -199,10 +199,15 @@ MIGRATION_JAVA_HOME: str = os.getenv("MIGRATION_JAVA_HOME", "").strip()
 # Optional JDK 8: the uploaded code's tests run on it once, so test failures
 # that predate the migration are reported, not "fixed".
 BASELINE_JAVA_HOME: str = os.getenv("BASELINE_JAVA_HOME", "").strip()
+# Java 8 -> 25 builds run on one JDK per Java release ("8=/opt/jdk8,17=/opt/jdk17,
+# 25=/opt/jdk25"); a release without one uses the nearest newer JDK found here,
+# in MIGRATION_JAVA_HOME / BASELINE_JAVA_HOME, or on PATH.
+MIGRATION_JAVA_HOMES: str = os.getenv("MIGRATION_JAVA_HOMES", "").strip()
 # Optional settings.xml (mirrors, repository credentials) for every Maven call.
 MAVEN_SETTINGS: str = os.getenv("MAVEN_SETTINGS", "").strip()
 # Before planning: check the JDK and Maven, and build the uploaded code on the
-# target JDK. `off` skips it (no verification is then possible).
+# target JDK. `warn` reports its problems without stopping the run; `off` skips
+# it (no verification is then possible).
 PREFLIGHT: str = (os.getenv("PREFLIGHT", "on") or "on").strip().lower()
 # Validation runs the test suite (failures that predate the migration excluded).
 VALIDATE_RUN_TESTS: bool = os.getenv("VALIDATE_RUN_TESTS", "true").strip().lower() not in {"0", "false", "no", "off"}

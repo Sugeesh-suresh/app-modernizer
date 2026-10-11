@@ -54,6 +54,12 @@ That is enforced in code (`shared/scope_fence.py`), not asked for in a prompt:
 - the uploaded code, unchanged, is built on JDK 11 (`clean package`, tests compiled). If it cannot download its own dependencies — credentials, mirrors, network — the run stops before planning, naming the failing coordinates; nothing is changed;
 - with `BASELINE_JAVA_HOME` (a JDK 8), the uploaded tests run once, so failures that predate the migration are reported and never "fixed".
 
+**Java 8 → 25 builds each stage on its own JDK.** The incremental stages target Java 8 (readiness), 17 and 25, and a stage verified on the wrong JDK proves nothing, so the run starts with an environment check too (`java_8_to_25/preflight.py`):
+- every JDK the machine has is probed — `MIGRATION_JAVA_HOMES` (`8=/opt/jdk8,17=/opt/jdk17,25=/opt/jdk25`), `MIGRATION_JAVA_HOME`, `BASELINE_JAVA_HOME`, `JAVA_HOME` and the `java` on PATH — and each release the run builds gets one: its own major, else the nearest newer JDK (reported as approximate: it compiles that release, tests run on the newer runtime). A release no JDK can build stops the run before planning;
+- the uploaded code is built on the first stage's JDK (`clean package`, tests compiled); download failures stop the run, compile errors open the Technical Specification with the JDK table;
+- every build the validator and fixer run (`run_command`) gets `JAVA_HOME` of the running stage's JDK (Java 25 for a big-bang run), plus `MAVEN_SETTINGS`.
+`PREFLIGHT=warn` reports these problems without stopping. In a bundle, the companion migrations (Solr 9's SolrJ and Oracle's `ojdbc11` need Java 11+) run once the Java 17 stage has passed, before the Spring Boot stages — not first, where they would break the JDK 8 readiness builds. Each pattern's review sets aside the files only the bundle's other migrations changed.
+
 The baseline build's compile and plugin errors open the Technical Specification and are the plan's work list. Libraries and plugins move **only** when a build error or a failing test names them (`java11-dependency-matrix.md` lists each row's trigger); an old version that builds and passes its tests on 11 stays. Validation (`run_java11_build`) runs `clean package` **with the test suite** on the same JDK and settings. It reads compiler output and surefire reports itself and labels each problem COMPILE / TEST / BUILD / DEPENDENCY (a coordinate the migration set) / ENVIRONMENT (a coordinate as uploaded). The loop can only end green on `BUILD: PASS`. Set `VALIDATE_RUN_TESTS=false` to compile tests without running them.
 
 **Staying under the model quota (fewer 429s).** One plugin on every runner (`shared/llm_traffic.py`) and per-role models (`shared/model_config.py`), modelled on Gemini CLI's own code:
@@ -713,7 +719,8 @@ app-modernizer/
 | `MIGRATION_JAVA_HOME` | No | PATH | Java 8 → 11: JDK the builds run on (Maven's `JAVA_HOME`); the preflight requires it to be 11 |
 | `BASELINE_JAVA_HOME` | No | — | Java 8 → 11: a JDK 8 to run the uploaded tests on once, so pre-existing failures are excluded |
 | `MAVEN_SETTINGS` | No | — | settings.xml (mirrors, repository credentials) passed to every Maven call |
-| `PREFLIGHT` | No | `on` | `off` skips the Java 8 → 11 environment check and baseline build |
+| `MIGRATION_JAVA_HOMES` | No | — | Java 8 → 25: one JDK per release, `8=/opt/jdk8,17=/opt/jdk17,25=/opt/jdk25`; a release without one builds on the nearest newer JDK found |
+| `PREFLIGHT` | No | `on` | Java 8 → 11 / 8 → 25 environment check and baseline build: `warn` reports problems without stopping, `off` skips it |
 | `VALIDATE_RUN_TESTS` | No | `true` | Java 8 → 11 validation runs the test suite |
 | `VALIDATE_TIMEOUT_SECONDS` | No | `3600` | One Maven build, tests included |
 | `APPROVED_VERSIONS_FILE` | No | `approved-versions.txt` | Exact versions every code-changing pipeline must use for listed artifacts (your Nexus's versions); supports `[pipeline]` and `[java-8-to-25 stage N]` sections |

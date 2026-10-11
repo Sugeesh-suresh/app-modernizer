@@ -84,7 +84,9 @@ it left unchanged, routes a failed build to the fixer, publishes verified lesson
 
 The subagents only have the tools of their role. The coder writes through `ws_write_file` /
 `ws_replace_in_file`, which refuse any write before the plan is approved, any write to `.modernizer/`, and —
-for Java 8 → 11 — anything outside the scope fence. The validator can only build and check; success is
+for Java 8 → 11 — anything outside the scope fence. Java 8 → 25 also removes files its stages make obsolete
+(`web.xml`, Spring XML contexts) with `ws_delete_file`, one file per call. `ws_run_command` builds on the JDK the
+preflight assigned to the running stage's Java release. The validator can only build and check; success is
 recorded only through `ws_signal_build_success`, which refuses while an approved-versions or fence check fails.
 The reviewer gets the change audit and plan conformance; the curator can write only its pattern's skills.
 

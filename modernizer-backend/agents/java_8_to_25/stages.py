@@ -129,6 +129,13 @@ INCREMENTAL_STAGES: list[IncrementalStage] = [
 ]
 
 
+# Companion migrations (Solr 9's SolrJ, Oracle's ojdbc11, ...) need Java 11+, so in an incremental run
+# they cannot go first: the readiness stages are built at release 8, on a JDK 8. They run once this
+# stage — the move to Java 17 — has passed, and before the Spring Boot stages, which then upgrade a
+# codebase already on the new clients.
+COMPANIONS_AFTER_STAGE = 3
+
+
 def incremental_stages(springboot_upgrade: bool) -> list[IncrementalStage]:
     """The stages an incremental run actually executes for this session's options, in
     order. A stage's displayed step number is its 1-based position in this list."""

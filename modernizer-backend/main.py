@@ -45,9 +45,9 @@ if not _retry_log.handlers:
 
 from agents import APP_NAME, USER_ID, PATTERN_RUNNERS, TARGET_LANGS, config, session_service
 from agents.java_8_to_25.agents import INCREMENTAL_STAGES, incremental_stages
+from agents.java_8_to_25.stages import COMPANIONS_AFTER_STAGE
 from agents.java_8_to_11 import inventory as java11_inventory
 from agents.java_8_to_11 import mechanical as java11_mechanical
-from agents.java_8_to_11 import preflight as java11_preflight
 from agents.shared import (arch_diagrams, config_matrix, current_state, docx_export, evidence_pack, external_rules,
                            grounding, interfaces,
                            existing_tests, migration_inventory, plain_language, repo_fingerprint, rule_candidates,
@@ -55,7 +55,7 @@ from agents.shared import (arch_diagrams, config_matrix, current_state, docx_exp
                            code_health, deliverables, openapi_spec, re_strategy, setup_facts)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
-    companion_detector, dependency_graph, approved_versions, diffing, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
+    change_audit, companion_detector, dependency_graph, approved_versions, diffing, java_preflight, plan_coverage, plan_paths, plan_tasks, re_units, scope_fence, stack_detector, ux_designs,
 )
 from agents.shared.file_parser import extract_text
 from agents.shared.pipeline_text import (  # noqa: E402 — shared with the Gemini CLI path (cli/)
@@ -527,7 +527,7 @@ async def _run_standalone_agent(session_id: str, runner, message: str, sse_event
 
 
 async def _run_java8_incremental_code_step(
-    session_id: str, push_session_id: str | None = None,
+    session_id: str, push_session_id: str | None = None, between=None,
 ) -> None:
     """Run the java-8-to-25 phased incremental strategy: up to 8 true staged
     passes in 4 phases (Readiness; Java 17 + Spring Boot 2.7; Spring Boot
@@ -546,6 +546,11 @@ async def _run_java8_incremental_code_step(
     Emits `stage-start`/`stage-complete` per stage, `task-start`/`task-complete`
     per task, then runs the separate incremental reviewer/reporter/curator
     runners once, over every stage.
+
+    `between` (a coroutine function) runs once the stages up to
+    COMPANIONS_AFTER_STAGE (Java 17) are done and before the next one: a
+    bundle's companion migrations, which need Java 11+ and so cannot run
+    before the readiness stages built on JDK 8.
     """
     # Agents read/write `session_id`; SSE events go to the outward session, which is
     # a different one in a companion-bundle run (see _create_pattern_session).
@@ -557,6 +562,9 @@ async def _run_java8_incremental_code_step(
 
     for position, stage in enumerate(stages, start=1):
         idx = stage.idx  # stable id: runner key, agent names, state keys
+        if between and idx > COMPANIONS_AFTER_STAGE:
+            await between()
+            between = None
         stage_meta = {
             "stage": position, "total": total, "phase": stage.phase,
             "phase_title": stage.phase_title, "title": stage.title,
@@ -700,6 +708,9 @@ async def _run_java8_incremental_code_step(
             summary=validation.get("summary", ""),
             iterations=iteration,
         )
+
+    if between:
+        await between()
 
     await _run_standalone_agent(
         session_id, PATTERN_RUNNERS["java-8-to-25"]["incremental_code_reviewer"],
@@ -1178,23 +1189,28 @@ class PreflightFailed(RuntimeError):
 
 
 def _preflight_enabled(pattern: str) -> bool:
-    return pattern == _JAVA_8_TO_11 and config.PREFLIGHT != "off"
+    return java_preflight.module_for(pattern) is not None and config.PREFLIGHT != "off"
 
 
-async def _run_java11_preflight(session_id: str) -> None:
-    """Check the toolchain and build the uploaded code on the target JDK before
-    anything is planned (agents/java_8_to_11/preflight.py). Stops the run with
-    what to fix when the environment cannot verify a migration; otherwise its
-    compile errors become the planner's primary work list."""
+async def _run_java_preflight(session_id: str, pattern: str) -> None:
+    """Check the toolchain and build the uploaded code before anything is
+    planned (agents/shared/java_preflight.py: Java 8 -> 11 on JDK 11; Java
+    8 -> 25 with a JDK per stage release). Stops the run with what to fix when
+    the environment cannot verify a migration; otherwise its compile errors go
+    to the planner."""
     state = await _get_state(session_id)
     await _push(session_id, "step-change", step="preflight")
     await _push(session_id, "progress", progress=5, message=(
         "Checking the JDK and Maven, then building the uploaded code on Java 11"
-        + (" (and running its tests on the baseline JDK)" if config.BASELINE_JAVA_HOME else "")))
+        + (" (and running its tests on the baseline JDK)" if config.BASELINE_JAVA_HOME else "")
+        if pattern == _JAVA_8_TO_11 else
+        "Checking the JDKs for each Java release and Maven, then building the uploaded code"))
     started = time.monotonic()
-    pf = await asyncio.to_thread(java11_preflight.run, state.get("workspace_dir", ""))
+    pf = await asyncio.to_thread(java_preflight.run, pattern, state.get("workspace_dir", ""),
+                                 state.get("migration_strategy") or "bigbang",
+                                 state.get("springboot_upgrade") == "true")
     elapsed = time.monotonic() - started
-    summary = java11_preflight.summary(pf)
+    summary = java_preflight.module_for(pattern).summary(pf)
     print(f"[preflight] {elapsed:.0f}s — {summary}", flush=True)
     delta = {"preflight_json": pf.to_json(), "preflight_summary": summary}
     if pf.approved_unavailable:
@@ -1206,18 +1222,6 @@ async def _run_java11_preflight(session_id: str) -> None:
     await _push(session_id, "preflight-stream", content=f"**Environment check** ({elapsed:.0f}s) — {summary}\n")
     if not pf.ok:
         raise PreflightFailed(f"Environment check failed — nothing was changed. {pf.stop_reason}")
-
-
-def _with_preflight(tech_spec: str, preflight_json: str) -> str:
-    """The baseline build at the top of the Technical Specification (which the
-    planner reads), whichever analysis produced the rest of it."""
-    if not preflight_json or "## Baseline Build on JDK 11" in tech_spec:
-        return tech_spec
-    try:
-        pf = java11_preflight.Preflight(**json.loads(preflight_json))
-    except (TypeError, json.JSONDecodeError):
-        return tech_spec
-    return java11_preflight.to_markdown(pf) + "\n\n" + tech_spec
 
 
 def _analysis_review(pattern: str) -> bool:
@@ -1431,8 +1435,7 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
             else json.dumps(dependency_graph.build_dependency_graph(workspace_dir, pattern))
         )
         tech_spec = _inject_dependency_graph(tech_spec, graph_json, pattern)
-        if pattern == _JAVA_8_TO_11:
-            tech_spec = _with_preflight(tech_spec, orig_state.get("preflight_json", ""))
+        tech_spec = java_preflight.with_preflight(tech_spec, pattern, orig_state.get("preflight_json", ""))
 
         await _update_state(session_id, {
             f"brd_{pattern}": brd,
@@ -2127,7 +2130,9 @@ async def _run_bundle_code_generation(session_id: str, bundle: list[str]) -> Non
     junit_upgrade = outward_state.get("junit_upgrade", "false")
     springboot_upgrade = outward_state.get("springboot_upgrade", "false")
 
-    for idx, pattern in enumerate(bundle, start=1):
+    pass_changes: dict[str, list[str]] = {}
+
+    async def run_pattern(idx: int, pattern: str, between=None) -> None:
         state = await _get_state(session_id)
         # Falls back to the combined plan if this pattern's slice is missing
         # (e.g. its planner returned nothing, or the reviewer rewrote its heading).
@@ -2149,17 +2154,42 @@ async def _run_bundle_code_generation(session_id: str, bundle: list[str]) -> Non
                 await _update_state(session_id, {"plan": plan_for_pattern})
             run_session_id = session_id
 
+        # Each review sets aside the files only the bundle's other migrations changed
+        # (change_audit.other_migrations_files), so it does not report them as scope creep.
+        start = change_audit.snapshot(workspace_dir)
+        start_file = Path(tempfile.gettempdir()) / f"modernizer-pass-{run_session_id}.json"
+        start_file.write_text(json.dumps(start), encoding="utf-8")
+        await _update_state(run_session_id, {"pass_changes": json.dumps(pass_changes),
+                                             "pass_start_file": str(start_file)})
+
+        def record() -> None:
+            pass_changes[pattern] = sorted(set(pass_changes.get(pattern, []))
+                                           | set(change_audit.changed_since(workspace_dir, start)))
+
+        if between:
+            companions_between = between
+
+            async def between() -> None:      # noqa: F811 — wraps the caller's hook
+                nonlocal start
+                record()
+                await companions_between()
+                start = change_audit.snapshot(workspace_dir)
+                start_file.write_text(json.dumps(start), encoding="utf-8")
+                await _update_state(run_session_id, {"pass_changes": json.dumps(pass_changes)})
+
         # The strategy the user chose is honoured here too. Keying only on the
         # pattern silently ran a phased plan through the single-pass pipeline
         # whenever a companion migration was selected alongside it.
         if pattern == "java-8-to-25" and migration_strategy == "incremental":
-            await _run_java8_incremental_code_step(run_session_id, push_session_id=session_id)
+            await _run_java8_incremental_code_step(run_session_id, push_session_id=session_id, between=between)
         elif pattern == _JAVA_8_TO_11:
             await _run_java11_code_step(run_session_id, push_session_id=session_id)
         else:
             code_key = "code_bigbang" if pattern == "java-8-to-25" else "code"
             await _run_workspace_code_step(run_session_id, pattern, code_key, push_session_id=session_id)
 
+        record()
+        start_file.unlink(missing_ok=True)
         result_state = await _get_state(run_session_id)
         await _update_state(session_id, {
             f"modify_result_{pattern}": result_state.get("modify_result", ""),
@@ -2168,6 +2198,20 @@ async def _run_bundle_code_generation(session_id: str, bundle: list[str]) -> Non
             f"final_report_{pattern}": result_state.get("final_report", ""),
             f"skill_curator_summary_{pattern}": result_state.get("skill_curator_summary", ""),
         })
+
+    primary = outward_state.get("pattern")
+    companions = [p for p in bundle if p != primary]
+    if primary == "java-8-to-25" and migration_strategy == "incremental" and companions:
+        # The readiness stages build on JDK 8; the companions need Java 11+. They run once
+        # the Java 17 stage has passed (see stages.COMPANIONS_AFTER_STAGE).
+        async def run_companions() -> None:
+            for idx, pattern in enumerate(companions, start=1):
+                await run_pattern(idx, pattern)
+
+        await run_pattern(len(bundle), primary, between=run_companions)
+    else:
+        for idx, pattern in enumerate(bundle, start=1):
+            await run_pattern(idx, pattern)
 
     if len(bundle) <= 1:
         return
@@ -2185,12 +2229,6 @@ async def _run_bundle_code_generation(session_id: str, bundle: list[str]) -> Non
         return "\n\n---\n\n".join(parts)
 
     combined_report = _combine("final_report")
-    if "java-8-to-25" in bundle and state.get("migration_strategy") == "incremental":
-        combined_report += (
-            "\n\n---\n\n_Note: java-8-to-25 ran as a single bigbang pass as part of this bundled "
-            "migration — the phased incremental strategy and JUnit/Spring Boot toggles are not "
-            "supported in combination with companion patterns._"
-        )
     combined_review = _combine("code_review")
     combined_curator = _combine("skill_curator_summary")
 
@@ -2603,8 +2641,9 @@ async def _run_workflow(session_id: str) -> None:
             bundle = _bundle_for(state)
 
         # ── Step 0b: Preflight — can this machine build and verify the result? ──
-        if any(_preflight_enabled(p) for p in bundle):
-            await _run_java11_preflight(session_id)
+        java = next((p for p in bundle if _preflight_enabled(p)), None)
+        if java:
+            await _run_java_preflight(session_id, java)
 
         if any(_analysis_review(p) for p in bundle):
             # ── Step 1: Reverse Engineering -> Analysis + BRD + TechSpec + Tests ──

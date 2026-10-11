@@ -38,7 +38,7 @@ from pathlib import Path
 
 from .adk_compat import ToolContext
 
-from .change_audit import changed_file_statuses, relevant_files
+from .change_audit import changed_file_statuses, other_migrations_files, relevant_files
 from .plan_tasks import parse_tasks
 
 _BACKTICKED = re.compile(r"`([^`]+)`")
@@ -80,6 +80,8 @@ class PlanCoverage:
     unplanned: list[tuple[str, str]] = field(default_factory=list)
     contradicted: list[tuple[PlannedFile, str]] = field(default_factory=list)
     unresolved: list[PlannedFile] = field(default_factory=list)
+    #: Changed only by another migration of the same bundle run: {path: pattern}. Not checked here.
+    others: dict[str, str] = field(default_factory=dict)
     error: str = ""
 
 
@@ -127,6 +129,21 @@ def _add(out: dict[str, PlannedFile], entry: PlannedFile) -> None:
         out[entry.path] = entry
 
 
+_MANIFEST_HEADING = re.compile(r"^(?P<level>#{2,4})\s+[^\n]*(?:File Change Manifest|Frozen Zone)[^\n]*$",
+                               re.MULTILINE | re.IGNORECASE)
+
+
+def manifest_section(plan: str) -> str:
+    """The plan's File Change Manifest (and Java 8 -> 11 Frozen Zone) sections, each to the next
+    heading of its level or above, or "" when the plan has neither."""
+    parts = []
+    for match in _MANIFEST_HEADING.finditer(plan or ""):
+        level = len(match.group("level"))
+        end = re.compile(rf"^#{{1,{level}}}\s", re.MULTILINE).search(plan, match.end())
+        parts.append(plan[match.end():end.start() if end else len(plan)])
+    return "\n".join(parts)
+
+
 def parse_plan_manifest(plan: str) -> list[PlannedFile]:
     """Every file the confirmed plan says it will touch, with what it says will
     happen to it. Returns [] when the plan contains no recognisable manifest."""
@@ -153,8 +170,11 @@ def parse_plan_manifest(plan: str) -> list[PlannedFile]:
                 if _looks_like_path(path):
                     _add(out, PlannedFile(path.strip().strip("`"), "", "Files: line"))
 
-    # 2 — manifest table rows: | `path` | change type | what changes |
-    for match in _TABLE_ROW.finditer(plan):
+    # 2 — manifest table rows: | `path` | change type | what changes |. With a File Change
+    # Manifest section, only its tables and bullets count: the plan's other tables (behaviour
+    # inventory, confidence register) name endpoints and files that are not planned changes.
+    listing = manifest_section(plan) or plan
+    for match in _TABLE_ROW.finditer(listing):
         cells = [c.strip() for c in match.group("cells").split("|")]
         if len(cells) < 2 or set("".join(cells)) <= set("-: "):
             continue
@@ -168,7 +188,7 @@ def parse_plan_manifest(plan: str) -> list[PlannedFile]:
         _add(out, PlannedFile(candidate, change, "manifest table", bool(_NO_CHANGE.search(change))))
 
     # 3 — bullet / checkbox lines whose first backticked span is a path.
-    for match in _BULLET.finditer(plan):
+    for match in _BULLET.finditer(listing):
         body = match.group("body")
         backticked = _BACKTICKED.findall(body)
         if not backticked or not _looks_like_path(backticked[0]):
@@ -203,16 +223,23 @@ def _resolve(entry_path: str, actual_paths: list[str]) -> list[str]:
     return suffix_hits if len(suffix_hits) == 1 else []
 
 
+_PLANNED_REMOVAL = re.compile(r"\b(?:delet|remov)", re.IGNORECASE)
+_PLANNED_CREATION = re.compile(r"\b(?:new|add|creat)", re.IGNORECASE)
+
+
 def compare_plan_to_changes(plan: str, baseline_dir: str, workspace_dir: str,
-                            all_workspace_paths: list[str] | None = None) -> PlanCoverage:
-    """Check the migrated workspace against the confirmed plan's manifest."""
+                            all_workspace_paths: list[str] | None = None,
+                            others: dict[str, str] | None = None) -> PlanCoverage:
+    """Check the migrated workspace against the confirmed plan's manifest. Files
+    only another migration of the run changed (`others`) are set aside."""
     coverage = PlanCoverage()
     statuses = changed_file_statuses(baseline_dir, workspace_dir)
     if not baseline_dir or not workspace_dir:
         coverage.error = "baseline or workspace directory is unavailable — plan conformance could not be checked"
         return coverage
 
-    changed = dict(statuses)
+    coverage.others = {p: o for p, o in (others or {}).items() if p in statuses}
+    changed = {p: s for p, s in statuses.items() if p not in coverage.others}
     coverage.changed_total = len(changed)
 
     planned = parse_plan_manifest(plan)
@@ -234,7 +261,9 @@ def compare_plan_to_changes(plan: str, baseline_dir: str, workspace_dir: str,
             # the caller could not supply the full workspace listing.
             targets = _resolve(entry.path, sorted(changed))
         if not targets:
-            coverage.unresolved.append(entry)
+            if not (_PLANNED_REMOVAL.search(entry.change) and _PLANNED_CREATION.search(entry.change)):
+                coverage.unresolved.append(entry)
+            # else: a file the plan creates in one stage and deletes in a later one — absent is as planned.
             continue
         touched = [t for t in targets if t in changed]
         matched_actual.update(touched)
@@ -271,6 +300,9 @@ def to_markdown(coverage: PlanCoverage) -> str:
         f"- Files actually changed: **{coverage.changed_total}**",
         f"- Changed exactly as planned: **{len(coverage.as_planned)}**",
     ]
+    if coverage.others:
+        lines.append(f"- Changed only by the run's other migrations, so not checked against this plan: "
+                     f"{len(coverage.others)} — " + ", ".join(f"`{p}` ({o})" for p, o in sorted(coverage.others.items())[:_MAX_ROWS]))
 
     if not coverage.manifest_found:
         lines += [
@@ -380,5 +412,5 @@ def compare_plan_to_actual_changes(tool_context: ToolContext) -> str:
         if root.exists():
             workspace_paths = sorted(relevant_files(root.resolve()))
     return to_markdown(compare_plan_to_changes(
-        plan, state.get("baseline_dir", ""), workspace_dir, workspace_paths,
+        plan, state.get("baseline_dir", ""), workspace_dir, workspace_paths, other_migrations_files(state),
     ))
