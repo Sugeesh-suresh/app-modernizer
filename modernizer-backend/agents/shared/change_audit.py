@@ -78,7 +78,7 @@ def _m(name: str, regex: str, note: str = "", flags: int = 0) -> Marker:
 #               coverage-gap candidate; ADDED in a diff = a regression.
 #   modern    — the migration's target APIs. Added in a diff = migration work.
 #   forbidden — never a legitimate fix, whatever the plan says (see the
-#               java-8-to-25-fix skill's "never by adding --add-opens" rule).
+#               java-8-to-25 skill's fix step's "never by adding --add-opens" rule).
 # ---------------------------------------------------------------------------
 
 _JAVA_LEGACY = [
@@ -151,7 +151,7 @@ _JAVA_MODERN = [
 
 _JAVA_FORBIDDEN = [
     _m("--add-opens / --add-exports escape hatch", r"--add-(?:opens|exports)\b",
-       "The java-8-to-25-fix skill is explicit: this silences InaccessibleObjectException instead of removing the stale library. Never the fix."),
+       "The java-8-to-25 skill's fix step is explicit: this silences InaccessibleObjectException instead of removing the stale library. Never the fix."),
     _m("dependency pinned backwards", r"<!--\s*(?:downgrade|pin back|revert)\b",
        "A deliberate downgrade to make a build pass is a migration failure, not a fix."),
 ]

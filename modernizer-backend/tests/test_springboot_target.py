@@ -28,14 +28,14 @@ def _read(relative: str) -> str:
 
 
 def test_boot4_skill_targets_an_executable_jar_not_a_war():
-    skill = _read("springboot-war-to-boot4/SKILL.md")
+    skill = _read("java-8-to-25/references/steps/springboot-boot4.md")
     assert "Executable JAR" in skill
     assert "never a WAR" in skill
     assert "never change it to `jar`" not in skill  # the old WAR-preserving rule
 
 
 def test_boot4_skill_ships_its_references():
-    references = load_skill_from_dir(SKILLS_DIR / "springboot-war-to-boot4").resources.references
+    references = load_skill_from_dir(SKILLS_DIR / "java-8-to-25").resources.references
     assert set(references) >= {
         "boot4-dependency-cleanup.md", "spring-data-jpa-migration.md", "jsp-to-thymeleaf.md",
         "war-to-executable-jar.md", "jakarta-ee11-namespace-map.md", "webxml-to-javaconfig.md",
@@ -43,15 +43,21 @@ def test_boot4_skill_ships_its_references():
     assert "war-packaging-and-lifecycle.md" not in references
 
 
-def test_incremental_skill_keeps_only_its_intermediate_war_rules():
-    references = load_skill_from_dir(SKILLS_DIR / "springboot-incremental-upgrade").resources.references
-    assert "intermediate-war-stages.md" in references
-    assert "war-to-executable-jar.md" not in references  # moved to springboot-war-to-boot4
+def test_intermediate_war_rules_and_the_jar_conversion_have_their_own_guides():
+    references = load_skill_from_dir(SKILLS_DIR / "java-8-to-25").resources.references
+    assert "intermediate-war-stages.md" in references and "war-to-executable-jar.md" in references
+    # Each stage guide lists the knowledge it owns: the intermediate WAR stages, and the WAR -> JAR conversion.
+    knowledge = {s: next(l for l in references[f"steps/{s}.md"].splitlines()
+                         if l.startswith("**Knowledge for this step**"))
+                 for s in ("springboot-incremental", "springboot-boot4")}
+    assert "references/intermediate-war-stages.md" in knowledge["springboot-incremental"]
+    assert "references/war-to-executable-jar.md" in knowledge["springboot-boot4"]
+    assert "intermediate-war-stages.md" not in knowledge["springboot-boot4"]
 
 
 @pytest.mark.parametrize("relative", [
-    "java-8-to-25-plan/SKILL.md",
-    "java-8-to-25-plan/references/java8-to-java25-checklist.md",
+    "java-8-to-25/references/steps/plan.md",
+    "java-8-to-25/references/java8-to-java25-checklist.md",
 ])
 def test_plan_no_longer_offers_a_war_path(relative):
     text = _read(relative)
@@ -70,7 +76,7 @@ def test_last_incremental_stage_packages_a_jar_with_the_boot4_skill():
     last = INCREMENTAL_STAGES[-1]
     assert "Executable JAR" in last.title
     assert last.build_goal == "package"
-    assert "springboot-war-to-boot4" in last.extra_skills
+    assert "java-8-to-25:springboot-boot4" in last.extra_skills
 
 
 def test_bigbang_validator_packages_the_jar_when_spring_boot_is_upgraded():

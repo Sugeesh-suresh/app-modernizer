@@ -11,14 +11,13 @@ first to decide which applies.
 
 Skills (Pattern 2 -- file-based):
   Each agent loads its instructions and reference material from
-  agents/skills/<skill-name>/ at runtime via SkillToolset.
+  agents/skills/<migration>/ at runtime via SkillToolset: one skill per migration, one step
+  file per agent (references/steps/<step>.md) — see agents/shared/skill_steps.py.
 """
 import pathlib
 
 from google.adk.agents import LlmAgent, LoopAgent, SequentialAgent
-from google.adk.skills import load_skill_from_dir
 from google.adk.tools import FunctionTool
-from google.adk.tools.skill_toolset import SkillToolset
 
 from .. import config
 from ..shared.model_config import make_model
@@ -26,7 +25,7 @@ from ..shared.callbacks import make_skill_update_callback
 from ..shared.learned_fixes import (
     jsp_targets, make_lesson_capture_callback, make_lesson_verify_callback, skill_targets,
 )
-from ..shared import skill_manifest
+from ..shared import skill_manifest, skill_steps
 from ..shared.rosters import PLAN_SKILL_ROSTERS
 from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
@@ -36,16 +35,12 @@ _MODEL = make_model()
 _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
 
 
-def _skill(name: str) -> SkillToolset:
-    return SkillToolset(skills=[load_skill_from_dir(_SKILLS_DIR / name)])
-
-
 re_agent = LlmAgent(
     name="tibco_ems_re",
     model=_MODEL,
     description="Reverse-engineers a TIBCO EMS integration (destinations, producers/consumers) and produces Analysis, BRD, Technical Specification, and an Existing Test Inventory.",
-    instruction="Load and execute the `tibco-ems-to-pubsub-re` skill, using the list_files and read_file tools to explore the workspace.",
-    tools=[_skill("tibco-ems-to-pubsub-re"), FunctionTool(fs_tools.list_files), FunctionTool(fs_tools.read_file)],
+    instruction=skill_steps.instruction("tibco-ems-to-pubsub:re") + ", using the list_files and read_file tools to explore the workspace.",
+    tools=[skill_steps.toolset("tibco-ems-to-pubsub:re"), FunctionTool(fs_tools.list_files), FunctionTool(fs_tools.read_file)],
     output_key="analysis",
     include_contents="none",
 )
@@ -60,7 +55,7 @@ planner_agent = LlmAgent(
     model=_MODEL,
     description="Creates a detailed TIBCO EMS -> Google Cloud Pub/Sub migration plan from the confirmed BRD and Technical Specification.",
     instruction=(
-        "Load and execute the `tibco-ems-to-pubsub-plan` skill to create the migration plan.\n\n"
+        skill_steps.instruction("tibco-ems-to-pubsub:plan") + " to create the migration plan.\n\n"
         + skill_manifest.planner_block(_PLAN_SKILL_ROSTER)
         + "\n\n"
         "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_tibco_ems_to_pubsub?}\n\n"
@@ -69,7 +64,7 @@ planner_agent = LlmAgent(
         "The Test Inventory is what question 4 is answered from — its Coverage Gaps section "
         "is the starting point for the plan's own, never a substitute for it."
     ),
-    tools=[_skill("tibco-ems-to-pubsub-plan")],
+    tools=[skill_steps.toolset("tibco-ems-to-pubsub:plan")],
     output_key="plan",
     after_agent_callback=make_plan_contract_callback(),
     include_contents="none",
@@ -80,13 +75,13 @@ modifier_agent = LlmAgent(
     model=_MODEL,
     description="Applies the confirmed migration plan to the workspace, translating EMS destinations/producers/consumers to Pub/Sub topics/subscriptions.",
     instruction=(
-        "Load and execute the `tibco-ems-to-pubsub-modify` skill to apply the confirmed migration plan "
+        skill_steps.instruction("tibco-ems-to-pubsub:modify") + " to apply the confirmed migration plan "
         "to the files in the workspace, using the list_files, read_file and write_file tools.\n\n"
         "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_tibco_ems_to_pubsub?}\n\n"
         "## Confirmed Migration Plan\n{plan}"
     ),
     tools=[
-        _skill("tibco-ems-to-pubsub-modify"),
+        skill_steps.toolset("tibco-ems-to-pubsub:modify"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.read_file),
         FunctionTool(fs_tools.replace_in_file),
@@ -100,9 +95,9 @@ validator_agent = LlmAgent(
     name="validator_agent",
     model=_MODEL,
     description="Validates the migrated output -- a real mvn/gradle build if it's a Java/Spring Pub/Sub client, otherwise a deterministic topic-mapping config check -- and reports pass/fail as JSON.",
-    instruction="Load and execute the `tibco-ems-to-pubsub-validate` skill to check the workspace and report the result.",
+    instruction=skill_steps.instruction("tibco-ems-to-pubsub:validate") + " to check the workspace and report the result.",
     tools=[
-        _skill("tibco-ems-to-pubsub-validate"),
+        skill_steps.toolset("tibco-ems-to-pubsub:validate"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.run_command),
         FunctionTool(fs_tools.validate_pubsub_mapping),
@@ -112,10 +107,10 @@ validator_agent = LlmAgent(
     include_contents="none",
     after_agent_callback=[
         # A verified resolution from the previous fix pass goes to the modifier's skill.
-        make_lesson_verify_callback("build_result", "pending_lessons", skill_targets(_SKILLS_DIR, "tibco-ems-to-pubsub-modify", "tibco-ems-to-pubsub-fix"), "tibco-ems-to-pubsub"),
+        make_lesson_verify_callback("build_result", "pending_lessons", skill_targets(_SKILLS_DIR, "tibco-ems-to-pubsub:modify", "tibco-ems-to-pubsub:fix"), "tibco-ems-to-pubsub"),
         make_skill_update_callback(
             validation_key="build_result",
-            skill_md_path=_SKILLS_DIR / "tibco-ems-to-pubsub-validate" / "SKILL.md",
+            skill_md_path=skill_steps.file("tibco-ems-to-pubsub:validate"),
             section_header="Validation Pass",
         ),
     ],
@@ -126,12 +121,12 @@ fixer_agent = LlmAgent(
     model=_MODEL,
     description="Reads the files implicated by validator_agent's report and fixes them in place in the workspace.",
     instruction=(
-        "Load and execute the `tibco-ems-to-pubsub-fix` skill.\n\n"
+        skill_steps.instruction("tibco-ems-to-pubsub:fix") + ".\n\n"
         "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_tibco_ems_to_pubsub?}\n\n"
         "## Validation Report (errors/issues to fix)\n{build_result}"
     ),
     tools=[
-        _skill("tibco-ems-to-pubsub-fix"),
+        skill_steps.toolset("tibco-ems-to-pubsub:fix"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.read_file),
         FunctionTool(fs_tools.replace_in_file),
@@ -163,14 +158,14 @@ reporter_agent = LlmAgent(
     model=_MODEL,
     description="Summarises the migration run -- what changed, final validation status, and any remaining issues.",
     instruction=(
-        "Load and execute the `tibco-ems-to-pubsub-report` skill to produce the final migration report. "
+        skill_steps.instruction("tibco-ems-to-pubsub:report") + " to produce the final migration report. "
         "Fold the Independent Code Review's findings into a dedicated report section rather than "
         "ignoring them.\n\n"
         "## Modify Result\n{modify_result}\n\n"
         "## Final Validation Result\n{build_result}\n\n"
         "## Independent Code Review\n{code_review}"
     ),
-    tools=[_skill("tibco-ems-to-pubsub-report")],
+    tools=[skill_steps.toolset("tibco-ems-to-pubsub:report")],
     output_key="final_report",
     include_contents="none",
 )
@@ -178,8 +173,8 @@ reporter_agent = LlmAgent(
 skill_curator_agent = make_skill_curator_agent(
     _MODEL,
     allowed_skills=[
-        "tibco-ems-to-pubsub-re", "tibco-ems-to-pubsub-plan", "tibco-ems-to-pubsub-modify",
-        "tibco-ems-to-pubsub-validate", "tibco-ems-to-pubsub-fix", "tibco-ems-to-pubsub-report",
+        "tibco-ems-to-pubsub:re", "tibco-ems-to-pubsub:plan", "tibco-ems-to-pubsub:modify",
+        "tibco-ems-to-pubsub:validate", "tibco-ems-to-pubsub:fix", "tibco-ems-to-pubsub:report",
     ],
     context_instruction=(
         "## Confirmed Migration Plan\n{plan}\n\n## Modify Result\n{modify_result}\n\n"

@@ -16,12 +16,13 @@ from agents.java_8_to_25.agents import INCREMENTAL_STAGES
 from agents.shared import callbacks
 from agents.shared.change_audit import GENERATED_SUBTREES, audit_changes, to_markdown
 from agents.shared.dependency_graph import EXCLUDED_DIRS
+from agents.shared import skill_steps
 
 SKILLS = pathlib.Path(__file__).parent.parent / "agents" / "skills"
 
 
 def _skill(name: str) -> str:
-    return (SKILLS / name / "SKILL.md").read_text(encoding="utf-8")
+    return skill_steps.file(name).read_text(encoding="utf-8")
 
 
 def _tree(tmp_path, name):
@@ -162,8 +163,8 @@ class TestD5GeneratedPatternsLeaveTheSourceAppAlone:
 class TestD6D7ModifySkillsMatchTheTools:
     @pytest.mark.parametrize(
         "skill",
-        ["solr-4-to-9-modify", "tibco-ems-to-pubsub-modify", "oracle-19c-to-23ai-modify",
-         "java-8-to-25-modify"],
+        ["solr-4-to-9:modify", "tibco-ems-to-pubsub:modify", "oracle-19c-to-23ai:modify",
+         "java-8-to-25:modify"],
     )
     def test_no_modify_skill_mandates_an_overwrite_the_tool_refuses(self, skill):
         """write_file refuses a full overwrite above one 20,000-char read window.
@@ -176,7 +177,7 @@ class TestD6D7ModifySkillsMatchTheTools:
 
     @pytest.mark.parametrize(
         "skill",
-        ["solr-4-to-9-modify", "tibco-ems-to-pubsub-modify", "oracle-19c-to-23ai-modify"],
+        ["solr-4-to-9:modify", "tibco-ems-to-pubsub:modify", "oracle-19c-to-23ai:modify"],
     )
     def test_the_size_limit_is_explained_where_the_edit_is_made(self, skill):
         assert "20,000-character read window" in _skill(skill)
@@ -257,7 +258,7 @@ class TestReverseEngineeringOutputContract:
 
     @staticmethod
     def _re_skill() -> str:
-        return _skill("java-8-to-25-re")
+        return _skill("java-8-to-25:re")
 
     def test_the_markers_are_described_as_separators(self):
         body = self._re_skill()
@@ -324,7 +325,7 @@ class TestDeprecationStatusSurvivesTheRewrite:
 
     @staticmethod
     def _re_skill() -> str:
-        return _skill("java-8-to-25-re")
+        return _skill("java-8-to-25:re")
 
     def test_the_status_vocabulary_matches_what_the_plan_consumes(self):
         body = self._re_skill()
@@ -332,7 +333,7 @@ class TestDeprecationStatusSurvivesTheRewrite:
         for status in ("Deprecated", "EOL", "Insecure"):
             assert status in body, status
         # The plan skill asks for exactly this vocabulary.
-        assert "Status (deprecated / EOL / insecure)" in _skill("java-8-to-25-plan")
+        assert "Status (deprecated / EOL / insecure)" in _skill("java-8-to-25:plan")
 
     def test_junit_3_and_4_are_deprecated_regardless_of_the_toggle(self):
         body = self._re_skill()

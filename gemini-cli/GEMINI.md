@@ -22,9 +22,11 @@ interactions and backend traces) and `UI_SCREENS.md` (a screenshot of each page)
 - **The `modernizer` MCP server** (tools `mcp_modernizer_*`) owns the pipeline. `next_step` runs every
   deterministic step itself — inventories, preflight build, dependency graph, plan checks, mechanical rewrites,
   computed discovery sections, the final diff — and returns the next step that needs a model or a person.
-- **Skills** (activated with `activate_skill`) hold the domain knowledge: one per pattern and role
-  (`<pattern>-re`, `-plan`, `-modify`, `-validate`, `-fix`, `-report`), plus `code-review`, `skill-curator`,
-  the discovery skills and the generators. The subagents activate them; the queries say which.
+- **Skills** (activated with `activate_skill`) hold the domain knowledge: one skill per migration
+  (`oracle-19c-to-23ai`, `solr-4-to-9`, `java-8-to-25`, …) with a step file per pipeline step under
+  `references/steps/` (`re`, `plan`, `modify`, `validate`, `fix`, `report`) and its knowledge in `references/`,
+  plus `code-review`, `skill-curator`, the discovery skills and the generators. The subagents activate them; the
+  queries say which skill and which step file.
 - **Subagents** do the model work, each with only the tools its role needs: `modernizer-analyst`,
   `modernizer-planner`, `modernizer-coder`, `modernizer-validator`, `modernizer-reviewer`,
   `modernizer-writer`, `modernizer-curator`.

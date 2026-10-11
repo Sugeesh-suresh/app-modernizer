@@ -15,10 +15,9 @@ for an approver than no signal at all. If a real maturity signal is wanted
 later it has to be derived from something earned, such as recorded runs on real
 repositories, not from a field someone edits.
 """
-import pathlib
 from dataclasses import dataclass
 
-_SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
+from . import skill_steps
 
 
 @dataclass(frozen=True)
@@ -30,15 +29,12 @@ class SkillRef:
 
 
 def resolve(entries: list[tuple[str, str]]) -> list[SkillRef]:
-    """`[(skill name, role), ...]` in execution order → resolved SkillRefs.
+    """`[(skill or "skill:step", role), ...]` in execution order → resolved SkillRefs.
 
-    A skill whose SKILL.md is not on disk is flagged rather than dropped: the
+    A skill or step whose file is not on disk is flagged rather than dropped: the
     plan would otherwise promise a stage nothing can execute.
     """
-    return [
-        SkillRef(name, role, missing=not (_SKILLS_DIR / name / "SKILL.md").is_file())
-        for name, role in entries
-    ]
+    return [SkillRef(name, role, missing=not skill_steps.exists(name)) for name, role in entries]
 
 
 def to_markdown(entries: list[tuple[str, str]]) -> str:
@@ -46,9 +42,9 @@ def to_markdown(entries: list[tuple[str, str]]) -> str:
     refs = resolve(entries)
     if not refs:
         return ""
-    lines = ["| # | Skill | What it governs in this run |", "|---|---|---|"]
+    lines = ["| # | Skill › step | What it governs in this run |", "|---|---|---|"]
     for i, ref in enumerate(refs, 1):
-        name = f"`{ref.name}`" + (" — **not found on disk**" if ref.missing else "")
+        name = skill_steps.label(ref.name) + (" — **not found on disk**" if ref.missing else "")
         lines.append(f"| {i} | {name} | {ref.role} |")
 
     missing = [r for r in refs if r.missing]
@@ -56,7 +52,7 @@ def to_markdown(entries: list[tuple[str, str]]) -> str:
         lines += [
             "",
             "**Skills not found on disk:** "
-            + ", ".join(f"`{r.name}`" for r in missing)
+            + ", ".join(skill_steps.label(r.name) for r in missing)
             + ". The plan cannot rely on them; report this before approving.",
         ]
     return "\n".join(lines)
@@ -71,7 +67,7 @@ def planner_block(entries: list[tuple[str, str]]) -> str:
         return ""
     return (
         "## Skill Composition (reproduce this table in the plan)\n"
-        "These are the skills that can govern this run, in execution order. You cannot see them "
+        "These are the skills (and their steps) that can govern this run, in execution order. You cannot see them "
         "anywhere else, so copy the rows exactly as given: never reorder them and never add a "
         "skill that is not listed. The one edit you may make is to DROP a row whose role says it "
         "does not apply to this run (a strategy you were not asked for, or a toggle that is off), "

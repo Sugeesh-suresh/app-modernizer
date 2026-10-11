@@ -5,6 +5,7 @@ agents search for is what the plan skill tells the planner to emit, and that
 the orchestrator emits one stage-start/stage-complete pair per executed stage,
 numbered by position in the run.
 """
+from agents.shared import skill_steps
 import asyncio
 import pathlib
 import re
@@ -100,7 +101,7 @@ def test_spring_boot_2_and_3_run_on_java_17_before_the_java_25_jump():
 
 
 def test_plan_skill_emits_every_stage_heading():
-    plan_skill = (SKILLS_DIR / "java-8-to-25-plan" / "SKILL.md").read_text()
+    plan_skill = (SKILLS_DIR / "java-8-to-25" / "references" / "steps" / "plan.md").read_text()
     # Full (Spring Boot) template: numbered by the stable id, since every stage runs.
     for stage in INCREMENTAL_STAGES:
         assert f"## Stage {stage.idx}: {stage.title}\n" in plan_skill, stage.title
@@ -112,7 +113,7 @@ def test_plan_skill_emits_every_stage_heading():
 def test_every_stage_skill_exists_and_is_curated():
     for stage in INCREMENTAL_STAGES:
         for name in stage.extra_skills:
-            assert (SKILLS_DIR / name / "SKILL.md").is_file(), name
+            assert skill_steps.file(name).is_file(), name
             assert name in CURATED_SKILLS, name
 
 

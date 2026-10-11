@@ -42,14 +42,13 @@ BRD/TechSpec, strategy/JUnit/Spring-Boot-aware).
 
 Skills (Pattern 2 -- file-based):
   Each agent loads its instructions and reference material from
-  agents/skills/<skill-name>/ at runtime via SkillToolset.
+  agents/skills/<migration>/ at runtime via SkillToolset: one skill per migration, one step
+  file per agent (references/steps/<step>.md) — see agents/shared/skill_steps.py.
 """
 import pathlib
 
 from google.adk.agents import LlmAgent, LoopAgent, SequentialAgent
-from google.adk.skills import load_skill_from_dir
 from google.adk.tools import FunctionTool
-from google.adk.tools.skill_toolset import SkillToolset
 
 from .. import config
 from ..shared.model_config import make_model
@@ -57,7 +56,7 @@ from ..shared.callbacks import make_skill_update_callback
 from ..shared.learned_fixes import (
     jsp_targets, make_lesson_capture_callback, make_lesson_verify_callback, skill_targets,
 )
-from ..shared import skill_manifest
+from ..shared import skill_manifest, skill_steps
 from ..shared.rosters import PLAN_SKILL_ROSTERS
 from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
@@ -67,26 +66,9 @@ _MODEL = make_model()
 _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
 
 
-
 from .stages import (  # noqa: E402,F401 (re-exported for main.py and the tests)
     INCREMENTAL_STAGES, IncrementalStage, incremental_stages,
 )
-
-
-def _skill(name: str) -> SkillToolset:
-    return SkillToolset(skills=[load_skill_from_dir(_SKILLS_DIR / name)])
-
-
-def _skills(*names: str) -> SkillToolset:
-    """One SkillToolset covering multiple skills. Required whenever an agent
-    needs more than one skill available (e.g. modifier_agent needs both
-    java-8-to-25-modify and springboot-war-to-boot4): SkillToolset always
-    exposes fixed tool names (list_skills/load_skill/...), so giving one
-    agent two SEPARATE SkillToolset instances declares those names twice and
-    Gemini rejects the request with "Duplicate function declaration found:
-    list_skills". A single toolset holding both skills exposes each name
-    exactly once and lets the model load_skill either one by name."""
-    return SkillToolset(skills=[load_skill_from_dir(_SKILLS_DIR / name) for name in names])
 
 
 # ── re_agent: explores the real workspace, produces Analysis/BRD/TechSpec/Tests ──
@@ -94,8 +76,8 @@ re_agent = LlmAgent(
     name="java8_re",
     model=_MODEL,
     description="Reverse-engineers a Java 8 repository workspace via list_files/read_file and produces Analysis, BRD, Technical Specification, and an Existing Test Inventory.",
-    instruction="Load and execute the `java-8-to-25-re` skill, using the list_files and read_file tools to explore the workspace.",
-    tools=[_skill("java-8-to-25-re"), FunctionTool(fs_tools.list_files), FunctionTool(fs_tools.read_file)],
+    instruction=skill_steps.instruction("java-8-to-25:re") + ", using the list_files and read_file tools to explore the workspace.",
+    tools=[skill_steps.toolset("java-8-to-25:re"), FunctionTool(fs_tools.list_files), FunctionTool(fs_tools.read_file)],
     output_key="analysis",
     include_contents="none",
 )
@@ -113,7 +95,7 @@ planner_agent = LlmAgent(
     model=_MODEL,
     description="Creates a detailed, strategy-aware Java 8 -> Java 25 migration plan from the confirmed BRD and Technical Specification.",
     instruction=(
-        "Load and execute the `java-8-to-25-plan` skill to create the migration plan.\n\n"
+        skill_steps.instruction("java-8-to-25:plan") + " to create the migration plan.\n\n"
         + skill_manifest.planner_block(_PLAN_SKILL_ROSTER)
         + "\n\n## Migration Strategy\n{migration_strategy}\n\n"
         "## JUnit Upgrade Requested\n{junit_upgrade}\n\n"
@@ -125,7 +107,7 @@ planner_agent = LlmAgent(
         "The Test Inventory is what question 4 is answered from — its Coverage Gaps section is the "
         "starting point for the plan's own, never a substitute for it."
     ),
-    tools=[_skill("java-8-to-25-plan")],
+    tools=[skill_steps.toolset("java-8-to-25:plan")],
     output_key="plan",
     after_agent_callback=make_plan_contract_callback(),
     include_contents="none",
@@ -137,10 +119,10 @@ modifier_agent = LlmAgent(
     model=_MODEL,
     description="Applies the confirmed migration plan to the workspace, reading and rewriting files in place via read_file/write_file.",
     instruction=(
-        "Load and execute the `java-8-to-25-modify` skill to apply the confirmed migration plan "
+        skill_steps.instruction("java-8-to-25:modify") + " to apply the confirmed migration plan "
         "to the files in the workspace, using the list_files, read_file and write_file tools. "
         "Spring Boot upgrade requested: {springboot_upgrade}. If true, also load and follow the "
-        "`springboot-war-to-boot4` skill for the plan's Spring Boot 4 Target section — the final state is "
+        "`java-8-to-25` skill's `references/steps/springboot-boot4.md` for the plan's Spring Boot 4 Target section — the final state is "
         "the newest Spring Boot 4.x as an executable JAR on an embedded Tomcat (never a WAR), with "
         "Spring Data JPA, Thymeleaf instead of JSP, and every conflicting legacy library removed. It "
         "supersedes the base skill's generic Spring Boot guidance.\n\n"
@@ -148,7 +130,7 @@ modifier_agent = LlmAgent(
         "## Confirmed Migration Plan\n{plan}"
     ),
     tools=[
-        _skills("java-8-to-25-modify", "springboot-war-to-boot4"),
+        skill_steps.toolset("java-8-to-25:modify", "java-8-to-25:springboot-boot4"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.read_file),
         FunctionTool(fs_tools.replace_in_file),
@@ -163,13 +145,13 @@ validator_agent = LlmAgent(
     model=_MODEL,
     description="Runs the real build (mvn/gradle compile) against the modified workspace and reports pass/fail as JSON.",
     instruction=(
-        "Load and execute the `java-8-to-25-validate` skill to build the workspace and report the result.\n\n"
+        skill_steps.instruction("java-8-to-25:validate") + " to build the workspace and report the result.\n\n"
         "Spring Boot upgrade requested: {springboot_upgrade}. If true, run the `package` goal instead of "
         "`compile` (`mvn -q -DskipTests package`, or `./gradlew assemble` for Gradle) so the executable "
         "Spring Boot JAR is actually produced — a failed repackage is a failed build."
     ),
     tools=[
-        _skill("java-8-to-25-validate"),
+        skill_steps.toolset("java-8-to-25:validate"),
         FunctionTool(fs_tools.run_command),
         FunctionTool(fs_tools.signal_build_success),
     ],
@@ -177,10 +159,10 @@ validator_agent = LlmAgent(
     include_contents="none",
     after_agent_callback=[
         # A verified resolution from the previous fix pass goes to the modifier's skill.
-        make_lesson_verify_callback("build_result", "pending_lessons", skill_targets(_SKILLS_DIR, "java-8-to-25-modify", "java-8-to-25-fix"), "java-8-to-25"),
+        make_lesson_verify_callback("build_result", "pending_lessons", skill_targets(_SKILLS_DIR, "java-8-to-25:modify", "java-8-to-25:fix"), "java-8-to-25"),
         make_skill_update_callback(
             validation_key="build_result",
-            skill_md_path=_SKILLS_DIR / "java-8-to-25-validate" / "SKILL.md",
+            skill_md_path=skill_steps.file("java-8-to-25:validate"),
             section_header="Validation Pass",
         ),
     ],
@@ -191,15 +173,15 @@ fixer_agent = LlmAgent(
     model=_MODEL,
     description="Reads the files implicated by validator_agent's build report and fixes them in place in the workspace.",
     instruction=(
-        "Load and execute the `java-8-to-25-fix` skill. For errors caused by the Spring Boot 4 migration "
+        skill_steps.instruction("java-8-to-25:fix") + ". For errors caused by the Spring Boot 4 migration "
         "(dependencies, Jakarta namespace, Spring Data JPA, Thymeleaf, executable JAR packaging), also "
-        "load the `springboot-war-to-boot4` skill — fix within its target state, never by reverting to "
+        "load the `java-8-to-25` skill's `references/steps/springboot-boot4.md` — fix within its target state, never by reverting to "
         "a WAR or re-adding a removed conflicting library.\n\n"
         "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_java_8_to_25?}\n\n"
         "## Build Report (errors to fix)\n{build_result}"
     ),
     tools=[
-        _skills("java-8-to-25-fix", "springboot-war-to-boot4"),
+        skill_steps.toolset("java-8-to-25:fix", "java-8-to-25:springboot-boot4"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.read_file),
         FunctionTool(fs_tools.replace_in_file),
@@ -221,9 +203,9 @@ build_loop = LoopAgent(
 
 # Skills the skill-curator agent may refine for this pattern (bigbang and incremental alike).
 CURATED_SKILLS: list[str] = [
-    "java-8-to-25-re", "java-8-to-25-plan", "java-8-to-25-modify",
-    "java-8-to-25-validate", "java-8-to-25-fix", "java-8-to-25-report",
-    "springboot-war-to-boot4", "java-migration-readiness", "springboot-incremental-upgrade",
+    "java-8-to-25:re", "java-8-to-25:plan", "java-8-to-25:modify",
+    "java-8-to-25:validate", "java-8-to-25:fix", "java-8-to-25:report",
+    "java-8-to-25:springboot-boot4", "java-8-to-25:readiness", "java-8-to-25:springboot-incremental",
 ]
 
 code_reviewer_agent = make_code_reviewer_agent(
@@ -238,14 +220,14 @@ reporter_agent = LlmAgent(
     model=_MODEL,
     description="Summarises the bigbang migration run -- what changed, final build status, and any remaining issues.",
     instruction=(
-        "Load and execute the `java-8-to-25-report` skill to produce the final migration report. Fold "
+        skill_steps.instruction("java-8-to-25:report") + " to produce the final migration report. Fold "
         "the Independent Code Review's findings into a dedicated report section rather than ignoring "
         "them.\n\n"
         "## Modify Result\n{modify_result}\n\n"
         "## Final Build Result\n{build_result}\n\n"
         "## Independent Code Review\n{code_review}"
     ),
-    tools=[_skill("java-8-to-25-report")],
+    tools=[skill_steps.toolset("java-8-to-25:report")],
     output_key="final_report",
     include_contents="none",
 )
@@ -275,11 +257,11 @@ def _make_stage(stage: IncrementalStage) -> SequentialAgent:
 
     skills_note = ""
     if stage.extra_skills:
-        names = " and ".join(f"`{name}`" for name in stage.extra_skills)
+        guides = " and ".join(f"`{skill_steps.step_resource(name)}`" for name in stage.extra_skills)
         skills_note = (
-            f"Also load and follow the {names} skill{'s' if len(stage.extra_skills) > 1 else ''} — use "
-            f"the part covering '{stage.title}'; it governs how this stage's changes are made and "
-            "supersedes the base skill's generic guidance for this stage.\n\n"
+            f"Also load and follow the stage guide{'s' if len(stage.extra_skills) > 1 else ''} {guides} "
+            f"(`load_skill_resource`) — use the part covering '{stage.title}'; it governs how this stage's "
+            "changes are made and supersedes the modify step's generic guidance for this stage.\n\n"
         )
 
     modifier = LlmAgent(
@@ -287,7 +269,7 @@ def _make_stage(stage: IncrementalStage) -> SequentialAgent:
         model=_MODEL,
         description=f"Applies ONLY the {stage_label} portion of the confirmed migration plan to the workspace.",
         instruction=(
-            "Load and execute the `java-8-to-25-modify` skill and apply ONLY the work described under "
+            skill_steps.instruction("java-8-to-25:modify") + " and apply ONLY the work described under "
             "'## Your Task' below. It is one task of the "
             f"'{stage_label}' stage; earlier tasks and stages are already applied to the workspace, and "
             "the remaining ones run as separate passes — do not do their work, and do not re-do work "
@@ -302,7 +284,7 @@ def _make_stage(stage: IncrementalStage) -> SequentialAgent:
             + "## Your Task\n{current_task}"
         ),
         tools=[
-            _skills("java-8-to-25-modify", *stage.extra_skills),
+            skill_steps.toolset("java-8-to-25:modify", *stage.extra_skills),
             FunctionTool(fs_tools.list_files),
             FunctionTool(fs_tools.read_file),
             FunctionTool(fs_tools.replace_in_file),
@@ -325,12 +307,12 @@ def _make_stage(stage: IncrementalStage) -> SequentialAgent:
         model=_MODEL,
         description=f"Runs the real build against the workspace after {stage_label} and reports pass/fail as JSON.",
         instruction=(
-            "Load and execute the `java-8-to-25-validate` skill to build the workspace and report the "
+            skill_steps.instruction("java-8-to-25:validate") + " to build the workspace and report the "
             f"result. This is validating the '{stage_label}' stage ({phase_label}) of an incremental migration -- "
             f"the build should target Java {stage.java_release}." + goal_note
         ),
         tools=[
-            _skill("java-8-to-25-validate"),
+            skill_steps.toolset("java-8-to-25:validate"),
             FunctionTool(fs_tools.run_command),
             FunctionTool(fs_tools.signal_build_success),
         ],
@@ -338,10 +320,10 @@ def _make_stage(stage: IncrementalStage) -> SequentialAgent:
         include_contents="none",
         after_agent_callback=[
             # A verified resolution from the previous fix pass goes to the modifier's skill.
-            make_lesson_verify_callback(f"build_result_stage{idx}", f"pending_lessons_stage{idx}", skill_targets(_SKILLS_DIR, "java-8-to-25-modify", "java-8-to-25-fix"), "java-8-to-25"),
+            make_lesson_verify_callback(f"build_result_stage{idx}", f"pending_lessons_stage{idx}", skill_targets(_SKILLS_DIR, "java-8-to-25:modify", "java-8-to-25:fix"), "java-8-to-25"),
             make_skill_update_callback(
                 validation_key=f"build_result_stage{idx}",
-                skill_md_path=_SKILLS_DIR / "java-8-to-25-validate" / "SKILL.md",
+                skill_md_path=skill_steps.file("java-8-to-25:validate"),
                 section_header=f"Validation Pass — {stage.title}",
             ),
         ],
@@ -352,14 +334,14 @@ def _make_stage(stage: IncrementalStage) -> SequentialAgent:
         model=_MODEL,
         description=f"Fixes build errors reported for {stage_label}.",
         instruction=(
-            "Load and execute the `java-8-to-25-fix` skill.\n\n"
+            skill_steps.instruction("java-8-to-25:fix") + ".\n\n"
             f"You are fixing the '{stage_label}' stage ({phase_label}) of an incremental migration. Fix the reported "
             f"errors without advancing the migration past this stage. {stage.guardrail}\n\n"
             f"## Approved Versions (your organisation's list for this stage — use exactly these for these artifacts)\n{{approved_versions_java_8_to_25_stage{idx}?}}\n\n"
             f"## Build Report for {stage_label} (errors to fix)\n{{build_result_stage{idx}}}"
         ),
         tools=[
-            _skills("java-8-to-25-fix", *stage.extra_skills),
+            skill_steps.toolset("java-8-to-25:fix", *stage.extra_skills),
             FunctionTool(fs_tools.list_files),
             FunctionTool(fs_tools.read_file),
             FunctionTool(fs_tools.replace_in_file),
@@ -421,13 +403,13 @@ incremental_reporter_agent = LlmAgent(
     model=_MODEL,
     description="Summarises a full phased incremental migration run (Java 8 -> 17 -> 25, with optional Spring Boot 2.7 -> 3 -> 4 -> JAR stages interleaved) across all of its stages.",
     instruction=(
-        "Load and execute the `java-8-to-25-report` skill to produce the final migration report, covering "
+        skill_steps.instruction("java-8-to-25:report") + " to produce the final migration report, covering "
         "every stage of this phased incremental migration. Fold the Independent Code Review's "
         "findings into a dedicated report section rather than ignoring them.\n\n"
         + _incremental_stage_results
         + "\n\n## Independent Code Review (of the final codebase, across all stages)\n{code_review}"
     ),
-    tools=[_skill("java-8-to-25-report")],
+    tools=[skill_steps.toolset("java-8-to-25:report")],
     output_key="final_report",
     include_contents="none",
 )

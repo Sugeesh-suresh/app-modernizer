@@ -36,7 +36,7 @@ from agents.java_8_to_11.fence_rules import FENCE_RULES, STAGE_TITLE as JAVA11_S
 from agents.java_8_to_25.stages import INCREMENTAL_STAGES, incremental_stages
 from agents.shared import (
     approved_versions, callbacks, companion_detector, dependency_graph, diffing, learned_fixes,
-    migration_inventory, plan_contract, plan_paths, plan_tasks, re_units, scope_fence, skill_manifest,
+    migration_inventory, plan_contract, plan_paths, plan_tasks, re_units, scope_fence, skill_manifest, skill_steps,
 )
 from agents.shared.pipeline_text import (
     file_digests, inject_dependency_graph, parse_re_sections, task_paths, unexplained_unchanged,
@@ -323,11 +323,11 @@ def _analysis_agent_step(run: Run, pattern: str, feedback: str | None) -> dict:
     if pattern == P.JSP_TO_REACT:
         if sub == 0:
             sid = f"analysis-{pattern}-facts"
-            q = (f"Activate the `jsp-re` skill and execute it on this repository. {explore}{note}"
+            q = (skill_steps.cli_instruction(spec.re_skills[0]) + f" on this repository. {explore}{note}"
                  + _output_rule(sid, "extracted JSP facts"))
             return _sub(run, sid, ANALYST, q, "Extract JSP facts", "analysis", pattern=pattern, part="facts")
         sid = f"analysis-{pattern}"
-        q = ("Activate the `jsp-logic-classifier` skill to classify the extracted logic, then produce the "
+        q = (skill_steps.cli_instruction(spec.re_skills[1]) + " to classify the extracted logic, then produce the "
              "standard four-section output (Analysis / BRD / Technical Specification / Existing Test "
              "Inventory) — fold the frontend-vs-backend classification table into the Technical "
              "Specification section." + note
@@ -344,8 +344,8 @@ def _analysis_agent_step(run: Run, pattern: str, feedback: str | None) -> dict:
             unit = units[sub]
             sid = f"analysis-{pattern}-unit-{sub + 1}"
             listing = "\n".join(f"- `{f}`" for f in unit["files"][:config.RE_UNIT_MAX_FILES])
-            q = ("Activate the `java-8-to-11-re-module` skill (and `java-8-to-11-re` for reference) and "
-                 f"execute it for the unit below. {explore}\n\n## Your Unit\n{unit['label']} "
+            q = (skill_steps.cli_instruction("java-8-to-11:re-module") + " (it also has you read "
+                 f"`references/steps/re.md` for reference) for the unit below. {explore}\n\n## Your Unit\n{unit['label']} "
                  f"(unit {sub + 1} of {len(units)}) — these files:\n{listing}{note}"
                  + _output_rule(sid, "Module Findings for this unit"))
             return _sub(run, sid, ANALYST, q, f"Analyse unit {sub + 1}/{len(units)}", "analysis",
@@ -355,7 +355,7 @@ def _analysis_agent_step(run: Run, pattern: str, feedback: str | None) -> dict:
             findings = run.result_path(f"{pattern}/module-findings.md")
             parts = [run.read_out(f"analysis-{pattern}-unit-{i + 1}") for i in range(len(units))]
             findings.write_text("\n\n---\n\n".join(p for p in parts if p.strip()), encoding="utf-8")
-            q = ("Activate the `java-8-to-11-re` skill and write its four-section document, following its OUTPUT "
+            q = (skill_steps.cli_load_only("java-8-to-11:re") + " and write its four-section document, following its OUTPUT "
                  "CONTRACT and its section contents exactly. Its DISCOVERY WORKFLOW has already been carried "
                  "out, unit by unit: the Module Findings file below is its results and your only evidence — do "
                  "not inspect other files, and never claim to have read a file the findings do not cite. Carry "
@@ -365,7 +365,7 @@ def _analysis_agent_step(run: Run, pattern: str, feedback: str | None) -> dict:
                  + _files_block(run, [("Module Findings", findings)]) + _output_rule(sid, four))
             return _sub(run, sid, ANALYST, q, "Combine module findings", "analysis", pattern=pattern, part="final")
     sid = f"analysis-{pattern}"
-    q = f"Activate the `{spec.re_skills[0]}` skill and execute it on this repository. {explore}{note}" \
+    q = skill_steps.cli_instruction(spec.re_skills[0]) + f" on this repository. {explore}{note}" \
         + _output_rule(sid, four)
     return _sub(run, sid, ANALYST, q, f"Reverse-engineer ({spec.label})", "analysis", pattern=pattern, part="final")
 
@@ -414,7 +414,7 @@ def _phase_plan(run: Run, log: list[str]) -> dict | None:
     spec = P.get(pattern)
     sid = f"plan-{pattern}"
     feedback = run.state.get("plan_feedback")
-    parts = [f"Activate the `{spec.plan_skill}` skill and execute it to create the migration plan.",
+    parts = [skill_steps.cli_instruction(spec.plan_skill) + " to create the migration plan.",
              skill_manifest.planner_block(spec.roster)]
     if pattern == P.JAVA_8_TO_25:
         parts.append(f"## Migration Strategy\n{run.state.get('migration_strategy')}\n\n"
@@ -504,7 +504,8 @@ def _code_units(run: Run, pattern: str, plan: str) -> list[dict]:
             [{"id": "all", "title": JAVA11_STAGE_TITLE, "body": plan, "files": []}]
         return [{"idx": 0, "position": 1, "total": 1, "title": JAVA11_STAGE_TITLE, "units": units}]
     spec = P.get(pattern)
-    units = [{"id": skill, "title": skill, "body": "", "files": [], "skill": skill} for skill in spec.modify_skills]
+    units = [{"id": skill.replace(":", "-"), "title": skill_steps.label(skill).replace("`", ""), "body": "",
+              "files": [], "skill": skill} for skill in spec.modify_skills]
     return [{"idx": 0, "position": 1, "total": 1, "title": spec.label, "units": units}]
 
 
@@ -587,25 +588,25 @@ def _modify_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
     plan_file = [("Confirmed Migration Plan", run.doc_path("plan", pattern))]
     if pattern == P.JAVA_8_TO_25 and run.state.get("migration_strategy") == "incremental":
         st = next(s for s in INCREMENTAL_STAGES if s.idx == stage["idx"])
-        skills = " and ".join(f"`{n}`" for n in st.extra_skills)
+        guides = " and ".join(f"`{skill_steps.step_resource(n)}`" for n in st.extra_skills)
         preamble = (f"You are applying the '{st.title}' stage (step {stage['position']} of {stage['total']}, "
                     f"Phase {st.phase}: {st.phase_title}) of the confirmed migration plan.")
-        body = ("Activate the `java-8-to-25-modify` skill and apply ONLY the work described under '## Your Task' "
+        body = (skill_steps.cli_instruction("java-8-to-25:modify") + " — apply ONLY the work described under '## Your Task' "
                 f"below. It is one task of the '{st.title}' stage; earlier tasks and stages are already applied, and "
                 "the remaining ones run as separate passes — do not do their work, and do not re-do work already "
                 f"in place. {write_tools}\n\nThis is Phase {st.phase} ({st.phase_title}) of an incremental "
                 "migration. After this stage the build's compiler release level (`maven.compiler.release` / "
                 "`sourceCompatibility` / `targetCompatibility` / toolchain) must be exactly "
                 f"{st.java_release}.\n\nGuardrail for this stage: {st.guardrail}\n\n"
-                + (f"Also activate and follow the {skills} skill{'s' if len(st.extra_skills) > 1 else ''} — use the "
-                   f"part covering '{st.title}'; it governs how this stage's changes are made and supersedes the "
-                   "base skill's generic guidance for this stage.\n\n" if st.extra_skills else "")
+                + (f"Also read and follow the stage guide{'s' if len(st.extra_skills) > 1 else ''} {guides} in the "
+                   f"skill's folder — use the part covering '{st.title}'; it governs how this stage's changes are made "
+                   "and supersedes the modify step's generic guidance for this stage.\n\n" if st.extra_skills else "")
                 + "## Approved Versions (your organisation's list for this stage — use exactly these)\n"
                 + _approved(run, pattern, st.idx) + f"\n\n## Your Task\n{preamble}\n\n{unit['body']}")
         plan_file = []
     elif pattern == P.JAVA_8_TO_11:
         preamble = f"You are applying the '{JAVA11_STAGE_TITLE}' migration plan, one task at a time."
-        body = ("Activate the `java-8-to-11-modify` skill and apply ONLY the work described under '## Your Task' "
+        body = (skill_steps.cli_instruction("java-8-to-11:modify") + " — apply ONLY the work described under '## Your Task' "
                 "below. Earlier tasks are already applied to the workspace and later ones run as separate passes — "
                 f"do not do their work and do not redo work already in place. {write_tools}\n\n"
                 "The target is exactly Java 11: after the run the build's compiler release (`maven.compiler.release` "
@@ -632,12 +633,12 @@ def _modify_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
     else:
         extra = ""
         if pattern == P.JAVA_8_TO_25 and run.state.get("springboot_upgrade"):
-            extra = ("\n\nA Spring Boot upgrade was requested: also activate and follow the `springboot-war-to-boot4` "
-                     "skill for the plan's Spring Boot 4 Target section — the final state is the newest Spring Boot "
+            extra = ("\n\nA Spring Boot upgrade was requested: also read and follow the skill's "
+                     "`references/steps/springboot-boot4.md` for the plan's Spring Boot 4 Target section — the final state is the newest Spring Boot "
                      "4.x as an executable JAR on an embedded Tomcat (never a WAR), with Spring Data JPA, Thymeleaf "
-                     "instead of JSP, and every conflicting legacy library removed. It supersedes the base skill's "
+                     "instead of JSP, and every conflicting legacy library removed. It supersedes the modify step's "
                      "generic Spring Boot guidance.")
-        body = (f"Activate the `{unit['skill']}` skill and execute it to apply the confirmed migration plan to the "
+        body = (skill_steps.cli_instruction(unit["skill"]) + " to apply the confirmed migration plan to the "
                 f"files in the workspace. {write_tools}{extra}\n\n## Approved Versions (your organisation's list — "
                 f"use exactly these for these artifacts)\n" + _approved(run, pattern))
     if code["retry"]:
@@ -714,7 +715,7 @@ def _validate_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
     suffix = _stage_label(code, stage)
     sid = f"validate-{pattern}{'-' + suffix if suffix else ''}-{code['iter'] + 1}"
     run.state["build_signalled"] = False
-    body = f"Activate the `{spec.validate_skill}` skill and execute it to validate the workspace and report the result."
+    body = skill_steps.cli_instruction(spec.validate_skill) + " to validate the workspace and report the result."
     if pattern == P.JAVA_8_TO_25 and suffix:
         st = next(s for s in INCREMENTAL_STAGES if s.idx == stage["idx"])
         body += (f" This is validating the '{st.title}' stage (Phase {st.phase}: {st.phase_title}) of an incremental "
@@ -752,7 +753,7 @@ def _complete_validate(run: Run, step: dict, output: str) -> str:
     fake = type("Ctx", (), {"state": ctx_state})()
     learned_fixes.make_lesson_verify_callback("build_result", "pending_lessons", _lesson_targets(spec),
                                               spec.id)(fake)
-    callbacks.make_skill_update_callback("build_result", SKILLS_DIR / spec.validate_skill / "SKILL.md",
+    callbacks.make_skill_update_callback("build_result", skill_steps.file(spec.validate_skill, SKILLS_DIR),
                                          "Validation Pass")(fake)
     run.state["pending_lessons"] = ctx_state.get("pending_lessons", "[]")
     code["iter"] += 1
@@ -777,7 +778,7 @@ def _fix_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
     pattern = code["pattern"]
     suffix = _stage_label(code, stage)
     sid = f"fix-{pattern}{'-' + suffix if suffix else ''}-{code['iter']}"
-    body = (f"Activate the `{spec.fix_skill}` skill and execute it on the validation report below. Read with "
+    body = (skill_steps.cli_instruction(spec.fix_skill) + " on the validation report below. Read with "
             "read_file / grep_search / glob / list_directory; write ONLY with `ws_replace_in_file` and "
             "`ws_write_file`.")
     if pattern == P.JAVA_8_TO_11:
@@ -854,7 +855,7 @@ def _complete_review(run: Run, step: dict, output: str) -> str:
 def _report_step(run: Run, code: dict, spec: P.Pattern) -> dict:
     pattern = code["pattern"]
     sid = f"report-{pattern}"
-    body = (f"Activate the `{spec.report_skill}` skill and execute it to produce the final migration report. Fold the "
+    body = (skill_steps.cli_instruction(spec.report_skill) + " to produce the final migration report. Fold the "
             "Independent Code Review's findings into a dedicated report section rather than ignoring them.")
     if len(code["stages"]) > 1:
         body += " Cover every stage of this phased incremental migration."
@@ -880,8 +881,9 @@ def _complete_report(run: Run, step: dict, output: str) -> str:
 def _curate_step(run: Run, code: dict, spec: P.Pattern) -> dict:
     pattern = code["pattern"]
     sid = f"curate-{pattern}"
-    allowed = "\n".join(f"- {s}" for s in spec.curator_skills)
-    run.state["curator_skills"] = list(spec.curator_skills)
+    folders = skill_steps.skills(*spec.curator_skills)          # the migration's skill folder, and generators
+    allowed = "\n".join(f"- {s}" for s in folders)
+    run.state["curator_skills"] = folders
     body = ("Activate the `skill-curator` skill and execute it. This is the LAST step of the pipeline, run after all "
             "code changes, the build/validate/fix loop, and the independent code review are already complete. "
             "Use only `curator_list_skill_files`, `curator_read_skill_file` and `curator_write_skill_file` for skill "

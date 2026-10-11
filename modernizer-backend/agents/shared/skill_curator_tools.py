@@ -42,7 +42,8 @@ def make_skill_curator_tools(allowed_skills: list[str]):
     """Build a (list_skill_files, read_skill_file, write_skill_file) tool
     triple restricted to exactly *allowed_skills* — the skills actually
     used by the pattern that just ran."""
-    allowed = set(allowed_skills)
+    from .skill_steps import skills as _folders
+    allowed = set(_folders(*allowed_skills))      # "oracle-19c-to-23ai:plan" -> the "oracle-19c-to-23ai" folder
     allowed_list = ", ".join(sorted(allowed))
 
     def list_skill_files(skill_name: str) -> str:

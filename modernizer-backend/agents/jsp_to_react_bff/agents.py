@@ -25,16 +25,13 @@ source — it's read-only reference material. New files land in two fresh
 subtrees of the same workspace (see agents/jsp_to_react_bff/tools.py's
 `run_command(..., subdir=...)`).
 
-Skills (Pattern 2 -- file-based). Several of these are intentionally
-generic/reusable beyond this exact pipeline (see each skill's own
-description for the reuse boundary):
+Skills (Pattern 2 -- file-based):
 
-  jsp-re                  -- generic: JSP repo fact extraction (no target-architecture decisions)
-  jsp-logic-classifier     -- generic: frontend-vs-backend logic placement decision
-  jsp-to-react-bff-plan    -- this-pipeline-specific: BFF architecture + manifests
+  jsp-to-react-bff         -- this migration, one step file per agent (references/steps/):
+                              re (JSP fact extraction), classify (frontend-vs-backend placement),
+                              plan (BFF architecture + manifests), validate/fix/report (dual-tree build loop)
   react-frontend-generate  -- generic: React code generation from a page/component map
   spring-boot-bff-generate -- generic (any Spring Boot BFF target): JAR-packaged BFF generation
-  jsp-to-react-bff-validate/-fix/-report -- this-pipeline-specific: dual-tree build loop
 """
 import pathlib
 
@@ -49,7 +46,7 @@ from ..shared.callbacks import make_skill_update_callback
 from ..shared.learned_fixes import (
     jsp_targets, make_lesson_capture_callback, make_lesson_verify_callback, skill_targets,
 )
-from ..shared import skill_manifest
+from ..shared import skill_manifest, skill_steps
 from ..shared.rosters import PLAN_SKILL_ROSTERS
 from ..shared.plan_contract import make_plan_contract_callback
 from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
@@ -70,8 +67,8 @@ jsp_re_agent = LlmAgent(
     name="jsp_re",
     model=_MODEL,
     description="Extracts verifiable facts from a JSP repository via list_files/read_file: runtime context, page/fragment inventory, embedded view logic, request handlers and cross-cutting components, state usage, navigation flow, referenced client behaviour, tests.",
-    instruction="Load and execute the `jsp-re` skill, using the list_files and read_file tools to explore the workspace.",
-    tools=[_skill("jsp-re"), FunctionTool(fs_tools.list_files), FunctionTool(fs_tools.read_file)],
+    instruction=skill_steps.instruction("jsp-to-react-bff:re") + ", using the list_files and read_file tools to explore the workspace.",
+    tools=[skill_steps.toolset("jsp-to-react-bff:re"), FunctionTool(fs_tools.list_files), FunctionTool(fs_tools.read_file)],
     output_key="jsp_facts",
     include_contents="none",
 )
@@ -81,13 +78,13 @@ jsp_classifier_agent = LlmAgent(
     model=_MODEL,
     description="Classifies every extracted logic unit as a frontend (React) or backend (BFF) concern, then produces Analysis/BRD/TechSpec/Test Inventory.",
     instruction=(
-        "Load and execute the `jsp-logic-classifier` skill to classify the extracted logic, then "
+        skill_steps.instruction("jsp-to-react-bff:classify") + " to classify the extracted logic, then "
         "produce the standard four-section output (Analysis / BRD / Technical Specification / "
         "Existing Test Inventory) — fold the frontend-vs-backend classification table into the "
         "Technical Specification section.\n\n"
         "## Extracted JSP Facts (from jsp_re_agent)\n{jsp_facts}"
     ),
-    tools=[_skill("jsp-logic-classifier")],
+    tools=[skill_steps.toolset("jsp-to-react-bff:classify")],
     output_key="analysis",
     include_contents="none",
 )
@@ -110,7 +107,7 @@ planner_agent = LlmAgent(
     model=_MODEL,
     description="Designs the target React + Spring Boot 4 BFF architecture and file manifests for both trees, from the confirmed BRD and Technical Specification.",
     instruction=(
-        "Load and execute the `jsp-to-react-bff-plan` skill to create the migration plan. If UX "
+        skill_steps.instruction("jsp-to-react-bff:plan") + " to create the migration plan. If UX "
         "design files are attached to this request, include the skill's UX Design Mapping section.\n\n"
         + skill_manifest.planner_block(_PLAN_SKILL_ROSTER)
         + "\n\n"
@@ -120,7 +117,7 @@ planner_agent = LlmAgent(
         "The Test Inventory is what question 4 is answered from — its Coverage Gaps section "
         "is the starting point for the plan's own, never a substitute for it."
     ),
-    tools=[_skill("jsp-to-react-bff-plan")],
+    tools=[skill_steps.toolset("jsp-to-react-bff:plan")],
     output_key="plan",
     after_agent_callback=make_plan_contract_callback(),
     include_contents="none",
@@ -183,9 +180,9 @@ validator_agent = LlmAgent(
     name="validator_agent",
     model=_MODEL,
     description="Runs real builds for both trees -- mvn/gradle compile in backend/, npm run build in frontend/ -- and reports combined pass/fail as JSON.",
-    instruction="Load and execute the `jsp-to-react-bff-validate` skill to build both trees and report the result.",
+    instruction=skill_steps.instruction("jsp-to-react-bff:validate") + " to build both trees and report the result.",
     tools=[
-        _skill("jsp-to-react-bff-validate"),
+        skill_steps.toolset("jsp-to-react-bff:validate"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.run_command),
         FunctionTool(fs_tools.signal_build_success),
@@ -197,7 +194,7 @@ validator_agent = LlmAgent(
         make_lesson_verify_callback("build_result", "pending_lessons", jsp_targets(_SKILLS_DIR), "jsp-to-react-bff"),
         make_skill_update_callback(
             validation_key="build_result",
-            skill_md_path=_SKILLS_DIR / "jsp-to-react-bff-validate" / "SKILL.md",
+            skill_md_path=skill_steps.file("jsp-to-react-bff:validate"),
             section_header="Validation Pass",
         ),
     ],
@@ -208,12 +205,12 @@ fixer_agent = LlmAgent(
     model=_MODEL,
     description="Reads the files implicated by validator_agent's report (in either tree) and fixes them in place.",
     instruction=(
-        "Load and execute the `jsp-to-react-bff-fix` skill.\n\n"
+        skill_steps.instruction("jsp-to-react-bff:fix") + ".\n\n"
         "## Approved Versions (your organisation's list — use exactly these for these artifacts)\n{approved_versions_jsp_to_react_bff?}\n\n"
         "## Build Report (errors to fix, tagged by tree)\n{build_result}"
     ),
     tools=[
-        _skill("jsp-to-react-bff-fix"),
+        skill_steps.toolset("jsp-to-react-bff:fix"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.read_file),
         FunctionTool(fs_tools.replace_in_file),
@@ -250,7 +247,7 @@ reporter_agent = LlmAgent(
     model=_MODEL,
     description="Summarises the architectural migration -- what moved to React vs the BFF, final build status for both trees, and any remaining issues.",
     instruction=(
-        "Load and execute the `jsp-to-react-bff-report` skill to produce the final migration report. "
+        skill_steps.instruction("jsp-to-react-bff:report") + " to produce the final migration report. "
         "Fold the Independent Code Review's findings into a dedicated report section rather than "
         "ignoring them.\n\n"
         "## Backend Generation Result\n{backend_generate_result}\n\n"
@@ -258,7 +255,7 @@ reporter_agent = LlmAgent(
         "## Final Build Result (both trees)\n{build_result}\n\n"
         "## Independent Code Review\n{code_review}"
     ),
-    tools=[_skill("jsp-to-react-bff-report")],
+    tools=[skill_steps.toolset("jsp-to-react-bff:report")],
     output_key="final_report",
     include_contents="none",
 )
@@ -266,9 +263,9 @@ reporter_agent = LlmAgent(
 skill_curator_agent = make_skill_curator_agent(
     _MODEL,
     allowed_skills=[
-        "jsp-re", "jsp-logic-classifier", "jsp-to-react-bff-plan",
+        "jsp-to-react-bff:re", "jsp-to-react-bff:classify", "jsp-to-react-bff:plan",
         "react-frontend-generate", "spring-boot-bff-generate",
-        "jsp-to-react-bff-validate", "jsp-to-react-bff-fix", "jsp-to-react-bff-report",
+        "jsp-to-react-bff:validate", "jsp-to-react-bff:fix", "jsp-to-react-bff:report",
     ],
     context_instruction=(
         "## Confirmed Migration Plan\n{plan}\n\n## Backend Generation Result\n{backend_generate_result}\n\n"

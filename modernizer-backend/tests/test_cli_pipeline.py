@@ -66,7 +66,7 @@ def test_solr_run_end_to_end(tmp_path):
     # The inventory runs without a model; the planner is the first agent.
     step = _next(repo)
     assert step["id"] == "plan-solr-4-to-9" and step["subagent"] == "modernizer-planner"
-    assert "`solr-4-to-9-plan`" in step["query"] and ".modernizer/docs/solr-4-to-9/technical_spec.md" in step["query"]
+    assert "`solr-4-to-9` skill" in step["query"] and "references/steps/plan.md" in step["query"] and ".modernizer/docs/solr-4-to-9/technical_spec.md" in step["query"]
     assert "Solr" in Run.load(repo).read_doc("technical_spec")
 
     # Nothing may be written before the plan is approved.
@@ -87,7 +87,7 @@ def test_solr_run_end_to_end(tmp_path):
     pipeline.confirm(Run.load(repo), "plan")
 
     modify = _next(repo)
-    assert modify["subagent"] == "modernizer-coder" and "`solr-4-to-9-modify`" in modify["query"]
+    assert modify["subagent"] == "modernizer-coder" and "references/steps/modify.md" in modify["query"]
     # The coder writes through the MCP tools; .modernizer is off limits.
     assert "save_output" in _tool(mcp_server.ws_write_file, path=".modernizer/run.json", content="{}",
                                   workspace=str(repo))
@@ -113,7 +113,7 @@ def test_solr_run_end_to_end(tmp_path):
     pipeline.complete_step(Run.load(repo), review["id"])
 
     report_step = _next(repo)
-    assert report_step["subagent"] == "modernizer-writer" and "solr-4-to-9-report" in report_step["query"]
+    assert report_step["subagent"] == "modernizer-writer" and "references/steps/report.md" in report_step["query"]
     _save(repo, report_step["id"], "# Report")
     pipeline.complete_step(Run.load(repo), report_step["id"])
 
@@ -139,7 +139,7 @@ def test_failed_validation_goes_to_the_fixer_then_back(tmp_path):
     _save(repo, validate["id"], '{"passed": true, "errors": []}')
     assert "FAILED" in pipeline.complete_step(Run.load(repo), validate["id"])
     fix = _next(repo)
-    assert fix["id"].startswith("fix-") and "solr-4-to-9-fix" in fix["query"]
+    assert fix["id"].startswith("fix-") and "references/steps/fix.md" in fix["query"]
     assert "build_result.json" in fix["query"]
     _save(repo, fix["id"], "fixed\n\n## Lessons\n")
     pipeline.complete_step(Run.load(repo), fix["id"])
@@ -192,7 +192,7 @@ def test_incremental_java25_runs_one_unit_per_task_per_stage(tmp_path):
     run.save()
     first = _next(repo)
     assert first["id"] == "modify-java-8-to-25-stage1-1.1"
-    assert "Guardrail for this stage" in first["query"] and "java-migration-readiness" in first["query"]
+    assert "Guardrail for this stage" in first["query"] and "references/steps/readiness.md" in first["query"]
     _save(repo, first["id"], "done")
     pipeline.complete_step(Run.load(repo), first["id"])
     assert _next(repo)["id"] == "modify-java-8-to-25-stage1-1.2"

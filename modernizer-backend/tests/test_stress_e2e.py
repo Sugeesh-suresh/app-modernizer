@@ -60,6 +60,17 @@ def _writer_reply(skill: str, system: str) -> str:
 
 
 _SKILL = re.compile(r"Load and execute the `([a-z0-9-]+)` skill")
+# A migration step: "Load the `<migration>` skill (`load_skill`) ... (`references/steps/<step>.md`)".
+_STEP = re.compile(r"Load the `([a-z0-9-]+)` skill \(`load_skill`\)[^\n]*?`references/steps/([a-z0-9-]+)\.md`")
+
+
+def _agent(system: str) -> tuple[str, str]:
+    """(skill name or "<migration>:<step>", step or "") of the agent a system prompt belongs to."""
+    m = _STEP.search(system)
+    if m:
+        return f"{m.group(1)}:{m.group(2)}", m.group(2)
+    m = _SKILL.search(system)
+    return (m.group(1) if m else "?"), ""
 _COMMENT = {".java": "// migrated", ".sql": "-- migrated", ".xml": "<!-- migrated -->",
             ".properties": "# migrated", ".pkb": "-- migrated"}
 
@@ -99,7 +110,7 @@ class Scripted(BaseLlm):
 
     async def generate_content_async(self, req, stream=False):
         system = str(req.config.system_instruction or "")
-        skill = (_SKILL.search(system) or [None, "?"])[1]
+        skill, step = _agent(system)
         tools = set((req.tools_dict or {}).keys())
         responses = [p.function_response for c in req.contents for p in c.parts or [] if p.function_response]
         self.calls.append((skill, len(system)))
@@ -107,7 +118,7 @@ class Scripted(BaseLlm):
         n = len(responses)
         last = json.dumps(responses[-1].response) if responses else ""
 
-        if skill.endswith("-plan"):
+        if step == "plan":
             yield self._reply(_six_sections(self.plan_files, self.stages))
         elif skill in ("dependency-mapper",):
             yield self._reply("Inventory.\n```json\n{\"confirmed\": [], \"added\": [], \"rejected\": []}\n```")
@@ -137,13 +148,13 @@ class Scripted(BaseLlm):
             yield self._reply("\n".join(re.findall(r"^- \[EV-[^\n]+", system, re.M)))
         elif skill in ("stack-discovery-re", "wildfly-re"):
             yield self._reply(DISCOVERY_EVIDENCE)
-        elif skill == "jsp-re":
+        elif skill == "jsp-to-react-bff:re":
             yield self._reply("JSP facts: index.jsp uses JSTL.")
-        elif skill.endswith("-re") or skill == "jsp-logic-classifier":
+        elif step in ("re", "classify"):
             yield self._reply(RE_DOC)
-        elif skill.endswith("-re-module"):
+        elif step == "re-module":
             yield self._reply("## Unit findings\nnone")
-        elif skill.endswith("-validate"):
+        elif step == "validate":
             order = [t for t in ("run_java11_build", "validate_solr_config", "validate_sql_syntax",
                                  "validate_pubsub_mapping", "check_java11_invariants") if t in tools]
             if n < len(order):
@@ -153,14 +164,14 @@ class Scripted(BaseLlm):
             else:
                 ok = "ERROR" not in last
                 yield self._reply(json.dumps({"passed": ok, "errors": [] if ok else [last[:200]], "summary": "s"}))
-        elif skill.endswith("-fix"):
+        elif step == "fix":
             yield self._reply("## Fix Result\n- Files fixed: 0")
         elif skill == "code-review":
             order = [t for t in ("audit_migration_changes", "compare_plan_to_actual_changes") if t in tools]
             yield self._reply(call=(order[n], {})) if n < len(order) else self._reply("## Code Review\nNo findings.")
         elif skill == "skill-curator":
             yield self._reply("## Skill Curator Summary\nNo changes made — nothing in this run surfaced a gap.")
-        elif skill.endswith("-report"):
+        elif step == "report":
             yield self._reply("# Migration Report\nDone.")
         elif {"write_file", "replace_in_file", "read_file", "list_files"} <= tools:
             yield self._modify(skill, n, responses, last)
@@ -305,9 +316,9 @@ def test_every_pipeline_runs_end_to_end_through_the_real_runners(scripted, tmp_p
     assert any(e["type"] == "workflow-complete" for e in events)
     assert any(e["type"] == "code-ready" for e in events)
     skills = {s for s, _ in scripted.calls}
-    assert any(s.endswith("-plan") for s in skills)
-    assert any(s.endswith("-validate") for s in skills), skills
-    assert any(s.endswith("-report") for s in skills), skills
+    assert any(s.endswith(":plan") for s in skills)
+    assert any(s.endswith(":validate") for s in skills), skills
+    assert any(s.endswith(":report") for s in skills), skills
     assert "code-review" in skills and "skill-curator" in skills
     diff = next(e for e in events if e["type"] == "diff-ready")
     if pattern == "jsp-to-react-bff":
@@ -323,8 +334,8 @@ def test_a_companion_bundle_runs_both_pipelines(scripted, tmp_path):
     events, state = _run(tmp_path, "java-8-to-25", companions=["oracle-19c-to-23ai"], extra=extra)
     assert json.loads(state["companion_patterns_json"]) == ["oracle-19c-to-23ai"]
     assert not [e for e in events if e["type"] == "error"]
-    plans = [s for s, _ in scripted.calls if s.endswith("-plan")]
-    assert plans == ["oracle-19c-to-23ai-plan", "java-8-to-25-plan"]
+    plans = [s for s, _ in scripted.calls if s.endswith(":plan")]
+    assert plans == ["oracle-19c-to-23ai:plan", "java-8-to-25:plan"]
     assert any(e["type"] == "workflow-complete" for e in events)
 
 
@@ -335,7 +346,7 @@ def test_stack_discovery_runs_end_to_end(scripted, tmp_path):
     skills = {s for s, _ in scripted.calls}
     assert {"dependency-mapper", "stack-discovery-re", "wildfly-re"} <= skills
     # The migrations' own RE skills are written towards a target; discovery never uses them.
-    assert not [s for s in skills if s.endswith("-re") and s not in ("stack-discovery-re", "wildfly-re")]
+    assert not [s for s in skills if s.endswith(":re")]
     document = "\n".join(state[k] for k in ("brd", "technical_spec", "test_inventory"))
     evidence = Path(state["evidence_path"]).read_text()
     # The Product Owner's code wording stays out of the BRD; the writer's own output keeps it.
@@ -513,7 +524,7 @@ def test_java11_end_to_end_with_real_maven(monkeypatch, tmp_path):
     assert "<maven.compiler.release>11</maven.compiler.release>" in parent
     assert "org.mockito.runners" in test          # Mockito stays 1.x (passed on 11), so no runner rewrite
     assert jsp == "<html/>"
-    validations = [s for s, _ in model.calls if s.endswith("-validate")]
+    validations = [s for s, _ in model.calls if s.endswith(":validate")]
     assert len(validations) == 3                  # run_java11_build, check_java11_invariants, signal: one round
 
 
@@ -523,9 +534,9 @@ class FailThenPass(Scripted):
 
     async def generate_content_async(self, req, stream=False):
         system = str(req.config.system_instruction or "")
-        skill = (_SKILL.search(system) or [None, "?"])[1]
+        skill, step = _agent(system)
         responses = [p.function_response for c in req.contents for p in c.parts or [] if p.function_response]
-        if skill.endswith("-validate") and not responses:
+        if step == "validate" and not responses:
             self.rounds += 1
             if self.rounds == 1:
                 self.calls.append((skill, 0))

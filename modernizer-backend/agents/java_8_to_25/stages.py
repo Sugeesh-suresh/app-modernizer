@@ -21,7 +21,7 @@ class IncrementalStage:
     java_release: str
     # Framework stage: only runs when the user requested a Spring Boot upgrade.
     springboot: bool
-    # Skills this stage's modifier loads alongside java-8-to-25-modify.
+    # Stage guides (steps of the java-8-to-25 skill) this stage's modifier follows alongside its modify step.
     extra_skills: tuple[str, ...]
     # What this stage must NOT do yet -- later stages own those changes.
     guardrail: str
@@ -78,7 +78,7 @@ _SPRING_FLOOR_25 = (
 INCREMENTAL_STAGES: list[IncrementalStage] = [
     IncrementalStage(
         1, 1, "Readiness", "Modernize Build Systems (Maven/Gradle)", "8", False,
-        ("java-migration-readiness",),
+        ("java-8-to-25:readiness",),
         "Keep the compiler release at 8 and do not touch application source code. Test-scoped "
         "dependencies and the test plugins are the one exception: the test stack (Mockito 1.x → "
         "`mockito-core` 4.11.0, JUnit 4.13.2, surefire/failsafe 3.2.5+) is modernised here as the "
@@ -86,7 +86,7 @@ INCREMENTAL_STAGES: list[IncrementalStage] = [
     ),
     IncrementalStage(
         2, 1, "Readiness", "Automate Code Analysis (OpenRewrite)", "8", False,
-        ("java-migration-readiness",),
+        ("java-8-to-25:readiness",),
         "Only add OpenRewrite configuration — never wire it to run during the normal build, and do not "
         "apply recipe changes to source files, change the compiler release, or touch application code.",
     ),
@@ -96,14 +96,14 @@ INCREMENTAL_STAGES: list[IncrementalStage] = [
     ),
     IncrementalStage(
         4, 2, "Java 17 Baseline", "Upgrade to Spring Boot 2.7 (WAR intact)", "17", True,
-        ("springboot-incremental-upgrade",),
+        ("java-8-to-25:springboot-incremental",),
         "Keep the compiler release at 17, keep `<packaging>war</packaging>`, and keep every `javax.*` "
         "import (Spring Boot 2.7 is still Java EE 8 / javax based) — the jakarta transition is the "
         "next Spring Boot stage.",
     ),
     IncrementalStage(
         5, 3, "Java 25 Baseline", "Upgrade to Spring Boot 3.x (Jakarta namespace transition)", "17", True,
-        ("springboot-incremental-upgrade",),
+        ("java-8-to-25:springboot-incremental",),
         "Keep the compiler release at 17 (the Java 25 upgrade is the next stage), keep "
         "`<packaging>war</packaging>`, and stay on Spring Boot 3.x — Spring Boot 4 is a later stage. "
         "Never rename Java SE `javax.*` packages (`javax.sql`, `javax.naming`, `javax.crypto`, ...).",
@@ -114,13 +114,13 @@ INCREMENTAL_STAGES: list[IncrementalStage] = [
     ),
     IncrementalStage(
         7, 4, "Spring Boot 4 & Cloud Native", "Upgrade to Spring Boot 4.x", "25", True,
-        ("springboot-war-to-boot4", "springboot-incremental-upgrade"),
+        ("java-8-to-25:springboot-boot4", "java-8-to-25:springboot-incremental"),
         "Keep `<packaging>war</packaging>` and the JSP views (with their JSP libraries) in this stage — "
         "the executable JAR conversion and JSP → Thymeleaf are the next stage.",
     ),
     IncrementalStage(
         8, 4, "Spring Boot 4 & Cloud Native", "Convert WAR → Executable JAR (Embedded Container)", "25", True,
-        ("springboot-war-to-boot4", "springboot-incremental-upgrade"),
+        ("java-8-to-25:springboot-boot4", "java-8-to-25:springboot-incremental"),
         "Do not change the Java or Spring Boot versions — this stage only changes the packaging and "
         "deployment model and converts JSP views to Thymeleaf. The result must be an executable JAR, "
         "never a WAR.",

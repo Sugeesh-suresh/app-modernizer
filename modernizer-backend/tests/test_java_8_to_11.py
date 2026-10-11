@@ -26,6 +26,7 @@ from agents.shared import scope_fence, skill_manifest
 from agents.shared.change_audit import audit_changes, to_markdown
 from agents.shared.plan_contract import check as check_plan
 from agents.shared.plan_coverage import compare_plan_to_changes
+from agents.shared import skill_steps
 
 P = "java-8-to-11"
 SKILLS = pathlib.Path(__file__).parent.parent / "agents" / "skills"
@@ -421,19 +422,19 @@ class TestWiring:
         refs = skill_manifest.resolve(j11_agents._PLAN_SKILL_ROSTER)
         assert not [r.name for r in refs if r.missing]
         for name in j11_agents.CURATED_SKILLS:
-            assert (SKILLS / name / "SKILL.md").is_file()
+            assert skill_steps.file(name).is_file()
 
     def test_re_skill_emits_the_parser_markers(self):
-        text = (SKILLS / "java-8-to-11-re" / "SKILL.md").read_text()
+        text = (SKILLS / "java-8-to-11" / "references" / "steps" / "re.md").read_text()
         for marker in ("ANALYSIS", "BRD", "TECHNICAL_SPECIFICATION", "TEST_INVENTORY", "END"):
             assert f"<!-- SECTION: {marker} -->" in text
 
     def test_plan_skill_names_the_stage_title_main_splits_on(self):
-        text = (SKILLS / "java-8-to-11-plan" / "SKILL.md").read_text()
+        text = (SKILLS / "java-8-to-11" / "references" / "steps" / "plan.md").read_text()
         assert f"## Stage 1: {j11_agents.STAGE_TITLE}" in text
 
     def test_plan_skill_template_satisfies_the_six_question_contract(self):
-        text = (SKILLS / "java-8-to-11-plan" / "SKILL.md").read_text()
+        text = (SKILLS / "java-8-to-11" / "references" / "steps" / "plan.md").read_text()
         template = text.split("## Output shape", 1)[1].split("```", 2)[1]
         assert check_plan(template).complete, check_plan(template)
 

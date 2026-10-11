@@ -239,8 +239,10 @@ def make_lesson_verify_callback(validation_key: str, pending_key: str,
 
 
 def skill_targets(skills_dir: pathlib.Path, *names: str) -> Callable[[dict], list[pathlib.Path]]:
-    """Every lesson goes to the same skills (the modifier's first)."""
-    paths = [skills_dir / n / "SKILL.md" for n in names]
+    """Every lesson goes to the same step files (the modifier's first): `"<migration>:<step>"`
+    names a step file, a plain name a whole skill's SKILL.md (shared/skill_steps.py)."""
+    from . import skill_steps
+    paths = [skill_steps.file(n, skills_dir) for n in names]
     return lambda lesson: paths
 
 
@@ -254,5 +256,6 @@ def jsp_targets(skills_dir: pathlib.Path) -> Callable[[dict], list[pathlib.Path]
     def route(lesson: dict) -> list[pathlib.Path]:
         text = lesson["error"]
         generator = "react-frontend-generate" if _FRONTEND.search(text) else "spring-boot-bff-generate"
-        return [skills_dir / generator / "SKILL.md", skills_dir / "jsp-to-react-bff-fix" / "SKILL.md"]
+        return [skills_dir / generator / "SKILL.md",
+                skills_dir / "jsp-to-react-bff" / "references" / "steps" / "fix.md"]
     return route

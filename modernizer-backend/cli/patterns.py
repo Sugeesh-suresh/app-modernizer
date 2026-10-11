@@ -25,6 +25,7 @@ class Pattern:
     id: str
     label: str
     tools_module: str                       # agents.<pkg>.tools
+    # Steps are "<migration skill>:<step>" (agents/shared/skill_steps.py); a generator skill is named by itself.
     re_skills: tuple[str, ...]              # analysis by agent (in order)
     plan_skill: str
     modify_skills: tuple[str, ...]          # one modifier pass per skill (JSP: backend, then frontend)
@@ -47,59 +48,59 @@ class Pattern:
 PATTERNS: dict[str, Pattern] = {
     JAVA_8_TO_25: Pattern(
         JAVA_8_TO_25, "Java 8 → Java 25", "agents.java_8_to_25.tools",
-        ("java-8-to-25-re",), "java-8-to-25-plan", ("java-8-to-25-modify",),
-        "java-8-to-25-validate", "java-8-to-25-fix", "java-8-to-25-report",
-        curator_skills=("java-8-to-25-re", "java-8-to-25-plan", "java-8-to-25-modify", "java-8-to-25-validate",
-                        "java-8-to-25-fix", "java-8-to-25-report", "java-migration-readiness",
-                        "springboot-incremental-upgrade", "springboot-war-to-boot4"),
+        ("java-8-to-25:re",), "java-8-to-25:plan", ("java-8-to-25:modify",),
+        "java-8-to-25:validate", "java-8-to-25:fix", "java-8-to-25:report",
+        curator_skills=("java-8-to-25:re", "java-8-to-25:plan", "java-8-to-25:modify", "java-8-to-25:validate",
+                        "java-8-to-25:fix", "java-8-to-25:report", "java-8-to-25:readiness",
+                        "java-8-to-25:springboot-incremental", "java-8-to-25:springboot-boot4"),
         validator_note="Build with ws_run_command (`mvn -q -DskipTests compile`, or the Gradle equivalent).",
     ),
     JAVA_8_TO_11: Pattern(
         JAVA_8_TO_11, "Java 8 → Java 11 (JSP & WildFly preserved)", "agents.java_8_to_11.tools",
-        ("java-8-to-11-re",), "java-8-to-11-plan", ("java-8-to-11-modify",),
-        "java-8-to-11-validate", "java-8-to-11-fix", "java-8-to-11-report",
+        ("java-8-to-11:re",), "java-8-to-11:plan", ("java-8-to-11:modify",),
+        "java-8-to-11:validate", "java-8-to-11:fix", "java-8-to-11:report",
         validator="run_java11_build", fenced=True,
-        curator_skills=("java-8-to-11-re", "java-8-to-11-re-module", "java-8-to-11-plan", "java-8-to-11-modify",
-                        "java-8-to-11-validate", "java-8-to-11-fix", "java-8-to-11-report"),
+        curator_skills=("java-8-to-11:re", "java-8-to-11:re-module", "java-8-to-11:plan", "java-8-to-11:modify",
+                        "java-8-to-11:validate", "java-8-to-11:fix", "java-8-to-11:report"),
         validator_note=("Call ws_validate (runs `mvn clean package` on the migration JDK and classifies every "
                         "problem) and ws_check_invariants (the scope fence) — both must pass."),
     ),
     "solr-4-to-9": Pattern(
         "solr-4-to-9", "Solr 4.x → Solr 9.x", "agents.solr_4_to_9.tools",
-        ("solr-4-to-9-re",), "solr-4-to-9-plan", ("solr-4-to-9-modify",),
-        "solr-4-to-9-validate", "solr-4-to-9-fix", "solr-4-to-9-report",
+        ("solr-4-to-9:re",), "solr-4-to-9:plan", ("solr-4-to-9:modify",),
+        "solr-4-to-9:validate", "solr-4-to-9:fix", "solr-4-to-9:report",
         validator="validate_solr_config",
-        curator_skills=("solr-4-to-9-re", "solr-4-to-9-plan", "solr-4-to-9-modify", "solr-4-to-9-validate",
-                        "solr-4-to-9-fix", "solr-4-to-9-report"),
+        curator_skills=("solr-4-to-9:re", "solr-4-to-9:plan", "solr-4-to-9:modify", "solr-4-to-9:validate",
+                        "solr-4-to-9:fix", "solr-4-to-9:report"),
         validator_note="Call ws_validate (static Solr config check: well-formedness and removed elements/classes).",
     ),
     "oracle-19c-to-23ai": Pattern(
         "oracle-19c-to-23ai", "Oracle 19c → 23ai", "agents.oracle_19c_to_23ai.tools",
-        ("oracle-19c-to-23ai-re",), "oracle-19c-to-23ai-plan", ("oracle-19c-to-23ai-modify",),
-        "oracle-19c-to-23ai-validate", "oracle-19c-to-23ai-fix", "oracle-19c-to-23ai-report",
+        ("oracle-19c-to-23ai:re",), "oracle-19c-to-23ai:plan", ("oracle-19c-to-23ai:modify",),
+        "oracle-19c-to-23ai:validate", "oracle-19c-to-23ai:fix", "oracle-19c-to-23ai:report",
         validator="validate_sql_syntax",
-        curator_skills=("oracle-19c-to-23ai-re", "oracle-19c-to-23ai-plan", "oracle-19c-to-23ai-modify",
-                        "oracle-19c-to-23ai-validate", "oracle-19c-to-23ai-fix", "oracle-19c-to-23ai-report"),
+        curator_skills=("oracle-19c-to-23ai:re", "oracle-19c-to-23ai:plan", "oracle-19c-to-23ai:modify",
+                        "oracle-19c-to-23ai:validate", "oracle-19c-to-23ai:fix", "oracle-19c-to-23ai:report"),
         validator_note="Call ws_validate (static SQL / PL/SQL check).",
     ),
     "tibco-ems-to-pubsub": Pattern(
         "tibco-ems-to-pubsub", "TIBCO EMS → Cloud Pub/Sub", "agents.tibco_ems_to_pubsub.tools",
-        ("tibco-ems-to-pubsub-re",), "tibco-ems-to-pubsub-plan", ("tibco-ems-to-pubsub-modify",),
-        "tibco-ems-to-pubsub-validate", "tibco-ems-to-pubsub-fix", "tibco-ems-to-pubsub-report",
+        ("tibco-ems-to-pubsub:re",), "tibco-ems-to-pubsub:plan", ("tibco-ems-to-pubsub:modify",),
+        "tibco-ems-to-pubsub:validate", "tibco-ems-to-pubsub:fix", "tibco-ems-to-pubsub:report",
         validator="validate_pubsub_mapping",
-        curator_skills=("tibco-ems-to-pubsub-re", "tibco-ems-to-pubsub-plan", "tibco-ems-to-pubsub-modify",
-                        "tibco-ems-to-pubsub-validate", "tibco-ems-to-pubsub-fix", "tibco-ems-to-pubsub-report"),
+        curator_skills=("tibco-ems-to-pubsub:re", "tibco-ems-to-pubsub:plan", "tibco-ems-to-pubsub:modify",
+                        "tibco-ems-to-pubsub:validate", "tibco-ems-to-pubsub:fix", "tibco-ems-to-pubsub:report"),
         validator_note=("Build with ws_run_command when there is a pom.xml/build.gradle; otherwise call "
                         "ws_validate (static Pub/Sub mapping check)."),
     ),
     JSP_TO_REACT: Pattern(
         JSP_TO_REACT, "JSP → React + BFF", "agents.jsp_to_react_bff.tools",
-        ("jsp-re", "jsp-logic-classifier"), "jsp-to-react-bff-plan",
+        ("jsp-to-react-bff:re", "jsp-to-react-bff:classify"), "jsp-to-react-bff:plan",
         ("spring-boot-bff-generate", "react-frontend-generate"),
-        "jsp-to-react-bff-validate", "jsp-to-react-bff-fix", "jsp-to-react-bff-report",
-        curator_skills=("jsp-re", "jsp-logic-classifier", "jsp-to-react-bff-plan", "spring-boot-bff-generate",
-                        "react-frontend-generate", "jsp-to-react-bff-validate", "jsp-to-react-bff-fix",
-                        "jsp-to-react-bff-report"),
+        "jsp-to-react-bff:validate", "jsp-to-react-bff:fix", "jsp-to-react-bff:report",
+        curator_skills=("jsp-to-react-bff:re", "jsp-to-react-bff:classify", "jsp-to-react-bff:plan", "spring-boot-bff-generate",
+                        "react-frontend-generate", "jsp-to-react-bff:validate", "jsp-to-react-bff:fix",
+                        "jsp-to-react-bff:report"),
         validator_note=("Build both trees with ws_run_command: `mvn -q -DskipTests compile` with subdir "
                         "`backend`, then `npm install` and `npm run build` with subdir `frontend`."),
     ),

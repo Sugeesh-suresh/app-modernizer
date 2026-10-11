@@ -3,6 +3,7 @@ Unit tests for agents/shared/plan_coverage.py — the conformance check that
 compares what actually changed against the File Change Manifest in the plan
 a human confirmed, so the review can tell under-delivery from scope creep.
 """
+from agents.shared import skill_steps
 import pathlib
 
 import pytest
@@ -340,18 +341,16 @@ class TestWiring:
 class TestSkillContract:
     @staticmethod
     def _skill(name: str) -> str:
-        return (
-            pathlib.Path(__file__).parent.parent / "agents" / "skills" / name / "SKILL.md"
-        ).read_text(encoding="utf-8")
+        return skill_steps.file(name).read_text(encoding="utf-8")
 
     @pytest.mark.parametrize(
         "skill",
         [
-            "java-8-to-25-plan",
-            "solr-4-to-9-plan",
-            "oracle-19c-to-23ai-plan",
-            "tibco-ems-to-pubsub-plan",
-            "jsp-to-react-bff-plan",
+            "java-8-to-25:plan",
+            "solr-4-to-9:plan",
+            "oracle-19c-to-23ai:plan",
+            "tibco-ems-to-pubsub:plan",
+            "jsp-to-react-bff:plan",
         ],
     )
     def test_every_plan_states_the_change_per_file_in_a_parseable_table(self, skill):
@@ -362,14 +361,14 @@ class TestSkillContract:
         assert "never invented" in body
 
     def test_every_in_scope_file_needs_a_row_including_the_untouched_ones(self):
-        for skill in ("java-8-to-25-plan", "solr-4-to-9-plan", "oracle-19c-to-23ai-plan",
-                      "tibco-ems-to-pubsub-plan"):
+        for skill in ("java-8-to-25:plan", "solr-4-to-9:plan", "oracle-19c-to-23ai:plan",
+                      "tibco-ems-to-pubsub:plan"):
             body = self._skill(skill)
             assert "no change needed" in body
             assert "Every in-scope file gets a row" in body
 
     def test_the_phased_plan_keeps_its_task_blocks_and_adds_the_table(self):
-        body = self._skill("java-8-to-25-plan")
+        body = self._skill("java-8-to-25:plan")
         # Task blocks stay load-bearing for the per-task modifier runs.
         assert "### Task <stage number>.<task number>" in body
         assert "- Files: `path/one.java`, `path/two.java`" in body
@@ -378,7 +377,7 @@ class TestSkillContract:
         """A reader asking "what changes?" must see the files there, not have to
         assemble them from eight stage sections — and two tables of the same
         thing drift, leaving the reviewer unable to tell which was approved."""
-        body = self._skill("java-8-to-25-plan")
+        body = self._skill("java-8-to-25:plan")
 
         assert "one consolidated table covering the whole migration" in body
         assert "no per-stage manifest table" in body
@@ -396,6 +395,6 @@ class TestSkillContract:
         assert "where the manifest promised work that was not delivered, is always **NEEDS FOLLOW-UP**" in body
 
     def test_the_report_carries_plan_conformance_to_the_human(self):
-        body = self._skill("java-8-to-25-report")
+        body = self._skill("java-8-to-25:report")
         assert "Plan Conformance" in body
         assert "Carry every confirmed under-delivery into Follow-up Recommendations" in body

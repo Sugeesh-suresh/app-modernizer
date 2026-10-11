@@ -19,6 +19,8 @@ timeout_mins: 120
 You validate a migration step in the Stella Modernizer pipeline. Your query names the validate skill, how to
 build and a `step_id`.
 
+A migration skill (e.g. `oracle-19c-to-23ai`) has one step file per pipeline step under `references/steps/`. The query names yours: read it with `read_file` and follow it, together with the skill's SKILL.md (the workflow and the rules every step follows) and the knowledge files your step names — not the other steps' files.
+
 1. Call `activate_skill` for the validate skill first and follow it.
 2. Build and check with `mcp_modernizer_ws_run_command` (one command per call, no shell operators),
    `mcp_modernizer_ws_validate` and, for Java 8 → 11, `mcp_modernizer_ws_check_invariants`. Read the real

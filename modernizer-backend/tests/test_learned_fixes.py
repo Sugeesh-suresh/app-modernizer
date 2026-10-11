@@ -160,7 +160,7 @@ def test_jsp_lessons_go_to_the_generator_of_the_tree_that_failed(tmp_path):
                   "resolution": "also regenerate the frontend client"})
     assert front[0].parent.name == "react-frontend-generate"
     assert back[0].parent.name == "spring-boot-bff-generate"
-    assert front[1].parent.name == back[1].parent.name == "jsp-to-react-bff-fix"
+    assert front[1] == back[1] == tmp_path / "jsp-to-react-bff" / "references" / "steps" / "fix.md"
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ def test_the_solr_build_loop_publishes_a_verified_fix_to_the_modify_skill(monkey
             pass
     asyncio.run(run())
 
-    targets = sorted(p.parent.name for p, _, _ in published)
-    assert targets == ["solr-4-to-9-fix", "solr-4-to-9-modify"]
+    targets = sorted(p.relative_to(p.parents[3]).as_posix() for p, _, _ in published)
+    assert targets == ["solr-4-to-9/references/steps/fix.md", "solr-4-to-9/references/steps/modify.md"]
     lesson = published[0][1][0]
     assert "PointField" in lesson["resolution"] and published[0][2] == "solr-4-to-9"

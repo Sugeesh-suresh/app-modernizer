@@ -4,6 +4,7 @@ code reviewer opens with, which answers the two questions reading the changed
 files alone cannot: is every change really migration work, and is every
 untouched file really irrelevant?
 """
+from agents.shared import skill_steps
 import pathlib
 
 import pytest
@@ -271,9 +272,7 @@ class TestSkillContract:
 
     @staticmethod
     def _skill(name: str) -> str:
-        return (
-            pathlib.Path(__file__).parent.parent / "agents" / "skills" / name / "SKILL.md"
-        ).read_text(encoding="utf-8")
+        return skill_steps.file(name).read_text(encoding="utf-8")
 
     def test_the_audit_is_the_reviews_first_step(self):
         body = self._skill("code-review")
@@ -299,6 +298,6 @@ class TestSkillContract:
         assert "off toggle" in body or "declined" in body
 
     def test_the_report_carries_the_coverage_answer_to_the_human(self):
-        body = self._skill("java-8-to-25-report")
+        body = self._skill("java-8-to-25:report")
         assert "## Migration Coverage" in body
         assert "prefer it over the Modify Results" in body

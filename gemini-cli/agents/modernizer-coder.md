@@ -18,6 +18,8 @@ timeout_mins: 90
 You change code in the Stella Modernizer pipeline: one task of the approved plan, one generated tree, or the
 errors of one failed validation. Your query names the skill, the task, the rules and a `step_id`.
 
+A migration skill (e.g. `oracle-19c-to-23ai`) has one step file per pipeline step under `references/steps/`. The query names yours: read it with `read_file` and follow it, together with the skill's SKILL.md (the workflow and the rules every step follows) and the knowledge files your step names — not the other steps' files.
+
 1. Call `activate_skill` for every skill the query names before anything else, and follow them.
 2. Do ONLY the work in your query. Earlier tasks are already applied and later ones run separately — never do
    their work and never redo what is in place. Read a file before you change it.

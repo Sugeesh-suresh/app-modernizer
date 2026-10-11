@@ -28,13 +28,11 @@ main.py's _run_java11_code_step.
 import pathlib
 
 from google.adk.agents import LlmAgent, LoopAgent, SequentialAgent
-from google.adk.skills import load_skill_from_dir
 from google.adk.tools import FunctionTool
-from google.adk.tools.skill_toolset import SkillToolset
 
 from .. import config
 from ..shared.model_config import make_model
-from ..shared import skill_manifest
+from ..shared import skill_manifest, skill_steps
 from ..shared.rosters import PLAN_SKILL_ROSTERS
 from ..shared.callbacks import make_skill_update_callback
 from ..shared.learned_fixes import (
@@ -48,16 +46,6 @@ _MODEL = make_model()
 _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
 
 from .fence_rules import FENCE_RULES, STAGE_TITLE  # noqa: E402,F401 (re-exported for main.py)
-
-
-def _skill(name: str) -> SkillToolset:
-    return SkillToolset(skills=[load_skill_from_dir(_SKILLS_DIR / name)])
-
-
-def _skills(*names: str) -> SkillToolset:
-    """One SkillToolset for several skills — two separate toolsets would declare
-    list_skills/load_skill twice, which Gemini rejects."""
-    return SkillToolset(skills=[load_skill_from_dir(_SKILLS_DIR / name) for name in names])
 
 
 def _writing_tools() -> list:
@@ -75,13 +63,13 @@ re_agent = LlmAgent(
     model=_MODEL,
     description="Reverse-engineers a Java 8 JSP/WildFly monolith for a Java 11 upgrade and produces Analysis, BRD, Technical Specification, and an Existing Test Inventory.",
     instruction=(
-        "Load and execute the `java-8-to-11-re` skill, using the list_files, search_files and read_file "
+        skill_steps.instruction("java-8-to-11:re") + ", using the list_files, search_files and read_file "
         "tools to explore the workspace. Use search_files to find where an API, import or setting is "
         "used across the repository, then read_file to understand the hits. These tools are the only "
         "way to inspect the code: nothing in this environment executes code."
     ),
     tools=[
-        _skill("java-8-to-11-re"),
+        skill_steps.toolset("java-8-to-11:re"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.search_files),
         FunctionTool(fs_tools.read_file),
@@ -105,12 +93,12 @@ module_re_agent = LlmAgent(
     model=_MODEL,
     description="Reverse-engineers ONE unit of a large Java 8 JSP/WildFly repository and writes structured Module Findings.",
     instruction=(
-        "Load and execute the `java-8-to-11-re-module` skill for the unit below, using list_files, "
+        skill_steps.instruction("java-8-to-11:re-module") + " for the unit below, using list_files, "
         "search_files and read_file. These tools are the only way to inspect the code: nothing in this "
         "environment executes code.\n\n## Your Unit\n{re_scope}"
     ),
     tools=[
-        _skills("java-8-to-11-re-module", "java-8-to-11-re"),
+        skill_steps.toolset("java-8-to-11:re-module", "java-8-to-11:re"),
         FunctionTool(fs_tools.list_files),
         FunctionTool(fs_tools.search_files),
         FunctionTool(fs_tools.read_file),
@@ -124,7 +112,7 @@ findings_merge_agent = LlmAgent(
     model=_MODEL,
     description="Merges several units' Module Findings into one, when all of them are too large for a single request.",
     instruction=(
-        "Load the `java-8-to-11-re-module` skill for the Module Findings format. Merge the findings below "
+        skill_steps.load_only("java-8-to-11:re-module") + " for the Module Findings format. Merge the findings below "
         "into ONE findings document in that same format, headed `## Units <first id>-<last id>`. Keep "
         "every row of every Java 11 Blockers table — the migration plan's file manifest is built from "
         "them — merging only exact duplicates. Keep every Frozen-Zone row. Keep every build fact that "
@@ -132,7 +120,7 @@ findings_merge_agent = LlmAgent(
         "rows that matter for Java 11. Keep every open question. Do not add anything the findings do "
         "not say.\n\n## Findings to merge\n{re_findings}"
     ),
-    tools=[_skill("java-8-to-11-re-module")],
+    tools=[skill_steps.toolset("java-8-to-11:re-module")],
     output_key="merged_findings",
     include_contents="none",
 )
@@ -142,7 +130,7 @@ re_synthesis_agent = LlmAgent(
     model=_MODEL,
     description="Writes the four-section Analysis/BRD/Technical Specification/Test Inventory from every unit's Module Findings.",
     instruction=(
-        "Load the `java-8-to-11-re` skill and write its four-section document, following its OUTPUT "
+        skill_steps.load_only("java-8-to-11:re") + " and write its four-section document, following its OUTPUT "
         "CONTRACT (the five SECTION markers, as separators, in order) and its section contents exactly. "
         "Its DISCOVERY WORKFLOW has already been carried out, unit by unit, by separate runs: the Module "
         "Findings below are its results and your only evidence. You have no workspace tools — do not "
@@ -152,7 +140,7 @@ re_synthesis_agent = LlmAgent(
         "depends on them. Where a unit's findings say they were cut or a unit failed, say so in "
         "Assessment Scope and Confidence.\n\n## Module Findings\n{re_findings}"
     ),
-    tools=[_skill("java-8-to-11-re")],
+    tools=[skill_steps.toolset("java-8-to-11:re")],
     output_key="analysis",
     include_contents="none",
 )
@@ -165,7 +153,7 @@ planner_agent = LlmAgent(
     model=_MODEL,
     description="Creates a Java 8 -> Java 11 migration plan that changes only Java sources and build files, leaving JSP and the WildFly deployment untouched.",
     instruction=(
-        "Load and execute the `java-8-to-11-plan` skill to create the migration plan.\n\n"
+        skill_steps.instruction("java-8-to-11:plan") + " to create the migration plan.\n\n"
         + skill_manifest.planner_block(_PLAN_SKILL_ROSTER)
         + "\n\n## Scope Fence (the plan must stay inside it)\n" + FENCE_RULES + "\n\n"
         "## Approved Versions (your organisation's list — overrides the matrix)\n{approved_versions?}\n\n"
@@ -175,7 +163,7 @@ planner_agent = LlmAgent(
         "The Test Inventory is what question 4 is answered from — its Coverage Gaps section is the "
         "starting point for the plan's own, never a substitute for it."
     ),
-    tools=[_skill("java-8-to-11-plan")],
+    tools=[skill_steps.toolset("java-8-to-11:plan")],
     output_key="plan",
     after_agent_callback=make_plan_contract_callback(),
     include_contents="none",
@@ -187,7 +175,7 @@ modifier_agent = LlmAgent(
     model=_MODEL,
     description="Applies ONE task of the confirmed Java 8 -> 11 plan to the workspace's Java sources and build files.",
     instruction=(
-        "Load and execute the `java-8-to-11-modify` skill and apply ONLY the work described under "
+        skill_steps.instruction("java-8-to-11:modify") + " and apply ONLY the work described under "
         "'## Your Task' below. Earlier tasks are already applied to the workspace and later ones run as "
         "separate passes — do not do their work and do not redo work already in place. Use the "
         "list_files, read_file, replace_in_file and write_file tools, preferring replace_in_file for "
@@ -198,7 +186,7 @@ modifier_agent = LlmAgent(
         + "\n\n## Approved Versions (use exactly these for these artifacts)\n{approved_versions?}"
         + "\n\n## Your Task\n{current_task}"
     ),
-    tools=[_skill("java-8-to-11-modify"), *_writing_tools()],
+    tools=[skill_steps.toolset("java-8-to-11:modify"), *_writing_tools()],
     output_key="modify_result",
     include_contents="none",
 )
@@ -208,11 +196,11 @@ validator_agent = LlmAgent(
     model=_MODEL,
     description="Runs the real build and test suite on the migration JDK and the deterministic scope-fence check, and reports pass/fail as JSON.",
     instruction=(
-        "Load and execute the `java-8-to-11-validate` skill to build the workspace, check the Java 11 "
+        skill_steps.instruction("java-8-to-11:validate") + " to build the workspace, check the Java 11 "
         "scope-fence invariants, and report the result."
     ),
     tools=[
-        _skill("java-8-to-11-validate"),
+        skill_steps.toolset("java-8-to-11:validate"),
         FunctionTool(fs_tools.run_java11_build),
         FunctionTool(fs_tools.run_command),
         FunctionTool(fs_tools.check_java11_invariants),
@@ -222,10 +210,10 @@ validator_agent = LlmAgent(
     include_contents="none",
     after_agent_callback=[
         # A verified resolution from the previous fix pass goes to the modifier's skill.
-        make_lesson_verify_callback("build_result", "pending_lessons", skill_targets(_SKILLS_DIR, "java-8-to-11-modify", "java-8-to-11-fix"), "java-8-to-11"),
+        make_lesson_verify_callback("build_result", "pending_lessons", skill_targets(_SKILLS_DIR, "java-8-to-11:modify", "java-8-to-11:fix"), "java-8-to-11"),
         make_skill_update_callback(
             validation_key="build_result",
-            skill_md_path=_SKILLS_DIR / "java-8-to-11-validate" / "SKILL.md",
+            skill_md_path=skill_steps.file("java-8-to-11:validate"),
             section_header="Validation Pass",
         ),
     ],
@@ -236,12 +224,12 @@ fixer_agent = LlmAgent(
     model=_MODEL,
     description="Fixes the build and scope-fence failures the validator reported, editing only Java sources and build files.",
     instruction=(
-        "Load and execute the `java-8-to-11-fix` skill.\n\n"
+        skill_steps.instruction("java-8-to-11:fix") + ".\n\n"
         + FENCE_RULES
         + "\n\n## Approved Versions (use exactly these for these artifacts)\n{approved_versions?}"
         + "\n\n## Build Report (errors to fix)\n{build_result}"
     ),
-    tools=[_skill("java-8-to-11-fix"), *_writing_tools()],
+    tools=[skill_steps.toolset("java-8-to-11:fix"), *_writing_tools()],
     output_key="fix_result",
     include_contents="none",
     # The fixer states each resolution (its `## Lessons` block); it is published only
@@ -257,8 +245,8 @@ build_loop = LoopAgent(
 )
 
 CURATED_SKILLS: list[str] = [
-    "java-8-to-11-re", "java-8-to-11-re-module", "java-8-to-11-plan", "java-8-to-11-modify",
-    "java-8-to-11-validate", "java-8-to-11-fix", "java-8-to-11-report",
+    "java-8-to-11:re", "java-8-to-11:re-module", "java-8-to-11:plan", "java-8-to-11:modify",
+    "java-8-to-11:validate", "java-8-to-11:fix", "java-8-to-11:report",
 ]
 
 code_reviewer_agent = make_code_reviewer_agent(
@@ -279,7 +267,7 @@ reporter_agent = LlmAgent(
     model=_MODEL,
     description="Summarises the Java 8 -> 11 run: what changed, what was deliberately left untouched, build status, and the WildFly runtime actions ops must take.",
     instruction=(
-        "Load and execute the `java-8-to-11-report` skill to produce the final migration report. Fold "
+        skill_steps.instruction("java-8-to-11:report") + " to produce the final migration report. Fold "
         "the Independent Code Review's findings into a dedicated report section rather than ignoring "
         "them.\n\n"
         "## Build Environment (preflight, before the migration)\n{preflight_summary?}\n\n"
@@ -287,7 +275,7 @@ reporter_agent = LlmAgent(
         "## Final Build Result\n{build_result}\n\n"
         "## Independent Code Review\n{code_review}"
     ),
-    tools=[_skill("java-8-to-11-report")],
+    tools=[skill_steps.toolset("java-8-to-11:report")],
     output_key="final_report",
     include_contents="none",
 )

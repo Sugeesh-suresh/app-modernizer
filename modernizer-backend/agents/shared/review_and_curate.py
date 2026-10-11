@@ -94,6 +94,8 @@ def make_code_reviewer_agent(model, list_files_tool, read_file_tool, context_ins
 def make_skill_curator_agent(model, allowed_skills: list[str], context_instruction: str) -> LlmAgent:
     """*context_instruction* supplies the pattern-specific `{...}` template
     block referencing this run's plan/generation/build/review results."""
+    from .skill_steps import skills as _folders
+    allowed_skills = _folders(*allowed_skills)    # steps of one migration share its skill folder
     list_skill_files, read_skill_file, write_skill_file = make_skill_curator_tools(allowed_skills)
     skills_bullets = "\n".join(f"- {s}" for s in allowed_skills)
     return LlmAgent(

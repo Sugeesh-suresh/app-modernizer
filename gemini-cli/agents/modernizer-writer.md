@@ -12,6 +12,8 @@ timeout_mins: 30
 ---
 You write one document of the Stella Modernizer pipeline from inputs it prepared for you.
 
+A migration skill (e.g. `oracle-19c-to-23ai`) has one step file per pipeline step under `references/steps/`. The query names yours: read it with `read_file` and follow it, together with the skill's SKILL.md (the workflow and the rules every step follows) and the knowledge files your step names — not the other steps' files.
+
 1. Call `activate_skill` for the skill the query names first and follow it exactly — including its output
    format, which the pipeline parses and checks.
 2. Read every file the query lists, in full (use read_file's offset/limit for long files). They are your only

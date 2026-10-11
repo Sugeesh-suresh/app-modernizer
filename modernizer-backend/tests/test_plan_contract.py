@@ -4,6 +4,7 @@ Unit tests for the six questions every migration plan must answer
 application computes rather than letting the planner invent
 (agents/shared/skill_manifest.py).
 """
+from agents.shared import skill_steps
 import importlib
 import pathlib
 import re
@@ -27,18 +28,18 @@ PATTERNS = [
 ]
 
 PLAN_SKILLS = [
-    "java-8-to-25-plan",
-    "oracle-19c-to-23ai-plan",
-    "solr-4-to-9-plan",
-    "tibco-ems-to-pubsub-plan",
-    "jsp-to-react-bff-plan",
+    "java-8-to-25:plan",
+    "oracle-19c-to-23ai:plan",
+    "solr-4-to-9:plan",
+    "tibco-ems-to-pubsub:plan",
+    "jsp-to-react-bff:plan",
 ]
 
 SKILLS_DIR = pathlib.Path(__file__).parent.parent / "agents" / "skills"
 
 
 def _skill(name: str) -> str:
-    return (SKILLS_DIR / name / "SKILL.md").read_text(encoding="utf-8")
+    return skill_steps.file(name).read_text(encoding="utf-8")
 
 
 def _complete_plan() -> str:
@@ -153,16 +154,16 @@ class TestSkillComposition:
 
     def test_the_table_is_the_roster_and_the_order_only(self):
         table = skill_manifest.to_markdown([
-            ("java-8-to-25-re", "Reverse-engineered this repository"),
-            ("java-8-to-25-plan", "Produces this plan"),
+            ("java-8-to-25:re", "Reverse-engineered this repository"),
+            ("java-8-to-25:plan", "Produces this plan"),
         ])
 
-        assert "| # | Skill | What it governs in this run |" in table
-        assert "| 1 | `java-8-to-25-re` |" in table
-        assert "| 2 | `java-8-to-25-plan` |" in table
+        assert "| # | Skill › step | What it governs in this run |" in table
+        assert "| 1 | `java-8-to-25` › re |" in table
+        assert "| 2 | `java-8-to-25` › plan |" in table
 
     def test_no_version_or_maturity_is_claimed_anywhere(self):
-        table = skill_manifest.to_markdown([("java-8-to-25-plan", "Produces this plan")])
+        table = skill_manifest.to_markdown([("java-8-to-25:plan", "Produces this plan")])
 
         for unearned in ("version", "maturity", "stable", "experimental", "0.1.0"):
             assert unearned not in table.lower()
@@ -181,12 +182,12 @@ class TestSkillComposition:
         assert "report this before approving" in table
 
     def test_a_real_skill_is_not_flagged_as_missing(self):
-        table = skill_manifest.to_markdown([("java-8-to-25-plan", "Produces this plan")])
+        table = skill_manifest.to_markdown([("java-8-to-25:plan", "Produces this plan")])
 
         assert "not found" not in table
 
     def test_the_planner_is_told_to_copy_the_table_not_write_one(self):
-        block = skill_manifest.planner_block([("java-8-to-25-plan", "Produces this plan")])
+        block = skill_manifest.planner_block([("java-8-to-25:plan", "Produces this plan")])
 
         assert "never reorder them" in block
         # It may drop rows for a strategy this run did not ask for.
@@ -198,7 +199,7 @@ class TestWiring:
     def test_every_planner_gets_the_composition_table(self, module_path):
         planner = importlib.import_module(f"agents.{module_path}.agents").planner_agent
 
-        assert "| # | Skill | What it governs in this run |" in planner.instruction
+        assert "| # | Skill › step | What it governs in this run |" in planner.instruction
 
     @pytest.mark.parametrize("module_path", PATTERNS)
     def test_every_planner_receives_the_test_inventory(self, module_path):
@@ -242,7 +243,7 @@ class TestPlanSkillsDeclareTheSixQuestions:
         body = _skill(skill)
         assert "verified" in body and "inferred" in body
 
-    @pytest.mark.parametrize("skill", ["oracle-19c-to-23ai-plan", "tibco-ems-to-pubsub-plan"])
+    @pytest.mark.parametrize("skill", ["oracle-19c-to-23ai:plan", "tibco-ems-to-pubsub:plan"])
     def test_patterns_without_clean_rollback_say_so_outright(self, skill):
         """Oracle DDL and published messages cannot be reversed, and the
         approver needs that before approving, not after."""
@@ -254,7 +255,7 @@ class TestPlanSkillsDeclareTheSixQuestions:
     def test_the_phased_java_plan_keeps_its_parseable_stage_headings(self):
         """The six questions are siblings of the stages, never parents — the
         modifier finds a stage by its `## Stage <n>: <title>` heading."""
-        body = _skill("java-8-to-25-plan")
+        body = _skill("java-8-to-25:plan")
 
         assert "## Stage 1: Modernize Build Systems (Maven/Gradle)" in body
         assert "stay at `##` level" in body
