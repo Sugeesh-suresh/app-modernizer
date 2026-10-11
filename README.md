@@ -339,10 +339,16 @@ Stages interleave so every stage lands on a supported JDK/framework combination,
 Every pattern, every agent role and every skill also runs from a [Gemini CLI](https://github.com/google-gemini/gemini-cli) session, without the ADK pipeline or the web app:
 
 ```bash
-node gemini-cli/install.mjs                 # Python env without ADK (requirements-cli.txt) + skills link
-gemini extensions link "$(pwd)/gemini-cli"  # once
-cd ~/src/legacy-app && gemini               # then: /modernize:start java-8-to-11
+# users: install the released extension from git (release branch `stable`)
+gemini extensions install https://github.com/sugeesh-suresh/app-modernizer.git --ref=stable --auto-update
+
+# development: link a checkout instead (edits and skill curation are live)
+node gemini-cli/install.mjs --link
+
+cd ~/src/legacy-app && gemini               # then: /reverse-engineer, or /modernize:start java-8-to-25
 ```
+
+Releases are built and pushed with `node gemini-cli/build-release.mjs --push` (see [gemini-cli/README.md](gemini-cli/README.md#publishing-a-release)).
 
 | Piece | In Gemini CLI |
 |---|---|

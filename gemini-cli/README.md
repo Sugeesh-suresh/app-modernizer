@@ -14,22 +14,63 @@ server. The skills, the deterministic checks and the human review gates are the 
 
 ## Install
 
-Requirements: Node 20+ (for Gemini CLI), Python 3.10+, and the build tools of the pattern you run (JDK +
-Maven/Gradle for the Java patterns, Node/npm for JSP → React).
+Requirements: Node 20+ (for Gemini CLI), Python 3.10+ on PATH, and the build tools of the pattern you run (JDK +
+Maven/Gradle for the Java patterns, Node/npm for JSP → React). Gemini CLI loads every enabled extension side by
+side, so this one installs next to any you already have.
+
+### Option A — install from git (users)
 
 ```bash
-node gemini-cli/install.mjs                 # Python env (modernizer-backend/.venv-cli) + skills link
-gemini extensions link "$(pwd)/gemini-cli"  # once; use link, not install
+gemini extensions install https://github.com/sugeesh-suresh/app-modernizer.git --ref=stable --auto-update
+# or, with SSH keys:  gemini extensions install git@github.com:sugeesh-suresh/app-modernizer.git --ref=stable --auto-update
+node ~/.gemini/extensions/stella-modernizer/launch.mjs --setup     # optional: build the Python env now
 ```
 
-`install.mjs --link` runs the second command for you. The extension has to be **linked**, not installed: it
-runs the Python code and the skills in this repository, and a skill curator run updates the skills in place.
+`stable` is the release branch: the extension at the root, the skills as files, and only the part of
+`modernizer-backend` the CLI runs (see [Publishing a release](#publishing-a-release)). On the first start the
+extension creates its Python environment inside its folder (about 20 s, once per release; `--setup` does it ahead
+of time so the first Gemini session does not wait). `--auto-update` (or `gemini extensions update
+stella-modernizer`) replaces the copy with the branch's latest release.
 
-Settings come from `modernizer-backend/.env`, as for the web backend (see `.env.example`): `MIGRATION_JAVA_HOME`,
-`BASELINE_JAVA_HOME`, `MAVEN_SETTINGS`, `APPROVED_VERSIONS_FILE`, `BUILD_LOOP_MAX_ITERATIONS`, `JAVA11_ANALYSIS`,
-`MIGRATION_ANALYSIS`, `RULES_EXTRACTION`, and the rest. Model settings (`GEMINI_MODEL`, `MODEL_PLAN`, ...) do not
+Settings go in `~/.modernizer/.env` (the same keys as `modernizer-backend/.env.example`): an update replaces the
+installed folder, so a `.env` inside it would be lost. The skill curator's edits to an installed copy are lost on
+update as well — skills are improved in a checkout (option B) and released.
+
+### Option B — link a checkout (development)
+
+```bash
+git clone -b CLI-modernizer https://github.com/sugeesh-suresh/app-modernizer.git && cd app-modernizer
+node gemini-cli/install.mjs --link          # Python env (modernizer-backend/.venv-cli) + skills link + gemini extensions link
+```
+
+Linked, the extension runs this checkout's code and skills directly: edits are live, and a skill curator run
+updates the skills in place. Settings come from `modernizer-backend/.env` (then `~/.modernizer/.env` for keys it
+does not set). Use `link` for a checkout — `gemini extensions install <path>` would copy it and leave the skills
+link behind.
+
+Settings (either option): `MIGRATION_JAVA_HOME`, `MIGRATION_JAVA_HOMES`, `BASELINE_JAVA_HOME`, `MAVEN_SETTINGS`,
+`PREFLIGHT`, `APPROVED_VERSIONS_FILE`, `BUILD_LOOP_MAX_ITERATIONS`, `JAVA11_ANALYSIS`, `MIGRATION_ANALYSIS`,
+`RULES_EXTRACTION`, and the rest of `.env.example`. Model settings (`GEMINI_MODEL`, `MODEL_PLAN`, ...) do not
 apply: the models are Gemini CLI's. To give a role its own model, add `model: gemini-2.5-flash` (for example) to
 that subagent's front matter in `agents/`.
+
+Check it: `gemini extensions list` shows `stella-modernizer` with the `modernizer` MCP server and its skills; in a
+session, `/mcp` lists the server and the `/modernize:*` and `/reverse-engineer` commands autocomplete. Remove it
+with `gemini extensions uninstall stella-modernizer`.
+
+### Publishing a release
+
+From a clean checkout of the branch to release:
+
+```bash
+node gemini-cli/build-release.mjs --push                  # builds and pushes the `stable` branch to origin
+node gemini-cli/build-release.mjs --push --branch beta    # another channel; install it with --ref=beta
+node gemini-cli/build-release.mjs                         # build only, into dist/gemini-extension
+```
+
+Each release is one commit on the release branch, named after the source commit it was built from
+(`RELEASE.json` records it); a rebuild of the same source changes nothing. Installed copies pick it up with
+`gemini extensions update stella-modernizer` (or automatically, when installed with `--auto-update`).
 
 ## Use
 
