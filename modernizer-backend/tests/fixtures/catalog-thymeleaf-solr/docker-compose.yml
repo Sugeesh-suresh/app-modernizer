@@ -1,0 +1,8 @@
+services:
+  solr:
+    image: solr:4.10.4
+    ports: ["8983:8983"]
+    volumes: ["./solr/products:/opt/solr/example/solr/products"]
+  oracle:
+    image: gvenzl/oracle-xe:21-slim
+    ports: ["1521:1521"]

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<schema name="products" version="1.5">
+  <fields>
+    <field name="_version_" type="long" indexed="true" stored="true"/>
+    <field name="id" type="string" indexed="true" stored="true" required="true"/>
+    <field name="name" type="text_general" indexed="true" stored="true"/>
+    <field name="description" type="text_general" indexed="true" stored="false"/>
+    <field name="category" type="string" indexed="true" stored="true"/>
+    <field name="price" type="tfloat" indexed="true" stored="true"/>
+    <field name="in_stock" type="boolean" indexed="true" stored="true"/>
+    <field name="name_suggest" type="text_suggest" indexed="true" stored="false"/>
+  </fields>
+  <copyField source="name" dest="name_suggest"/>
+  <uniqueKey>id</uniqueKey>
+  <types>
+    <fieldType name="string" class="solr.StrField" sortMissingLast="true"/>
+    <fieldType name="long" class="solr.TrieLongField"/>
+    <fieldType name="tfloat" class="solr.TrieFloatField"/>
+    <fieldType name="boolean" class="solr.BoolField"/>
+    <fieldType name="text_general" class="solr.TextField">
+      <analyzer><tokenizer class="solr.StandardTokenizerFactory"/><filter class="solr.LowerCaseFilterFactory"/></analyzer>
+    </fieldType>
+    <fieldType name="text_suggest" class="solr.TextField">
+      <analyzer><tokenizer class="solr.KeywordTokenizerFactory"/><filter class="solr.EdgeNGramFilterFactory" minGramSize="2" maxGramSize="20"/></analyzer>
+    </fieldType>
+  </types>
+</schema>

@@ -217,6 +217,9 @@ def match(url: Url, verb: str, endpoints: list[dict]) -> tuple[list[dict], str]:
     """The endpoints that serve a call, best first, and why none did."""
     if url.external:
         return [], f"absolute URL to another host ({url.external})"
+    if url.path == "/":                                   # the site root is a fixed path too
+        roots = [e for e in endpoints if e["path"] in ("/", "") and (e["verb"] in (verb, "ANY") or verb == "ANY")]
+        return (roots, "") if roots else ([], "no handler in the code serves this path")
     if not url.path or url.path == "/{}" or set(_segments(url.path)) <= {"{}"}:
         return [], "URL built at run time — no fixed path to match"
 
@@ -1595,6 +1598,10 @@ def contract(workspace_dir: str, endpoint: dict, java: _Java) -> dict:
     out["statuses"] = _statuses(body_text, ann)
     for exc in dict.fromkeys(re.findall(r"throw\s+new\s+(\w+)\s*\(", body_text)):
         out["errors"].append((exc, java.exception_statuses(exc) or "no handler found in the code"))
+    for exc in dict.fromkeys(_ORELSE.findall(body_text)):
+        exc = exc[0] or exc[1]
+        if not any(e == exc for e, _ in out["errors"]):
+            out["errors"].append((exc, java.exception_statuses(exc) or "no handler found in the code"))
     throws = method.child_by_field_name("throws") or next((c for c in method.children if c.type == "throws"), None)
     if throws is not None:
         for exc in re.findall(r"\b([A-Z]\w*(?:Exception|Error))\b", _text(throws, src)):
@@ -1602,7 +1609,70 @@ def contract(workspace_dir: str, endpoint: dict, java: _Java) -> dict:
                 status = java.exception_statuses(exc)
                 if status:
                     out["errors"].append((exc, status))
+    # One call deeper: the mapped exceptions a service method the handler calls throws.
+    for exc, status, where in _callee_errors(java, endpoint["handler"].rsplit(".", 1)[0], body_text):
+        if not any(e == exc for e, _ in out["errors"]):
+            out["errors"].append((exc, f"{status} (thrown in {where})"))
     return out
+
+
+_ORELSE = re.compile(r"orElseThrow\(\s*(?:\(\)\s*->\s*new\s+(\w+)|(\w+)::new)")
+
+
+def _method_text(text: str, name: str) -> str:
+    """The body of the first method called `name` in a class's source."""
+    m = re.search(rf"(?:public|protected|private|static|final|synchronized|\s)[\w<>\[\],.? ]*\b{re.escape(name)}\s*"
+                  r"\([^)]*\)[^{;]*\{", text)
+    if not m:
+        return ""
+    depth, i = 1, m.end()
+    while i < len(text) and depth:
+        depth += {"{": 1, "}": -1}.get(text[i], 0)
+        i += 1
+    return text[m.end():i]
+
+
+def _callee_errors(java: "_Java", cls: str, body: str) -> list[tuple[str, str, str]]:
+    """(exception, status, Class.method) for exceptions with an HTTP status in the code that the
+    methods the handler calls on its fields throw (`service.decide(..)` → ClaimService.decide)."""
+    info = java.classes.get(cls)
+    if not info:
+        return []
+    try:
+        cls_text = (java.root / info["path"]).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    types = {name: typ for typ, name in re.findall(r"(?:private|protected|public)?\s*(?:final\s+)?([A-Z]\w*)"
+                                                  r"(?:<[^>]*>)?\s+(\w+)\s*;", cls_text)}
+    out = []
+    for field, called in dict.fromkeys(re.findall(r"\b(\w+)\s*\.\s*(\w+)\s*\(", body)):
+        typ = types.get(field)
+        if not typ or typ not in java.classes:
+            continue
+        targets = [typ] + [n for n, c in java.classes.items() if c.get("kind") == "class_declaration"
+                           and typ in _implements(java, n)] if java.classes[typ].get("kind") == "interface_declaration" \
+            else [typ]
+        for target in targets:
+            try:
+                text = (java.root / java.classes[target]["path"]).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            callee = _method_text(text, called)
+            found = re.findall(r"throw\s+new\s+(\w+)\s*\(", callee) + [a or b for a, b in _ORELSE.findall(callee)]
+            for exc in dict.fromkeys(found):
+                status = java.exception_statuses(exc)
+                if status:
+                    out.append((exc, status, f"{target}.{called}"))
+    return out
+
+
+def _implements(java: "_Java", name: str) -> str:
+    try:
+        text = (java.root / java.classes[name]["path"]).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    m = re.search(rf"class\s+{re.escape(name)}\b[^{{]*implements\s+([^{{]+)\{{", text)
+    return m.group(1) if m else ""
 
 
 def _safe_contract(workspace_dir: str, endpoint: dict, java: _Java) -> dict:

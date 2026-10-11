@@ -341,9 +341,28 @@ _FORM_TAG = {"form:form": "form", "form:input": "input", "form:password": 'input
              "h:commandbutton": 'input type="submit"', "h:outputtext": "span", "h:commandlink": "a"}
 
 
-def preview_html(text: str) -> str:
-    """A JSP / JSF page as a browser would show its source: scriptlets and directives removed,
-    form tags turned into their HTML elements, other server tags dropped (their content kept)."""
+def _inline_includes(text: str, base: Path | None, root: Path | None, depth: int = 0) -> str:
+    """Static JSP includes (`<%@ include file %>`, `<jsp:include page>`) replaced by the included
+    file's content, resolved against the page's folder (or the web root for `/…`)."""
+    if base is None or depth > 3:
+        return text
+
+    def include(m):
+        target = next(g for g in m.groups() if g)
+        folder = (root if target.startswith("/") and root else base)
+        path = (folder / target.lstrip("/")).resolve()
+        if root and root.resolve() not in path.parents or not path.is_file() or path.is_symlink():
+            return ""
+        return _inline_includes(path.read_text(encoding="utf-8", errors="replace"), path.parent, root, depth + 1)
+    return re.sub(r"<%@\s*include\s+file\s*=\s*\"([^\"]+)\"\s*%>|<jsp:include\s+page\s*=\s*\"([^\"]+)\"[^>]*/?>",
+                  include, text)
+
+
+def preview_html(text: str, page: Path | None = None, root: Path | None = None) -> str:
+    """A JSP / JSF page as a browser would show its source: static includes inlined, scriptlets
+    and directives removed, form tags turned into their HTML elements, other server tags dropped
+    (their content kept)."""
+    text = _inline_includes(text, page.parent if page else None, root)
     text = re.sub(r"<%--.*?--%>|<%.*?%>", "", text, flags=re.S)
 
     def tag(m):
@@ -593,7 +612,10 @@ async def capture(workspace_dir: str, inventory: dict, out_dir: str,
             if page.static:
                 html_file = work / "static" / f"{sid}.html"
                 text = (workspace / page.template).read_text(encoding="utf-8", errors="replace")
-                html_file.write_text(preview_html(text) if not page.template.endswith((".html", ".htm")) else text,
+                web_root = next((p for p in (workspace / page.template).parents if p.name in ("webapp", "WebContent")),
+                                workspace)
+                html_file.write_text(preview_html(text, workspace / page.template, web_root)
+                                     if not page.template.endswith((".html", ".htm")) else text,
                                      encoding="utf-8")
                 shots.append((sid, html_file, _static_dirs_for(workspace, page.template), out / f"{sid}.png"))
                 manifest["screens"].append({

@@ -484,3 +484,17 @@ def test_static_previews_are_captured_in_page_order(tmp_path):
               "src/main/webapp/WEB-INF/views/legacy/page.jsp": "PG-02 Legacy"}
     md = ui_screens.to_markdown(manifest, page_titles=titles)
     assert md.index("PG-01 Help") < md.index("PG-02 Legacy")
+
+
+def test_jsp_preview_inlines_static_includes(tmp_path):
+    web = tmp_path / "src/main/webapp"
+    (web / "WEB-INF/jsp/common").mkdir(parents=True)
+    (web / "WEB-INF/jsp/common/header.jsp").write_text('<nav><a href="/x">Home</a></nav>')
+    page = web / "WEB-INF/jsp/list.jsp"
+    page.write_text('<html><body><%@ include file="common/header.jsp" %><h1>List</h1>'
+                    '<jsp:include page="/WEB-INF/jsp/common/header.jsp"/><% int x = 1; %></body></html>')
+    html = ui_screens.preview_html(page.read_text(), page, web)
+    assert html.count("<nav><a href=\"/x\">Home</a></nav>") == 2 and "<%" not in html
+    (web / "secret.txt").write_text("nope")
+    outside = ui_screens.preview_html('<%@ include file="../../../../etc/passwd" %>', page, web)
+    assert outside == ""                                                   # never outside the web root

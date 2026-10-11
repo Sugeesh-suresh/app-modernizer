@@ -14,7 +14,7 @@ Two kinds of finding, every one with the file:line that shows it:
   carries a confidence and the reason, and the reviewer decides.
 - **Tech debt**: marked debt (TODO / FIXME / HACK), code marked `@Deprecated`
   but still present, exceptions caught and dropped, broad catches, console
-  output, SQL built by string concatenation, credentials written in
+  output, SQL and Solr queries built by string concatenation, credentials written in
   configuration or code, hard-coded hosts, very large classes, field injection,
   JDK-internal and legacy APIs, `Thread.sleep` in application code, schema
   auto-update and debug settings left on, and security settings switched off.
@@ -197,7 +197,8 @@ def scan(workspace_dir: str, ui_result: dict | None = None, database: dict | Non
                  if (re.search(r"(?:^|/)templates/", rel) and rel.endswith((".html", ".ftl", ".vm", ".hbs")))
                  or rel.endswith((".jsp", ".jspf"))]
     for rel, text in templates:
-        tail = re.split(r"(?:^|/)(?:templates|WEB-INF/views|WEB-INF/jsp|WEB-INF|webapp)/", rel)[-1]
+        # The `/` before each folder is not consumed, so `webapp/WEB-INF/jsp/` splits at every level.
+        tail = re.split(r"(?:^|(?<=/))(?:templates|WEB-INF/views|WEB-INF/jsp|WEB-INF|webapp)/", rel)[-1]
         view = re.sub(r"\.\w+$", "", tail)
         base = Path(rel).name
         refs = [o for o, t in corpus.items() if o != rel and (view in t or base in t)]
@@ -281,6 +282,11 @@ def scan(workspace_dir: str, ui_result: dict | None = None, database: dict | Non
                                  r"\s*\+\s*(?!\")[\w.()]+", text, re.I):
                 add(debt, "SQL built by string concatenation (injection risk)", m.group(0)[:120], "",
                     f"{rel}:{_line(text, m.start())}", "Medium")
+            # Solr / Lucene query syntax built from input: `field:` + value lets the caller change the query.
+            for m in re.finditer(r"(?:new\s+SolrQuery|addFilterQuery|setQuery|setFilterQueries|addFacetQuery)\(\s*"
+                                 r"\"[^\"]*\"\s*\+\s*(?!\")[\w.()]+", text):
+                add(debt, "Search query built by string concatenation (query injection risk)", m.group(0)[:120], "",
+                    f"{rel}:{_line(text, m.start())}", "Medium")
             for m in re.finditer(r"(?i)\b(?:password|passwd|pwd|secret|apikey|api_key|token)\w*\s*=\s*\"([^\"]{3,})\"",
                                  text):
                 if not m.group(1).startswith(("${", "#{")):
@@ -351,6 +357,8 @@ def scan(workspace_dir: str, ui_result: dict | None = None, database: dict | Non
 
 
 _WHY = {
+    "Search query built by string concatenation (query injection risk)":
+        "Input joined into Solr/Lucene query syntax can change the query (other fields, wildcards, ranges).",
     "Class referenced by nothing": "Unreachable code still compiled, shipped and maintained.",
     "Private method never called": "Cannot be called from outside its class; nothing inside calls it.",
     "Repository method never called": "A query kept alive with no caller.",

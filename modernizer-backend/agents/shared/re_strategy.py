@@ -282,6 +282,15 @@ def db_batches(database: dict, workspace_dir: str, max_objects: int = 15) -> lis
         if name.upper() not in defined:
             items.append({"kind": f"{e['kind']} class", "name": name, "definition": f"class {e['class']}",
                           "where": e["where"]})
+    search = database.get("search") or {}
+    for core in search.get("cores", []):
+        sc = core.get("schema") or {}
+        items.append({"kind": "SOLR CORE", "name": core["core"],
+                      "definition": (f"unique key {sc.get('unique_key')}; " if sc.get("unique_key") else "")
+                      + "fields " + ", ".join(f"{f['name']} ({f['type']})" for f in sc.get("fields", [])[:25])
+                      + (("; request handlers " + ", ".join(h["name"] for h in core["handlers"]))
+                         if core.get("handlers") else ""),
+                      "where": sc.get("file") or core.get("config") or core["dir"]})
     if not items:
         return []
     names = {i["name"].split(".")[-1]: i for i in items}

@@ -35,6 +35,7 @@ from pathlib import Path
 
 from .config_matrix import display as _display
 from .dependency_graph import EXCLUDED_DIRS
+from . import search_engine
 
 HEADING = "## System Inventory (computed)"
 MAX_FILE_BYTES = 2_000_000
@@ -42,7 +43,8 @@ MAX_FILE_BYTES = 2_000_000
 _SUFFIXES = {".java", ".kt", ".groovy", ".scala", ".xml", ".properties", ".yml", ".yaml", ".sql", ".pls", ".pks",
              ".pkb", ".plsql", ".trg", ".ddl", ".js", ".jsx", ".ts", ".tsx", ".sh", ".bat", ".cmd", ".conf", ".cfg",
              ".gradle", ".kts", ".json", ".py", ".ini", ".env"}
-_NAMED = {"Dockerfile", "Procfile", "standalone.conf", "catalina.properties", "setenv.sh", "Jenkinsfile"}
+_NAMED = {"Dockerfile", "Procfile", "standalone.conf", "catalina.properties", "setenv.sh", "Jenkinsfile",
+          "managed-schema"}
 _TEST = re.compile(r"(?:^|/)(?:src/test|test|tests|__tests__|spec)/", re.I)
 _VENDOR = re.compile(r"(?:^|/)(?:vendor|vendors|lib|libs|third[-_]?party|node_modules)/")
 _CODE = {".java", ".kt", ".groovy", ".scala"}
@@ -769,7 +771,14 @@ def scan(workspace_dir: str) -> dict:
     if not root.is_dir():
         return {}
     files = _files(root)
-    return {"database": scan_database(files), "integrations": scan_integrations(files),
+    database = scan_database(files)
+    # The search engine (Solr) is a data store too: the data-layer pass traces its cores.
+    search = search_engine.scan(files, _settings(files))
+    if search:
+        from .interfaces import scan as scan_interfaces
+        search["backed"] = search_engine.backed_endpoints(search, scan_interfaces(workspace_dir)["endpoints"], files)
+        database["search"] = search
+    return {"database": database, "integrations": scan_integrations(files),
             "security": scan_security(files, root), "observability": scan_observability(files)}
 
 
@@ -821,6 +830,8 @@ def to_markdown(inv: dict) -> str:
     lines += _table(["Applies to", "Attributes", "Where"],
                     [[_code(t["target"]), t["args"] or "defaults", _code(t["where"])] for t in db["transactions"]])
 
+    if db.get("search"):
+        lines += [search_engine.to_markdown(db["search"], db["search"].get("backed")), ""]
     lines += ["### Integrations (computed)", "",
               "_Host hint: `internal (private host)` for localhost, private IP ranges and internal domain suffixes; "
               "`third-party (public service)` for well-known public service domains; blank when the host alone does "

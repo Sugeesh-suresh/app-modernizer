@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<config>
+  <luceneMatchVersion>4.10.4</luceneMatchVersion>
+  <requestHandler name="/select" class="solr.SearchHandler">
+    <lst name="defaults"><str name="defType">edismax</str><str name="qf">name^3 description</str><int name="rows">20</int></lst>
+  </requestHandler>
+  <requestHandler name="/suggest" class="solr.SearchHandler">
+    <lst name="defaults"><str name="df">name_suggest</str><int name="rows">8</int></lst>
+  </requestHandler>
+  <requestHandler name="/update" class="solr.UpdateRequestHandler"/>
+</config>

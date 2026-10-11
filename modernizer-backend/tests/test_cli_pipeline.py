@@ -440,3 +440,99 @@ def test_backend_only_soap_and_oracle_repository(tmp_path):
     assert "REST endpoint no UI control calls" not in debt
     setup = (out / "SETUP.md").read_text()
     assert "DB_PASSWORD" in setup and "oracle" in setup and "Welcome1" not in setup
+
+
+def _discover(repo: Path, strategy: str, pack: str) -> dict:
+    """Run stack discovery on `repo` with every default document, the given strategy and one
+    answer for every agent; returns the run's state."""
+    pipeline.start(repo, "stack-discovery")
+    assert _next(repo)["id"] == "mapper"
+    _save(repo, "mapper", "Nothing to add.\n\n```json\n{\"stacks\": [], \"rejected\": []}\n```")
+    pipeline.complete_step(Run.load(repo), "mapper")
+    _next(repo)
+    run = Run.load(repo)
+    pipeline.confirm(run, "stacks", [s["pattern"] for s in run.state["recommendations"]],
+                     list(discovery.DEFAULT_DOCUMENTS) + ["ui_screens"]
+                     if (run.state.get("screens_offer") or {}).get("available") else None)
+    assert _next(repo)["id"] == "select-strategy"
+    pipeline.confirm(Run.load(repo), "strategy", [strategy])
+    step = _drive_writers(repo, {"layer-": pack, "evidence-": pack, "po_brd": "## Executive Summary\nAs observed.\n",
+                                 "ea_spec": "## Architecture Overview\nAs observed.\n",
+                                 "ea_diagrams": '{"diagrams": []}', "setup": "## Prerequisites\nA JDK (pom.xml).\n",
+                                 "ea_ui": "None found."})
+    if step["id"] == "ui-screens":                 # rendered beside the documents, no agent
+        step = _drive_writers(repo, {})
+    assert step["id"] == "documents-review", step
+    return Run.load(repo).state
+
+
+def test_jsp_multi_module_monorepo_with_ajax_and_oracle(tmp_path):
+    """Parent POM + claims-web (JSP, jQuery $.ajax/$.get/$.getJSON, fetch, forms) + claims-services
+    (REST under context path /claims-api, Oracle via Liquibase)."""
+    import json as _json
+    import shutil
+    repo = tmp_path / "claims"
+    shutil.copytree(FIXTURES / "claims-jsp-monorepo", repo)
+    _discover(repo, "layered-trace", "### Limitations\nNone found.\n")
+    run = Run.load(repo)
+    assert {s["pattern"] for s in run.state["recommendations"]} >= {"jsp", "java", "oracle"}
+    assert run.state["strategy_options"][0]["id"] == "layered-trace"
+    ui_request = (repo / ".modernizer/discovery/layers/ui/request-0001.md").read_text()
+    assert "claims/detail.jsp" in ui_request and "ClaimApiController.decide" in ui_request
+    out = repo / ".modernizer/deliverables"
+    pages = (out / "UI_PAGES.md").read_text()
+    # Page by page, in route order; the shared header listed once and named on every page.
+    assert pages.index("PG-01 Claims") < pages.index("PG-02 File a claim") < pages.index("PG-03 Claim detail")
+    assert pages.count("**Includes:** FR-01") == 3
+    detail = pages.split("### PG-03")[1].split("### FR-01")[0]
+    assert "Ajax — jQuery `$.ajax`" in detail and "`PUT /claims-api/api/claims/${claimId}/decision`" in detail
+    assert "`ClaimApiController.decide` serving `PUT /api/claims/{id}/decision`" in detail
+    assert "Ajax — `fetch`" in detail and "ClaimDecisionException" in detail
+    listing = pages.split("### PG-01")[1].split("### PG-02")[0]
+    assert "claims-list.js" in listing and "Ajax — jQuery `$.get`" in listing
+    assert "HTML form submission (full page request)" in pages.split("### PG-02")[1].split("### PG-03")[0]
+    assert "`DELETE /api/claims/{id} (ClaimApiController.purge)`" in pages      # no UI calls it
+    debt = (out / "TECH_DEBT_AND_DEAD_CODE.md").read_text()
+    assert "Page template nothing renders" not in debt
+    assert "REST endpoint no UI control calls" in debt and "FIXME" in debt
+    setup = (out / "SETUP.md").read_text()
+    assert "claims-services" in setup and "claims-web" in setup and "CLAIMS_DB_PASSWORD" in setup
+    spec = _json.loads((out / "openapi.json").read_text())
+    assert "/api/claims/{id}/decision" in spec["paths"] and "/claims" in spec["paths"]
+    tech = (out / "TECHNICAL_SPECIFICATION.md").read_text()
+    assert "`v_open_claims`" in tech and "Liquibase" in tech
+
+
+def test_thymeleaf_spring_boot_oracle_and_solr4_search(tmp_path):
+    """Thymeleaf templates with a layout and a fragment, Spring Boot, Oracle, and search APIs on Solr 4."""
+    import json as _json
+    import shutil
+    repo = tmp_path / "catalog"
+    shutil.copytree(FIXTURES / "catalog-thymeleaf-solr", repo)
+    _discover(repo, "layered-trace", "### Limitations\nNone found.\n")
+    run = Run.load(repo)
+    assert {s["pattern"] for s in run.state["recommendations"]} >= {"thymeleaf", "solr", "oracle", "java"}
+    db_request = (repo / ".modernizer/discovery/layers/db/request-0001.md").read_text()
+    assert "SOLR CORE `products`" in db_request and "name_suggest (text_suggest)" in db_request
+    out = repo / ".modernizer/deliverables"
+    tech = (out / "TECHNICAL_SPECIFICATION.md").read_text()
+    assert "### Search Engine — Apache Solr (computed)" in tech
+    assert "| `solr-solrj` | 4.10.4 |" in tech and "`luceneMatchVersion`: 4.10.4" in tech
+    assert "| `/suggest` | `SearchHandler` |" in tech and "Copy fields: `name` → `name_suggest`" in tech
+    backed = tech.split("#### HTTP endpoints backed by Solr")[1].split("###")[0]
+    assert "`GET /api/search/products`" in backed and "`POST /admin/reindex`" in backed
+    assert "ReindexJob → ProductSearchService" in backed and "`GET /products/{sku}`" not in backed
+    pages = (out / "UI_PAGES.md").read_text()
+    order = [l.split(" ", 2)[1] for l in pages.splitlines() if l.startswith("### PG-")]
+    assert len(order) == 4                                                     # home, admin, product, search
+    assert "| FR-01 |" in pages and "| FR-02 |" in pages                      # nav fragment and layout
+    assert "Ajax — `fetch`" in pages and "`GET /api/search/products?q={}&page={}&inStock={}`" in pages
+    assert "Ajax — jQuery `$.getJSON`" in pages and "`SearchApiController.suggest`" in pages
+    assert "Calls No Handler Serves" not in pages                              # @{/} resolves to home
+    debt = (out / "TECH_DEBT_AND_DEAD_CODE.md").read_text()
+    assert "Search query built by string concatenation" in debt and 'addFilterQuery("category:" + category)' in debt
+    spec = _json.loads((out / "openapi.json").read_text())
+    assert spec["paths"]["/api/search/suggest"]["get"]["parameters"][0]["schema"].get("minLength") == 2
+    if "UI_SCREENS.md" in {p.name for p in out.iterdir()}:
+        screens = (out / "UI_SCREENS.md").read_text()
+        assert screens.index("PG-01") < screens.index("PG-02")

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{layout}">
+<head><title>Search results</title></head>
+<body>
+<div layout:fragment="content">
+  <h1>Results for <span th:text="${q}">q</span></h1>
+  <p th:text="${results.total} + ' products'">0 products</p>
+  <aside id="facets">
+    <ul>
+      <li th:each="f : ${results.categoryFacets}">
+        <a th:href="@{/search(q=${q},category=${f.key})}" th:text="${f.key} + ' (' + ${f.value} + ')'">cat</a>
+      </li>
+    </ul>
+  </aside>
+  <label><input type="checkbox" id="inStockOnly"/> In stock only</label>
+  <table id="resultsGrid">
+    <thead><tr><th>SKU</th><th>Name</th><th>Price</th></tr></thead>
+    <tbody>
+      <tr th:each="h : ${results.hits}">
+        <td><a th:href="@{/products/{sku}(sku=${h.sku})}" th:text="${h.sku}">SKU</a></td>
+        <td th:text="${h.name}">name</td>
+        <td th:text="${h.price}">0</td>
+      </tr>
+    </tbody>
+  </table>
+  <button type="button" id="moreBtn">Load more</button>
+  <p th:if="${results.total == 0}" class="empty">No products match.</p>
+  <script th:inline="javascript">
+    var q = /*[[${q}]]*/ '';
+    var page = 0;
+    document.getElementById('moreBtn').addEventListener('click', function () {
+      page++;
+      var inStock = document.getElementById('inStockOnly').checked;
+      fetch('/api/search/products?q=' + encodeURIComponent(q) + '&page=' + page + '&inStock=' + inStock)
+        .then(function (r) { return r.json(); })
+        .then(function (data) { appendRows(data.hits); });
+    });
+    function appendRows(hits) {
+      var body = document.querySelector('#resultsGrid tbody');
+      hits.forEach(function (h) {
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + h.sku + '</td><td>' + h.name + '</td><td>' + h.price + '</td>';
+        body.appendChild(tr);
+      });
+    }
+  </script>
+</div>
+</body>
+</html>

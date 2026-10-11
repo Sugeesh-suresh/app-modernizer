@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{layout}">
+<head><title>Home</title></head>
+<body>
+<div layout:fragment="content">
+  <h1>Find a product</h1>
+  <form id="searchForm" th:action="@{/search}" method="get">
+    <input type="text" id="q" name="q" autocomplete="off" placeholder="Search products" maxlength="100"/>
+    <ul id="suggestions"></ul>
+    <button type="submit">Search</button>
+  </form>
+  <script th:src="@{/js/suggest.js}"></script>
+</div>
+</body>
+</html>

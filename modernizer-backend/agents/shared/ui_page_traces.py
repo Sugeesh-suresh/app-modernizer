@@ -362,7 +362,7 @@ def _includes(text: str, fragments: list[str]) -> list[str]:
     for f in fragments:
         stem = re.sub(r"\.\w+$", "", f)
         for n in names:
-            n2 = re.sub(r"\.\w+$", "", n.lstrip("/"))
+            n2 = re.sub(r"\.\w+$", "", re.sub(r"^(?:\.\.?/)+", "", n.lstrip("/")))
             if n2 and (stem.endswith("/" + n2) or stem == n2):
                 out.append(f)
                 break
@@ -807,7 +807,9 @@ def _trace(e, contracts, descriptions, ev_lines) -> list[str]:
         if c.get("statuses"):
             out.append(f"  - Statuses: {_cell(', '.join(map(str, c['statuses'])))}")
         if c.get("errors"):
-            out.append(f"  - Errors: {_cell('; '.join(map(str, c['errors'][:10])))}")
+            out.append("  - Errors: " + "; ".join(
+                f"`{e[0]}` → {_cell(e[1])}" if isinstance(e, (list, tuple)) and len(e) == 2 else _cell(e)
+                for e in c["errors"][:10]))
         if c.get("access"):
             out.append(f"  - Access rule: `{_cell(c['access'])}`")
     trace = _evidence_for(e, ev_lines)
