@@ -157,7 +157,7 @@ RULES_CATALOG_MAX_IN_DOCUMENT: int = max(1, _int("RULES_CATALOG_MAX_IN_DOCUMENT"
 # shows a checkbox; the reviewer decides per repository.
 UI_SCREENSHOTS: str = (os.getenv("UI_SCREENSHOTS", "offer") or "offer").strip().lower()
 # Whether that checkbox starts ticked.
-UI_SCREENSHOTS_DEFAULT: bool = (os.getenv("UI_SCREENSHOTS_DEFAULT", "false") or "false").strip().lower() in (
+UI_SCREENSHOTS_DEFAULT: bool = (os.getenv("UI_SCREENSHOTS_DEFAULT", "true") or "true").strip().lower() in (
     "1", "true", "yes", "on")
 # Screens per run, and page states (default, empty list, message shown, fewer roles, ...) per page.
 UI_SCREENSHOTS_MAX_PAGES: int = max(1, _int("UI_SCREENSHOTS_MAX_PAGES", 50))

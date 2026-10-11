@@ -250,7 +250,9 @@ def test_offer_explains_what_is_missing(monkeypatch):
     monkeypatch.setattr(config, "UI_SCREENSHOTS", "offer")
     _tools(monkeypatch)
     jsp = ui_screens.offer([JSP, JAVA])
-    assert jsp["available"] is False and "Thymeleaf" in jsp["reason"] and "JSP" in jsp["reason"]
+    assert jsp["available"] is True and jsp["stacks"] == ["jsp"] and "static previews" in jsp["reason"]
+    react = ui_screens.offer([{"pattern": "react", "label": "React front end", "kind": "frontend"}, JAVA])
+    assert react["available"] is False and "drawn by scripts" in react["reason"]
     _tools(monkeypatch, browser=False)
     assert ui_screens.offer([THYMELEAF])["available"] is False
     _tools(monkeypatch, renderer=False)
@@ -434,5 +436,51 @@ def test_a_failed_stage_does_not_claim_there_are_no_pages():
     assert "No Thymeleaf pages were found" not in md and "0 screens of 0 pages" not in md
     assert "> Screenshots could not be produced: RuntimeError: boom" in md
     assert "stopped before it checked the repository's pages" in md
-    assert "No Thymeleaf pages were found" in ui_screens.to_markdown({"screens": [], "not_rendered": [], "pages": 0})
+    assert "No Thymeleaf, JSP or HTML pages were found" in ui_screens.to_markdown({"screens": [], "not_rendered": [],
+                                                                                   "pages": 0})
     assert ui_screens.describe(ValueError("x")) == "ValueError: x" and ui_screens.describe(KeyError()) == "KeyError"
+
+
+# ── JSP and HTML pages: static previews ────────────────────────────────────
+
+def _jsp_app(tmp_path):
+    files = {
+        f"{J}/web/LegacyController.java": "package com.acme.web;\n@Controller\npublic class LegacyController {\n"
+        "    @GetMapping(\"/legacy\")\n    public String legacy() { return \"legacy/page\"; }\n}\n",
+        "src/main/webapp/WEB-INF/views/legacy/page.jsp":
+            '<%@ page contentType="text/html" %><%@ taglib prefix="form" uri="http://www.springframework.org/tags/form" %>'
+            '<html><body><h1>Legacy</h1><form:form action="/legacy" modelAttribute="f">'
+            '<form:input path="name"/><button type="submit">Save</button></form:form></body></html>',
+        "src/main/webapp/WEB-INF/views/includes/header.jsp": "<div>header</div>",
+        "src/main/resources/static/help.html": "<!DOCTYPE html><html><body><h1>Help</h1></body></html>",
+        "ui/public/index.html": '<!DOCTYPE html><html><body><div id="root"></div></body></html>',
+    }
+    for rel, text in files.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    return str(tmp_path)
+
+
+def test_jsp_views_and_html_pages_are_planned_as_static_previews(tmp_path):
+    ws = _jsp_app(tmp_path)
+    pages, skipped = ui_screens.plan(ws, interfaces.scan(ws))
+    planned = {(p.template, p.static, p.endpoint and p.endpoint["path"]) for p in pages}
+    assert ("src/main/webapp/WEB-INF/views/legacy/page.jsp", True, "/legacy") in planned
+    assert ("src/main/resources/static/help.html", True, None) in planned
+    assert not any("header.jsp" in p.template for p in pages)                 # an include, not a page
+    assert [s["template"] for s in skipped] == ["ui/public/index.html"]       # an SPA shell
+    html = ui_screens.preview_html((tmp_path / "src/main/webapp/WEB-INF/views/legacy/page.jsp").read_text())
+    assert "<%" not in html and '<input name="name"/>' in html and "<form action" in html and "</form>" in html
+
+
+@pytest.mark.skipif(not ui_screens.tools()["browser"], reason="Chromium not available")
+def test_static_previews_are_captured_in_page_order(tmp_path):
+    ws = _jsp_app(tmp_path / "repo")
+    manifest = asyncio.run(ui_screens.capture(ws, interfaces.scan(ws), str(tmp_path / "out")))
+    assert {s["mode"] for s in manifest["screens"]} == {"static preview"}
+    assert all((tmp_path / "out" / s["image"]).is_file() for s in manifest["screens"])
+    titles = {"src/main/resources/static/help.html": "PG-01 Help",
+              "src/main/webapp/WEB-INF/views/legacy/page.jsp": "PG-02 Legacy"}
+    md = ui_screens.to_markdown(manifest, page_titles=titles)
+    assert md.index("PG-01 Help") < md.index("PG-02 Legacy")

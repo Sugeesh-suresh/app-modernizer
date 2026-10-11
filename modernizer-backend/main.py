@@ -51,7 +51,7 @@ from agents.java_8_to_11 import preflight as java11_preflight
 from agents.shared import (arch_diagrams, config_matrix, current_state, docx_export, evidence_pack, external_rules,
                            grounding, interfaces,
                            existing_tests, migration_inventory, plain_language, repo_fingerprint, rule_candidates,
-                           rules_ledger, ui_contracts, ui_pages, ui_screens, system_inventory,
+                           rules_ledger, ui_contracts, ui_page_traces, ui_pages, ui_screens, system_inventory,
                            code_health, deliverables, openapi_spec, re_strategy, setup_facts)
 from agents.java_8_to_11.agents import STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.shared import (
@@ -1469,8 +1469,9 @@ async def _run_bundle_re(session_id: str, bundle: list[str], feedback: str | Non
 
 
 #: The documents a stack-discovery run can produce, in the order the review screen shows them.
-DISCOVERY_DOCUMENTS = ("brd", "technical_spec", "test_inventory", "setup", "openapi", "tech_debt", "ui_screens")
-_DEFAULT_DOCUMENTS = ("brd", "technical_spec", "test_inventory", "setup", "openapi", "tech_debt")
+DISCOVERY_DOCUMENTS = ("brd", "technical_spec", "test_inventory", "setup", "openapi", "tech_debt", "ui_pages",
+                       "ui_screens")
+_DEFAULT_DOCUMENTS = ("brd", "technical_spec", "test_inventory", "setup", "openapi", "tech_debt", "ui_pages")
 
 
 def _documents(state: dict) -> set[str]:
@@ -1611,7 +1612,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
 
     documents = _documents(state)
     # Evidence serves the written documents; UI Screens alone needs none (no model at all).
-    gather = bool(documents & {"brd", "technical_spec", "test_inventory", "setup", "tech_debt"})
+    gather = bool(documents & {"brd", "technical_spec", "test_inventory", "setup", "tech_debt", "ui_pages"})
     strategy = _strategy_of(state)
     # One pack per layer pass for a layered strategy, else one per stack.
     pack_ids = [(p, re_strategy.PASSES[p].label) for p in strategy["passes"]] if strategy["passes"] else \
@@ -1668,7 +1669,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     else:
         system_md = state["system_inventory_markdown"].strip()
     # Each UI control, the handler it calls and that handler's contract, from the code.
-    if "technical_spec" not in documents:
+    if not documents & {"technical_spec", "ui_pages"}:
         ui_result = {"screens": [], "contracts": [], "unmatched": [], "uncalled": [], "pages": []}
     elif not state.get("ui_contracts_json"):
         try:
@@ -1683,7 +1684,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     # Every page and every interactive element on it: id, action, what happens, the API each action calls.
     # Computed once with the template files it covers, so the UI-to-Backend Contracts refer to it rather
     # than print the same form fields and grid columns again.
-    if "technical_spec" not in documents:
+    if not documents & {"technical_spec", "ui_pages"}:
         pages_md, covered = "", {}
     elif "ui_pages_markdown" not in state:
         try:
@@ -1802,6 +1803,10 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
                                    "## Repository Facts (computed by the pipeline)\n"
                                    + _for_writer(setup_md_facts, 80000) + _for_writer(system_md, 60000)
                                    + _for_writer(config_md, 30000), state.get("setup_guide", ""))
+        if "ui_pages" in documents and "ui" not in jobs and ui_result.get("screens") and (
+                target in ("all", "technical_spec") or not ea_ui):
+            # The UI Pages document wants each control's purpose even without the specification.
+            jobs["ui"] = _write_ui_contracts(session_id, ui_result, packs, feedback, keep)
         results = dict(zip(jobs, await asyncio.gather(*jobs.values())))
         if "setup" in results:
             await _update_state(session_id, {"setup_guide": _current_state_only(results["setup"],
@@ -1844,7 +1849,9 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
     spec_untraced: list = []
     ui_filled: list[str] = []
     elisions: list[str] = []
-    if ea_spec and ui_result.get("screens"):
+    ui_intros: dict[str, str] = {}
+    ui_blocks: dict[str, str] = {}
+    if ui_result.get("screens") and (ea_spec or ("ui_pages" in documents and ea_ui.get("blocks"))):
         raw_section, _ = ui_contracts.assemble(ui_result, ea_ui.get("intros", {}), ea_ui.get("blocks", {}), fill=False)
         raw_section, elisions = grounding.replace_elisions(raw_section, _ELIDED_UI)
         raw_section, schema_tables = ui_contracts.strip_schema_tables(raw_section)   # printed once, elsewhere
@@ -1855,9 +1862,11 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
             raw_section, contracts_md + "\n" + endpoint_contracts_md, set(ui_contracts.ids(ui_result)),
             ui_contracts.calls(ui_result), evidence_text, placeholder=False)   # the computed line fills a gap
         intros, blocks = ui_contracts.parse_answer(checked_section, ui_result)
+        ui_intros, ui_blocks = intros, blocks
         ui_section, ui_filled = ui_contracts.assemble(ui_result, intros, blocks)
-        ea_spec = plain_language.place_section(ea_spec, ui_section, ui_contracts.SECTION_HEADING,
-                                               before=_SPEC_UI_CONTRACTS_BEFORE)
+        if ea_spec:
+            ea_spec = plain_language.place_section(ea_spec, ui_section, ui_contracts.SECTION_HEADING,
+                                                   before=_SPEC_UI_CONTRACTS_BEFORE)
         if spec_untraced:
             print(f"[discovery] grounding: removed {len(spec_untraced)} UI contract statement(s) not traceable "
                   "to the code", flush=True)
@@ -1939,7 +1948,20 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
                    "this document may leave out parts of the system.\n\n" + brd)
         if tech_spec:
             _, tech_spec = _with_ingestion_warning(state, "", tech_spec)
-    ui_md = await _ui_screens_document(session_id, ledger)
+    # Every page, page by page: its HTML elements, its interactive elements and their traces to the backend.
+    traced_pages = []
+    if documents & {"ui_pages", "ui_screens"}:
+        try:
+            traced_pages = await asyncio.to_thread(ui_page_traces.build, workspace_dir, ui_result)
+        except Exception:                                     # noqa: BLE001 — the other documents do not depend on it
+            traceback.print_exc()
+    ui_md = await _ui_screens_document(session_id, ledger, ui_page_traces.page_order(traced_pages))
+    ui_pages_doc = ""
+    if "ui_pages" in documents and any(not p["fragment"] for p in traced_pages):
+        ui_pages_doc = ui_page_traces.to_markdown(
+            traced_pages, ui_result, ui_blocks, evidence_text,
+            ui_page_traces.screenshot_index(json.loads((await _get_state(session_id)).get("ui_screens_json") or "null")),
+            _discovery_title(state), pages_md, ui_intros)
     # The other deliverables: the Setup & Deployment guide, the OpenAPI file, the
     # tech-debt and dead-code review (agents/shared/deliverables.py).
     state = await _get_state(session_id)
@@ -1961,11 +1983,12 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
                                             strategy["name"])
     await _update_state(session_id, {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory,
                                      "ui_screens": ui_md, "evidence_path": str(evidence_file),
-                                     "setup_doc": setup_doc, "openapi_json": openapi_json, "tech_debt": tech_debt})
+                                     "setup_doc": setup_doc, "openapi_json": openapi_json, "tech_debt": tech_debt,
+                                     "ui_pages_doc": ui_pages_doc})
     if announce:
         extra = {"ui_screens": ui_md} if ui_md else {}
         await _push(session_id, "brd-ready", brd=brd, technical_spec=tech_spec, test_inventory=test_inventory,
-                    setup=setup_doc, tech_debt=tech_debt,
+                    setup=setup_doc, tech_debt=tech_debt, ui_pages_doc=ui_pages_doc,
                     openapi=openapi_spec.to_yaml(json.loads(openapi_json)) if openapi_json else "",
                     strategy=strategy["name"], **extra)
 
@@ -2001,7 +2024,7 @@ async def _run_ui_screens(session_id: str) -> None:
                         f"{len(manifest['not_rendered'])} not rendered.\n")
 
 
-async def _ui_screens_document(session_id: str, ledger: dict | None) -> str:
+async def _ui_screens_document(session_id: str, ledger: dict | None, page_titles: dict[str, str] | None = None) -> str:
     """The UI Screens document, once the stage has finished; "" when screenshots were not chosen.
     Built from the stored manifest, so a refine reproduces it exactly."""
     task = _ui_screen_tasks.pop(session_id, None)
@@ -2013,7 +2036,7 @@ async def _ui_screens_document(session_id: str, ledger: dict | None) -> str:
     manifest = (await _get_state(session_id)).get("ui_screens_json", "")
     if not manifest:
         return ""
-    return ui_screens.to_markdown(json.loads(manifest), ledger)
+    return ui_screens.to_markdown(json.loads(manifest), ledger, page_titles=page_titles)
 
 
 async def _run_bundle_plan(session_id: str, bundle: list[str], feedback: str | None = None) -> None:
@@ -2498,6 +2521,12 @@ async def _run_stack_discovery_workflow(session_id: str) -> None:
         # How to reverse engineer: options for this repository, chosen on the same screen,
         # before any agent reads the code (agents/shared/re_strategy.py).
         extra["strategies"] = await _offer_strategies(session_id, stacks)
+        # The UI Pages document: offered when the repository has a UI (a UI stack, or screens the scan found).
+        signals = json.loads((await _get_state(session_id)).get("strategy_signals_json") or "{}")
+        ui_stacks = [x["pattern"] for x in stacks if x.get("kind") in ui_screens.UI_KINDS]
+        extra["ui_pages"] = {"available": bool(ui_stacks or signals.get("screens")), "stacks": ui_stacks,
+                             "reason": "" if ui_stacks or signals.get("screens") else
+                             "No UI layer was found in this repository."}
         await _push(session_id, "companion-recommendations", companions=stacks, **extra)
         await _push(session_id, "step-change", step="companion-selection")
         await _companion_gates[session_id].wait()
@@ -3223,6 +3252,15 @@ async def download_tech_debt(session_id: str, format: str = "md"):
                                     "Tech Debt & Dead Code", "Tech-debt review not yet generated.")
 
 
+@app.get("/api/sessions/{session_id}/download/ui-pages")
+async def download_ui_pages(session_id: str, format: str = "md"):
+    """UI_PAGES.md — every UI page with its HTML elements, interactive elements and their
+    traces to the backend (`?format=docx` for Word)."""
+    return await _document_download(session_id, "ui_pages_doc", _download_format(format, ("md", "docx")), "ui-pages",
+                                    "UI Pages: Elements, Interactions & Backend Traces",
+                                    "UI Pages document not generated (no UI in this repository, or not chosen).")
+
+
 @app.get("/api/sessions/{session_id}/download/openapi")
 async def download_openapi(session_id: str, format: str = "yaml"):
     """The OpenAPI 3.0.3 specification — `openapi.yaml` (default) or `?format=json`."""
@@ -3241,14 +3279,15 @@ async def download_openapi(session_id: str, format: str = "yaml"):
 async def download_deliverables(session_id: str):
     """Every reverse-engineering deliverable as separate files in one zip: README.md
     (index), SETUP.md, BRD.md, TECHNICAL_SPECIFICATION.md, openapi.yaml / .json,
-    TECH_DEBT_AND_DEAD_CODE.md, UI_SCREENS.md, STRATEGY.md, EVIDENCE.md, and the images."""
+    TECH_DEBT_AND_DEAD_CODE.md, UI_PAGES.md, UI_SCREENS.md, STRATEGY.md, EVIDENCE.md, and the images."""
     state = await _get_state(session_id)
     if not state or not (state.get("brd") or state.get("technical_spec") or state.get("setup_doc")):
         raise HTTPException(status_code=404, detail="No deliverables yet.")
     evidence = Path(state.get("evidence_path", "") or "/nonexistent")
     docs = {"setup": state.get("setup_doc", ""), "brd": state.get("brd", ""),
             "technical_spec": state.get("technical_spec", ""), "test_inventory": state.get("test_inventory", ""),
-            "tech_debt": state.get("tech_debt", ""), "ui_screens": state.get("ui_screens", ""),
+            "tech_debt": state.get("tech_debt", ""), "ui_pages": state.get("ui_pages_doc", ""),
+            "ui_screens": state.get("ui_screens", ""),
             "evidence": evidence.read_text(encoding="utf-8") if evidence.is_file() else ""}
     strategy = _strategy_of(state)
     offered = json.loads(state.get("strategy_options_json") or "[]")

@@ -342,6 +342,11 @@ def test_layered_trace_strategy_produces_every_deliverable(tmp_path):
     assert "# Existing Test Inventory" in (out / "TECHNICAL_SPECIFICATION.md").read_text()
     index = (out / "README.md").read_text()
     assert "[openapi.yaml](openapi.yaml)" in index and "Layered trace" in index
+    pages = (out / "UI_PAGES.md").read_text()
+    assert "[UI_PAGES.md](UI_PAGES.md)" in index
+    assert pages.index("### PG-01") < pages.index("### PG-02") and "#### HTML elements" in pages
+    assert "Ajax — jQuery `$.post`" in pages and "`POST /api/orders/{}/cancel`" in pages
+    assert "#### Interactive components and what each action does" in pages
     pipeline.confirm(run, "documents")
     assert _next(repo)["kind"] == "done"
 

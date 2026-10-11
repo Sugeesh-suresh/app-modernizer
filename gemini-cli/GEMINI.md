@@ -14,7 +14,8 @@ Reverse engineering (`stack-discovery`) asks the user for a **strategy** before 
 computed for the repository: `layered-trace` (UI top-down → data bottom-up → API & logic; recommended for
 full-stack applications), `api-first`, `data-first` or `stack-by-stack`. Its deliverables are separate files in
 `.modernizer/deliverables/`: `SETUP.md`, `BRD.md`, `TECHNICAL_SPECIFICATION.md`, `openapi.yaml`/`openapi.json`
-(OpenAPI 3.0), `TECH_DEBT_AND_DEAD_CODE.md` (for human review), `STRATEGY.md`, `EVIDENCE.md` and a `README.md` index.
+(OpenAPI 3.0), `TECH_DEBT_AND_DEAD_CODE.md` (for human review), `UI_PAGES.md` (each UI page's elements,
+interactions and backend traces) and `UI_SCREENS.md` (a screenshot of each page) when the repository has a UI, `STRATEGY.md`, `EVIDENCE.md` and a `README.md` index.
 
 ## What does what
 

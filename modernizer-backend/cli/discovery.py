@@ -27,7 +27,7 @@ from agents import config
 from agents.shared import (
     arch_diagrams, config_matrix, current_state, dependency_graph, evidence_pack, existing_tests, external_rules,
     grounding, interfaces, plain_language, repo_fingerprint, rule_candidates, rules_ledger, stack_detector,
-    code_health, deliverables, openapi_spec, re_strategy, setup_facts, system_inventory, ui_contracts, ui_pages, ui_screens,
+    code_health, deliverables, openapi_spec, re_strategy, setup_facts, system_inventory, ui_contracts, ui_page_traces, ui_pages, ui_screens,
 )
 from agents.shared.pipeline_text import (
     DISCOVERY_GRAPHS, ELIDED_SPEC, ELIDED_TESTS, ELIDED_UI, SPEC_DIAGRAMS_BEFORE, SPEC_UI_CONTRACTS_BEFORE,
@@ -40,8 +40,8 @@ from agents.shared.pipeline_text import (
 from .pipeline import ANALYST, WRITER, _output_rule, _step, _sub
 from .runstate import Run, RunError
 
-DOCUMENTS = ("brd", "technical_spec", "test_inventory", "setup", "openapi", "tech_debt", "ui_screens")
-DEFAULT_DOCUMENTS = ("brd", "technical_spec", "test_inventory", "setup", "openapi", "tech_debt")
+DOCUMENTS = ("brd", "technical_spec", "test_inventory", "setup", "openapi", "tech_debt", "ui_pages", "ui_screens")
+DEFAULT_DOCUMENTS = ("brd", "technical_spec", "test_inventory", "setup", "openapi", "tech_debt", "ui_pages")
 #: The final deliverables, one file each, in `.modernizer/deliverables/`.
 DELIVERABLES_DIR = "deliverables"
 TITLE = "Technology Stack Discovery"
@@ -190,8 +190,10 @@ def _job_select(run: Run, job: dict, log: list[str]) -> dict:
     return _step(run, "select-stacks", "ask_user", title="Confirm the stacks to document", text=(
         f"The dependency mapper found these stacks (inventory: `.modernizer/discovery/stack_inventory.md`):\n\n{rows}"
         f"\n\nDocuments: `brd` (BRD.md), `technical_spec` (TECHNICAL_SPECIFICATION.md), `test_inventory`, `setup` "
-        f"(SETUP.md), `openapi` (openapi.yaml / openapi.json), `tech_debt` (TECH_DEBT_AND_DEAD_CODE.md) — default: all "
-        f"of these — and `ui_screens`.{screens}\n\n"
+        f"(SETUP.md), `openapi` (openapi.yaml / openapi.json), `tech_debt` (TECH_DEBT_AND_DEAD_CODE.md), `ui_pages` "
+        f"(UI_PAGES.md: every page's HTML elements, interactive elements and their traces to the backend; produced "
+        f"when the repository has a UI) — default: all of these — and `ui_screens` (UI_SCREENS.md: a screenshot of "
+        f"each page).{screens}\n\n"
         "Ask the user which stacks to document and which documents to produce, then call `confirm` with "
         "gate=`stacks`, `selection` = the stack ids and `documents` = the document ids. The reverse-engineering "
         "strategy is offered next, before anything is read."))
@@ -275,7 +277,7 @@ def _plan_jobs(run: Run) -> list[dict]:
     """The work after the strategy is chosen (the computed sections already ran)."""
     docs = _documents(run)
     jobs: list[dict] = []
-    if docs & {"brd", "technical_spec", "test_inventory", "setup", "tech_debt"}:
+    if docs & {"brd", "technical_spec", "test_inventory", "setup", "tech_debt", "ui_pages"}:
         passes = _strategy(run)["passes"]
         if passes:
             jobs += [{"kind": "layer", "pass": p} for p in passes]
@@ -292,8 +294,10 @@ def _plan_jobs(run: Run) -> list[dict]:
         jobs.append({"kind": "writer", "writer": "po_brd"})
     if docs & {"technical_spec", "test_inventory"}:
         jobs.append({"kind": "writer", "writer": "ea_spec"})
+    if docs & {"technical_spec", "ui_pages"}:
+        jobs.append({"kind": "ui_prepare"})
     if "technical_spec" in docs:
-        jobs += [{"kind": "ui_prepare"}, {"kind": "writer", "writer": "ea_diagrams"}]
+        jobs.append({"kind": "writer", "writer": "ea_diagrams"})
     if "setup" in docs:
         jobs.append({"kind": "writer", "writer": "setup"})
     jobs += [{"kind": "assemble"}, {"kind": "review"}]
@@ -637,7 +641,7 @@ def _job_computed(run: Run, job: dict, log: list[str]) -> None:
         ui_result = ui_contracts.scan(ws, inv)
     except Exception as exc:                                  # noqa: BLE001 — the documents do not depend on it
         log.append(f"UI contracts scan failed: {type(exc).__name__}: {exc}")
-    if "technical_spec" in docs:
+    if docs & {"technical_spec", "ui_pages"}:
         try:
             pages = ui_pages.scan(ws, inv, ui_result)
             pages_md, covered = ui_pages.to_markdown(pages), ui_pages.covered(pages)
@@ -865,7 +869,9 @@ def _job_assemble(run: Run, job: dict, log: list[str]) -> None:
     spec_untraced: list = []
     ui_filled: list[str] = []
     elisions: list[str] = []
-    if ea_spec and ui_result.get("screens"):
+    ui_intros: dict[str, str] = {}
+    ui_blocks: dict[str, str] = {}
+    if ui_result.get("screens") and (ea_spec or ("ui_pages" in docs and ea_ui.get("blocks"))):
         raw_section, _ = ui_contracts.assemble(ui_result, ea_ui.get("intros", {}), ea_ui.get("blocks", {}), fill=False)
         raw_section, elisions = grounding.replace_elisions(raw_section, ELIDED_UI)
         raw_section, _tables = ui_contracts.strip_schema_tables(raw_section)
@@ -873,9 +879,11 @@ def _job_assemble(run: Run, job: dict, log: list[str]) -> None:
             raw_section, contracts_md + "\n" + endpoint_contracts_md, set(ui_contracts.ids(ui_result)),
             ui_contracts.calls(ui_result), evidence_text, placeholder=False)
         intros, blocks = ui_contracts.parse_answer(checked_section, ui_result)
+        ui_intros, ui_blocks = intros, blocks
         ui_section, ui_filled = ui_contracts.assemble(ui_result, intros, blocks)
-        ea_spec = plain_language.place_section(ea_spec, ui_section, ui_contracts.SECTION_HEADING,
-                                               before=SPEC_UI_CONTRACTS_BEFORE)
+        if ea_spec:
+            ea_spec = plain_language.place_section(ea_spec, ui_section, ui_contracts.SECTION_HEADING,
+                                                   before=SPEC_UI_CONTRACTS_BEFORE)
     facts = _facts(run)
     raw_diagrams, diagram_problem = arch_diagrams.parse(ea_diagrams)
     diagrams, diagram_rejected = arch_diagrams.validate(raw_diagrams, evidence_text, facts)
@@ -931,10 +939,23 @@ def _job_assemble(run: Run, job: dict, log: list[str]) -> None:
         if "technical_spec" in docs else ""
     test_inventory = "\n\n".join(md for md in (test_files_md, ea_tests) if md) if "test_inventory" in docs else ""
     out = {"brd": brd, "technical_spec": tech_spec, "test_inventory": test_inventory, "evidence": evidence_md}
+    manifest = _read(_d(run, "screens.json")) if "ui_screens" in docs else ""
+    traced_pages = []
+    if docs & {"ui_pages", "ui_screens"}:
+        try:
+            traced_pages = ui_page_traces.build(ws, ui_result)
+        except Exception as exc:                              # noqa: BLE001 — the other documents do not depend on it
+            log.append(f"UI pages document failed: {type(exc).__name__}: {exc}")
     if "ui_screens" in docs:
-        manifest = _read(_d(run, "screens.json"))
         out["ui_screens"] = ui_screens.to_markdown(json.loads(manifest), ledger,
-                                                   image_prefix="../../discovery/screens/") if manifest else ""
+                                                   image_prefix="../../discovery/screens/",
+                                                   page_titles=ui_page_traces.page_order(traced_pages)) \
+            if manifest else ""
+    if "ui_pages" in docs:
+        out["ui_pages"] = ui_page_traces.to_markdown(
+            traced_pages, ui_result, ui_blocks, evidence_text,
+            ui_page_traces.screenshot_index(json.loads(manifest) if manifest else None), run.workspace.name,
+            pages_md, ui_intros) if any(not p["fragment"] for p in traced_pages) else ""
     for name, text in out.items():
         if text or name == "evidence":
             run.write_doc(name, text, "stack-discovery")
@@ -970,7 +991,8 @@ def export_deliverables(run: Run) -> list[str]:
     out = run.dir / DELIVERABLES_DIR
     out.mkdir(parents=True, exist_ok=True)
     docs = {d: run.read_doc(d, "stack-discovery").replace("../../discovery/", "../discovery/")
-            for d in ("setup", "brd", "technical_spec", "test_inventory", "tech_debt", "ui_screens", "evidence")}
+            for d in ("setup", "brd", "technical_spec", "test_inventory", "tech_debt", "ui_pages", "ui_screens",
+                      "evidence")}
     spec_file = _d(run, "openapi.json")
     spec = json.loads(spec_file.read_text(encoding="utf-8")) if spec_file.is_file() else None
     files = deliverables.build(docs, spec, _read(_d(run, "strategy.md")), run.workspace.name, _strategy(run)["name"],

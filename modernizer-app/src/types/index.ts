@@ -66,7 +66,15 @@ export interface ScreenshotsOffer {
 
 /** stack-discovery: a document the reviewer can choose to generate. */
 export type DiscoveryDocument =
-  'brd' | 'technical_spec' | 'test_inventory' | 'setup' | 'openapi' | 'tech_debt' | 'ui_screens';
+  'brd' | 'technical_spec' | 'test_inventory' | 'setup' | 'openapi' | 'tech_debt' | 'ui_pages' | 'ui_screens';
+
+/** stack-discovery: whether the UI Pages document (every page's elements, interactions and
+ * backend traces) can be produced — the repository has a UI layer. */
+export interface UiPagesOffer {
+  available: boolean;
+  stacks: string[];
+  reason: string;
+}
 
 /** stack-discovery: a reverse-engineering strategy offered for this repository
  * (agents/shared/re_strategy.py), sent with companion-recommendations. */
@@ -201,6 +209,10 @@ export interface WorkflowState {
   screenshotsOffer: ScreenshotsOffer | null;
   /** stack-discovery: the reverse-engineering strategies offered for this repository */
   strategies: StrategyOption[];
+  /** stack-discovery: the UI Pages option, when the repository has a UI */
+  uiPagesOffer: UiPagesOffer | null;
+  /** stack-discovery: the UI Pages document (elements, interactions, backend traces per page) */
+  uiPages: string;
   /** stack-discovery: the UI Screens document, when screenshots were chosen */
   uiScreens: string;
   /** stack-discovery deliverables: setup guide, tech debt / dead code, OpenAPI (YAML) */
@@ -225,6 +237,9 @@ export interface SSEEvent {
   screenshots?: ScreenshotsOffer;
   /** Sent with stack-discovery's companion-recommendations */
   strategies?: StrategyOption[];
+  ui_pages?: UiPagesOffer;
+  /** stack-discovery's brd-ready: the UI Pages document */
+  ui_pages_doc?: string;
   /** stack-discovery's brd-ready: the other deliverables and the strategy used */
   setup?: string;
   tech_debt?: string;

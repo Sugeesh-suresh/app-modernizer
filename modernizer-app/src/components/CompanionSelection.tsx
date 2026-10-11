@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import {
   ArrowRight, CheckCircle2, Loader2, Sparkles, FileSearch, Camera, FileText, Network, ClipboardList,
-  Wrench, Braces, Bug, Layers,
+  Wrench, Braces, Bug, Layers, MousePointerClick,
 } from 'lucide-react';
-import type { CompanionRecommendation, DiscoveryDocument, ScreenshotsOffer, StrategyOption } from '../types';
+import type { CompanionRecommendation, DiscoveryDocument, ScreenshotsOffer, StrategyOption, UiPagesOffer } from '../types';
 
 /** The documents a reverse-engineering run can produce; only the chosen ones are generated. */
 const DOCUMENTS: { id: DiscoveryDocument; label: string; detail: string; icon: typeof FileText }[] = [
@@ -32,8 +32,12 @@ const DOCUMENTS: { id: DiscoveryDocument; label: string; detail: string; icon: t
     detail: 'Code nothing reaches, unused tables and endpoints, risky patterns and debt markers, each with where it is and how sure the finding is — a separate list for human review.',
   },
   {
+    id: 'ui_pages', label: 'UI Pages: Elements, Interactions & Backend Traces', icon: MousePointerClick,
+    detail: 'Page by page, in route order: every HTML element, every interactive element with what its action does and its purpose, and the trace of each to the backend — Ajax or other HTTP call, endpoint URL, handler, request and response.',
+  },
+  {
     id: 'ui_screens', label: 'UI Screens', icon: Camera,
-    detail: 'Each page rendered from the repository\'s own templates with generated sample data, in its default state and the states its conditions allow. No model is used and nothing leaves the server.',
+    detail: 'A screenshot of each page, in the same page order as UI Pages: Thymeleaf pages rendered with generated sample data in each state their conditions allow; JSP and HTML pages as static previews of their source. No model is used and nothing leaves the server.',
   },
 ];
 
@@ -51,6 +55,8 @@ interface Props {
   screenshotsOffer?: ScreenshotsOffer | null;
   /** stack-discovery: the reverse-engineering strategies offered, the recommended one first. */
   strategies?: StrategyOption[];
+  /** stack-discovery: the UI Pages option — null when the repository has no UI. */
+  uiPagesOffer?: UiPagesOffer | null;
 }
 
 export function CompanionSelection({
@@ -60,12 +66,13 @@ export function CompanionSelection({
   discovery = false,
   screenshotsOffer = null,
   strategies = [],
+  uiPagesOffer = null,
 }: Props) {
   const [strategy, setStrategy] = useState<string>(
     () => strategies.find((o) => o.recommended)?.id ?? strategies.find((o) => o.available)?.id ?? '',
   );
   const [documents, setDocuments] = useState<Set<DiscoveryDocument>>(() => new Set<DiscoveryDocument>([
-    'brd', 'technical_spec', 'test_inventory', 'setup', 'openapi', 'tech_debt',
+    'brd', 'technical_spec', 'test_inventory', 'setup', 'openapi', 'tech_debt', 'ui_pages',
     ...(screenshotsOffer?.available && screenshotsOffer.default ? ['ui_screens' as const] : []),
   ]));
   const [selected, setSelected] = useState<Set<string>>(
@@ -86,7 +93,10 @@ export function CompanionSelection({
   // Screenshots render the UI stacks below; with all of them unchecked there is nothing to render.
   const uiStackKept = !!screenshotsOffer?.stacks.some((p) => selected.has(p));
   const screensPossible = !!screenshotsOffer?.available && uiStackKept;
-  const chosen = DOCUMENTS.map((d) => d.id).filter((d) => documents.has(d) && (d !== 'ui_screens' || screensPossible));
+  const pagesPossible = !!uiPagesOffer?.available
+    && (uiPagesOffer.stacks.length === 0 || uiPagesOffer.stacks.some((p) => selected.has(p)));
+  const chosen = DOCUMENTS.map((d) => d.id).filter((d) => documents.has(d)
+    && (d !== 'ui_screens' || screensPossible) && (d !== 'ui_pages' || pagesPossible));
   const toggleDocument = (id: DiscoveryDocument) => {
     setDocuments((prev) => {
       const next = new Set(prev);
@@ -249,9 +259,14 @@ export function CompanionSelection({
           <div className="space-y-3">
             {DOCUMENTS.map((doc) => {
               const screens = doc.id === 'ui_screens';
-              const enabled = !screens || screensPossible;
+              const uiPages = doc.id === 'ui_pages';
+              const enabled = screens ? screensPossible : uiPages ? pagesPossible : true;
               const Icon = doc.icon;
-              const note = !screens ? '' : !screenshotsOffer
+              const note = uiPages
+                ? (!uiPagesOffer ? 'Not available: no UI layer was found in this repository.'
+                  : !uiPagesOffer.available ? uiPagesOffer.reason
+                    : !pagesPossible ? 'Keep a UI stack checked to document its pages.' : '')
+                : !screens ? '' : !screenshotsOffer
                 ? 'Not available: no UI the pipeline can render was found in this repository.'
                 : !screenshotsOffer.available ? screenshotsOffer.reason
                   : !uiStackKept ? 'Keep a UI stack checked to capture its screens.' : screenshotsOffer.reason;

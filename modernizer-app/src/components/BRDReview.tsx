@@ -2,13 +2,13 @@ import { useRef, useState } from 'react';
 import {
   CheckCircle2, MessageSquare, FileText, Loader2, Pencil, Eye,
   Download, Paperclip, X, AlertCircle, Network, Sparkles, ClipboardList, Camera,
-  Wrench, Bug, Braces, Package,
+  Wrench, Bug, Braces, Package, MousePointerClick,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   brdDownloadUrl, businessRulesDownloadUrl, decisionPointsDownloadUrl, deliverablesDownloadUrl, diagramUrl,
-  openapiDownloadUrl, setupDownloadUrl, techDebtDownloadUrl, technicalSpecDownloadUrl, uiScreenUrl, uiScreensDownloadUrl,
+  openapiDownloadUrl, setupDownloadUrl, uiPagesDownloadUrl, techDebtDownloadUrl, technicalSpecDownloadUrl, uiScreenUrl, uiScreensDownloadUrl,
   uploadContextFiles,
 } from '../api';
 import type { RefineTarget } from '../api';
@@ -151,6 +151,8 @@ interface Props {
   /** stack-discovery deliverables ('' when not generated — no tab) */
   setupGuide?: string;
   techDebt?: string;
+  /** Every UI page: its elements, interactive elements and their traces to the backend */
+  uiPages?: string;
   /** OpenAPI 3.0.3, as YAML */
   openapi?: string;
   /** The reverse-engineering strategy the run used */
@@ -167,10 +169,10 @@ interface Props {
   reOnly?: boolean;
 }
 
-type ActiveTab = 'brd' | 'techspec' | 'tests' | 'setup' | 'openapi' | 'debt' | 'screens';
-const TAB_ORDER: ActiveTab[] = ['brd', 'techspec', 'tests', 'setup', 'openapi', 'debt', 'screens'];
+type ActiveTab = 'brd' | 'techspec' | 'tests' | 'setup' | 'openapi' | 'debt' | 'pages' | 'screens';
+const TAB_ORDER: ActiveTab[] = ['brd', 'techspec', 'tests', 'setup', 'openapi', 'debt', 'pages', 'screens'];
 /** Computed by the pipeline rather than written by a model: nothing to refine. */
-const COMPUTED_TABS: ActiveTab[] = ['openapi', 'debt', 'screens'];
+const COMPUTED_TABS: ActiveTab[] = ['openapi', 'debt', 'pages', 'screens'];
 
 /** The review screen's introduction, naming only the documents this run generated. */
 function describeDocuments(brd: boolean, technical: boolean, screens: boolean): string {
@@ -188,7 +190,7 @@ function describeDocuments(brd: boolean, technical: boolean, screens: boolean): 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function BRDReview({
-  sessionId, brd, technicalSpec, testInventory, uiScreens = '', setupGuide = '', techDebt = '', openapi = '',
+  sessionId, brd, technicalSpec, testInventory, uiScreens = '', setupGuide = '', techDebt = '', uiPages = '', openapi = '',
   strategyName = '', refining, refiningContent, onConfirm, onRefine, reOnly = false,
 }: Props) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('brd');
@@ -218,6 +220,7 @@ export function BRDReview({
     setup: !!setupGuide,
     openapi: !!openapi,
     debt: !!techDebt,
+    pages: !!uiPages,
     screens: !!uiScreens,
   };
   const firstTab = TAB_ORDER.find((t) => shown[t]) ?? 'brd';
@@ -337,6 +340,15 @@ export function BRDReview({
         >
           <Bug size={14} />
           Tech Debt & Dead Code
+        </button>}
+        {shown.pages && <button
+          onClick={() => setActiveTab('pages')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            tab === 'pages' ? 'bg-indigo-600 text-white' : 'bg-slate-900/5 text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <MousePointerClick size={14} />
+          UI Pages
         </button>}
         {uiScreens && (
           <button
@@ -545,6 +557,29 @@ export function BRDReview({
           </div>
           <div className="p-6 max-h-[62vh] overflow-y-auto">
             <MarkdownWithDiagrams content={techDebt} />
+          </div>
+        </div>
+      )}
+
+      {/* UI Pages Panel */}
+      {tab === 'pages' && uiPages && (
+        <div className="glass rounded-2xl overflow-hidden mb-6">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-900/10 glass-inset">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-slate-600">UI_PAGES.md</span>
+              <span className="text-[10px] text-slate-600 bg-slate-400/10 border border-slate-400/20 rounded-full px-2 py-0.5">
+                Page by page: elements, interactions, backend traces
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Downloads links={[
+                { href: uiPagesDownloadUrl(sessionId, 'md'), label: '.md' },
+                { href: uiPagesDownloadUrl(sessionId, 'docx'), label: '.docx' },
+              ]} />
+            </div>
+          </div>
+          <div className="p-6 max-h-[62vh] overflow-y-auto">
+            <MarkdownWithDiagrams content={uiPages} />
           </div>
         </div>
       )}

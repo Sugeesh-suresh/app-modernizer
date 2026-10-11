@@ -178,6 +178,10 @@ export const setupDownloadUrl = (sessionId: string, format: DocFormat = 'md') =>
 export const techDebtDownloadUrl = (sessionId: string, format: DocFormat = 'md') =>
   `${BASE}/api/sessions/${sessionId}/download/tech-debt?format=${format}`;
 
+/** stack-discovery: every UI page with its HTML elements, interactive elements and their traces to the backend. */
+export const uiPagesDownloadUrl = (sessionId: string, format: DocFormat = 'md') =>
+  `${BASE}/api/sessions/${sessionId}/download/ui-pages?format=${format}`;
+
 /** stack-discovery: OpenAPI 3.0.3 of every HTTP endpoint, ready for Swagger UI / Editor or Postman. */
 export const openapiDownloadUrl = (sessionId: string, format: 'yaml' | 'json' = 'yaml') =>
   `${BASE}/api/sessions/${sessionId}/download/openapi?format=${format}`;

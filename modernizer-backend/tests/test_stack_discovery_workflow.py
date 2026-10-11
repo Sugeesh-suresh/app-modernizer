@@ -764,7 +764,7 @@ class TestChosenDocuments:
         _run(sid, ["java"], screenshots=False)
         state = _state(sid)
         assert json.loads(state["documents_json"]) == ["brd", "technical_spec", "test_inventory", "setup", "openapi",
-                                                       "tech_debt"]
+                                                       "tech_debt", "ui_pages"]
         assert state["setup_doc"] and state["tech_debt"] and json.loads(state["openapi_json"])["openapi"] == "3.0.3"
         assert state["brd"] and state["technical_spec"] and state["test_inventory"]
 

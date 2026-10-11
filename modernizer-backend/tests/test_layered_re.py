@@ -200,3 +200,47 @@ def test_rest_endpoints_no_ui_calls_are_candidates_only_when_the_repository_has_
     assert all(r["item"] not in called for r in uncalled)
     assert not [r for r in code_health.scan(ws, {"screens": []})["dead"]
                 if r["category"] == "REST endpoint no UI control calls"]
+
+
+# ── UI pages: elements, interactions and backend traces ────────────────────
+
+from agents.shared import ui_page_traces, ui_pages  # noqa: E402
+
+
+def test_ui_pages_document_lists_every_page_in_route_order_with_its_elements_and_traces():
+    ws, inv, ui, _ = _computed("thymeleaf-ui-pages")
+    pages = ui_page_traces.build(ws, ui)
+    order = [p["file"].rsplit("/templates/", 1)[1] for p in pages]
+    assert order == ["dashboard/attribute_search.html", "orders/list.html", "orders/form.html", "orders/detail.html",
+                     "selfservicetool/job_list.html", "fragments/header.html", "layouts/main.html"]
+    listing = next(p for p in pages if p["file"].endswith("orders/list.html"))
+    assert listing["id"] == "PG-02" and {f.rsplit("/", 1)[1] for f in listing["includes"]} == {"header.html", "main.html"}
+    tags = [(r["tag"], r["attrs"].get("id")) for r in listing["elements"]]
+    assert ("button", "filtersBtn") in tags and ("input", "quickJump") in tags     # no request: still listed
+    md = ui_page_traces.to_markdown(pages, ui, {"UI-002": "- **UI-002** — Cancels the order (EV-ui-0001)."},
+                                    {"EV-ui-0009": "OrderApiController.cancel sets status CANCELLED in table orders"},
+                                    {listing["file"]: ["SCR-0003"]}, "Orders",
+                                    ui_pages.to_markdown(ui_pages.scan(ws, inv, ui)))
+    section = md.split("### PG-02")[1].split("### PG-03")[0]
+    assert "opens modal `#filterModal` (in the browser, no request)" in section
+    assert "| UI-002 | button .cancel-btn | click | Ajax — jQuery `$.post` | `POST /api/orders/{}/cancel` |" in section
+    cancel = section.split("##### UI-002")[1].split("#####")[0]
+    assert "**Purpose:** Cancels the order (EV-ui-0001)." in cancel
+    assert "`OrderApiController.cancel` serving `POST /api/orders/{id}/cancel`" in cancel
+    assert "Errors:" in cancel and "OrderNotOpenException" in cancel and "Access rule:" in cancel
+    assert "sets status CANCELLED in table orders (EV-ui-0009)" in cancel          # traced downstream
+    assert "SCR-0003" in section and "#### Interactive components and what each action does" in section
+    assert "Endpoint Contracts →" not in md                                           # self-contained
+    form = md.split("### PG-03")[1].split("### PG-04")[0]
+    assert "HTML form submission (full page request)" in form and "_(computed)_" in form
+
+
+def test_ui_pages_covers_single_page_applications_by_route():
+    ws, _, ui, _ = _computed("pds-react")
+    pages = ui_page_traces.build(ws, ui)
+    by_file = {p["file"]: p for p in pages}
+    search = by_file["pds-ui/src/pages/AttributeSearch.jsx"]
+    assert search["routes"] == ["route /attribute_search"] and search["id"] == "PG-01"
+    assert any(r["tag"] == "table" and r["attrs"].get("id") == "attributeGrid" for r in search["elements"])
+    md = ui_page_traces.to_markdown(pages, ui)
+    assert "Ajax — HTTP client `api.get`" in md and "`AttributeController.searchAttributes`" in md

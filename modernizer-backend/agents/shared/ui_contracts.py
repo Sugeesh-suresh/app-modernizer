@@ -278,6 +278,7 @@ class Element:
     fields: list = field(default_factory=list)      # form: [(name, input, client-side checks)]
     via: str = ""          # how it was tied: "jQuery click binding", "inline onclick → search()", …
     client_type: str = ""  # a response type the client declares (http.get<Job[]>)
+    client: str = ""       # the HTTP client that makes the call (`$.ajax`, `fetch`, `axios.get`)
     id: str = ""
     endpoints: list = field(default_factory=list)
     reason: str = ""
@@ -528,6 +529,7 @@ class Call:
     kind: str = "script"
     client_type: str = ""
     param_arg: int | None = None   # the payload is the enclosing function's argument n: the caller names it
+    client: str = ""           # the HTTP client the call goes through: `$.ajax`, `fetch`, `axios.post`, …
 
 
 def _str_value(node, src: bytes, consts: dict) -> str | None:
@@ -1094,7 +1096,7 @@ class _Script:
             if base and not re.match(r"^(?:https?:)?//", v):
                 v = base.rstrip("/") + "/" + v.lstrip("/")     # the client's baseURL
             self.calls.append(Call(self.line(node), verb, normalize(v), sends or [], node, element, kind, ctype,
-                                   param_arg))
+                                   param_arg, client=fn[:40]))
 
         if fn == "fetch" and args:
             verb, sends = "GET", []
@@ -1793,7 +1795,7 @@ def scan(workspace_dir: str, inventory: dict) -> dict:
                 label = f"timer in {Path(rel).name}"
             elements.append(Element(rel, at, kind, label or f"code in {Path(rel).name}",
                                     event or "—", call.verb, call.url, list(sends), via=via,
-                                    client_type=call.client_type))
+                                    client_type=call.client_type, client=call.client))
 
     def script_elements(rel: str, sc: _Script, pages: list[str]):
         inline = inline_handlers(pages)
@@ -2028,7 +2030,7 @@ def _element_json(el: Element) -> dict:
             "url": el.url.raw if el.url else "", "path": el.url.path if el.url else "",
             "query": el.url.query if el.url else [], "sends": el.sends, "data": el.data,
             "columns": el.columns, "fields": el.fields, "via": el.via, "client_type": el.client_type,
-            "endpoints": el.endpoints, "reason": el.reason, "source": f"{el.file}:{el.line}"}
+            "client": el.client, "endpoints": el.endpoints, "reason": el.reason, "source": f"{el.file}:{el.line}"}
 
 
 # ── markdown ────────────────────────────────────────────────────────────────

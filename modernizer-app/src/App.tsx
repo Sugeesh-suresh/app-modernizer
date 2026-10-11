@@ -54,6 +54,8 @@ const INITIAL_STATE: WorkflowState = {
   companionRecommendations: [],
   screenshotsOffer: null,
   strategies: [],
+  uiPagesOffer: null,
+  uiPages: '',
   uiScreens: '',
   setupGuide: '',
   techDebt: '',
@@ -296,6 +298,7 @@ export default function App() {
           companionRecommendations: event.companions ?? [],
           screenshotsOffer: event.screenshots ?? null,
           strategies: event.strategies ?? [],
+          uiPagesOffer: event.ui_pages ?? null,
         }));
         break;
 
@@ -328,6 +331,7 @@ export default function App() {
           testInventory: event.test_inventory ?? '',
           uiScreens: event.ui_screens ?? '',
           setupGuide: event.setup ?? '',
+          uiPages: event.ui_pages_doc ?? '',
           techDebt: event.tech_debt ?? '',
           openapi: event.openapi ?? '',
           strategyName: event.strategy ?? '',
@@ -564,6 +568,7 @@ export default function App() {
             discovery={reOnly}
             screenshotsOffer={reOnly ? state.screenshotsOffer : null}
             strategies={reOnly ? state.strategies : []}
+            uiPagesOffer={reOnly ? state.uiPagesOffer : null}
           />
         )}
 
@@ -594,7 +599,7 @@ export default function App() {
         {/* Reverse engineering may have been asked for other documents than the BRD. */}
         {state.step === 'brd-review' && state.sessionId
           && (state.brd || (reOnly && (state.technicalSpec || state.testInventory || state.uiScreens
-            || state.setupGuide || state.techDebt || state.openapi))) && (
+            || state.setupGuide || state.techDebt || state.openapi || state.uiPages))) && (
           <BRDReview
             sessionId={state.sessionId}
             brd={state.brd}
@@ -602,6 +607,7 @@ export default function App() {
             testInventory={state.testInventory}
             uiScreens={state.uiScreens}
             setupGuide={state.setupGuide}
+            uiPages={state.uiPages}
             techDebt={state.techDebt}
             openapi={state.openapi}
             strategyName={state.strategyName}

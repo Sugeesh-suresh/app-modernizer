@@ -15,6 +15,7 @@ from .runstate import Run
 _DOCS = (("brd", "Business Requirements"), ("technical_spec", "Technical Specification"),
          ("test_inventory", "Existing Test Inventory"), ("plan", "Migration Plan"),
          ("setup", "Setup & Deployment Guide"), ("tech_debt", "Tech Debt & Dead Code"),
+         ("ui_pages", "UI Pages: Elements, Interactions & Backend Traces"),
          ("ui_screens", "UI Screens"), ("evidence", "Evidence"))
 _RESULTS = (("final_report.md", "Migration Report"), ("code_review.md", "Independent Code Review"))
 

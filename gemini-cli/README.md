@@ -50,13 +50,14 @@ The run goes as far as it can and stops at each human gate:
 | Companion migrations (Java 8 → 25 with Oracle / Solr / TIBCO in the repository) | `/modernize:approve oracle-19c-to-23ai` (or `/modernize:approve none`) |
 | Analysis review (only when an agent wrote the analysis: JSP → React, or `*_ANALYSIS=agent`) | Review/edit `.modernizer/docs/<pattern>/brd.md`, `technical_spec.md`, `test_inventory.md`; then `/modernize:approve` or `/modernize:refine <feedback>` |
 | **Plan approval** — nothing changes before it | Review/edit `.modernizer/docs/<pattern>/plan.md`; then `/modernize:approve` or `/modernize:refine <feedback>` |
-| Stack discovery: stacks and documents | `/modernize:approve java thymeleaf oracle` (+ which documents: brd, technical_spec, test_inventory, setup, openapi, tech_debt, ui_screens) |
+| Stack discovery: stacks and documents | `/modernize:approve java thymeleaf oracle` (+ which documents: brd, technical_spec, test_inventory, setup, openapi, tech_debt, ui_pages, ui_screens) |
 | Stack discovery: reverse-engineering strategy | `/modernize:approve layered-trace` (or `api-first`, `data-first`, `stack-by-stack`) — the options and the recommendation are in `.modernizer/discovery/strategy.md` |
 | Stack discovery: final review | `/modernize:approve`, or `/modernize:refine brd <feedback>` / `technical_spec` / `setup` (re-runs only that writer) |
 
 Stack discovery writes its deliverables as separate files to `.modernizer/deliverables/` — `README.md` (index),
 `SETUP.md`, `BRD.md`, `TECHNICAL_SPECIFICATION.md`, `openapi.yaml` / `openapi.json` (OpenAPI 3.0.3),
-`TECH_DEBT_AND_DEAD_CODE.md`, `STRATEGY.md`, `EVIDENCE.md`. With the layered strategy the code is traced
+`TECH_DEBT_AND_DEAD_CODE.md`, `UI_PAGES.md` (every page's HTML elements, interactive elements and their traces
+to the backend, page by page), `UI_SCREENS.md` (a screenshot of each page, same order), `STRATEGY.md`, `EVIDENCE.md`. With the layered strategy the code is traced
 layer by layer: the UI top-down (skill `layer-ui-trace`), the data bottom-up (`layer-data-trace`), then the API
 and business logic (`layer-api-logic`).
 

@@ -41,8 +41,13 @@ from .. import config
 from . import config_matrix, ui_mock_data
 from .dependency_graph import EXCLUDED_DIRS
 
-#: Stacks the pipeline can render, by detected stack id.
+#: Stacks the pipeline can render with sample data, by detected stack id.
 RENDERABLE = {"thymeleaf"}
+#: UI stacks whose screens are drawn by scripts at run time: there is no page in the
+#: repository to show without building and running the application.
+SCRIPT_DRAWN = {"react", "vue", "angular", "ember", "svelte"}
+#: Page files shown as static previews of their source (no data): JSP and plain HTML.
+_PREVIEW_SUFFIXES = (".html", ".htm", ".jsp", ".jspx", ".xhtml")
 UI_KINDS = {"web-tier", "frontend"}
 VIEWPORT = {"width": 1366, "height": 900}
 MAX_HEIGHT = 4000
@@ -140,17 +145,25 @@ def offer(stacks: list[dict]) -> dict | None:
     if not ui:
         return None
     renderable = sorted(s["pattern"] for s in ui if s.get("pattern") in RENDERABLE)
-    if not renderable:
-        names = ", ".join(sorted(s.get("label") or s["pattern"] for s in ui))
+    previewed = sorted(s["pattern"] for s in ui if s["pattern"] not in RENDERABLE and s["pattern"] not in SCRIPT_DRAWN)
+    drawn = sorted(s.get("label") or s["pattern"] for s in ui if s["pattern"] in SCRIPT_DRAWN)
+    if not renderable and not previewed:
         return {"available": False, "default": False, "stacks": [],
-                "reason": f"UI screenshots support Thymeleaf pages; not yet {names}."}
+                "reason": f"The screens of {', '.join(drawn)} are drawn by scripts at run time; screenshots need "
+                          "pages in the repository's markup (Thymeleaf, JSP or HTML)."}
     status = tools()
     if not status["browser"]:
         return {"available": False, "default": False, "stacks": [],
                 "reason": "Screenshots need a headless browser on the server: " + "; ".join(status["notes"]) + "."}
-    reason = "" if status["renderer"] else (
-        "Pages will be static template previews (no sample data): " + "; ".join(status["notes"]) + ".")
-    return {"available": True, "default": config.UI_SCREENSHOTS_DEFAULT, "stacks": renderable, "reason": reason}
+    notes = []
+    if renderable and not status["renderer"]:
+        notes.append("Pages will be static template previews (no sample data): " + "; ".join(status["notes"]) + ".")
+    if previewed:
+        notes.append("JSP and HTML pages are shown as static previews of their source (no data).")
+    if drawn:
+        notes.append(f"Screens drawn by scripts ({', '.join(drawn)}) are not rendered.")
+    return {"available": True, "default": config.UI_SCREENSHOTS_DEFAULT, "stacks": renderable + previewed,
+            "reason": " ".join(notes)}
 
 
 # ── planning ────────────────────────────────────────────────────────────────
@@ -161,6 +174,7 @@ class Page:
     templates_root: str            # relative to the workspace
     endpoint: dict | None          # the Interface Inventory endpoint, None for a template no controller names
     states: list = field(default_factory=list)
+    static: bool = False           # a JSP / HTML page shown as a static preview; `template` is its path
     files: list = field(default_factory=list)   # template files read, relative to the workspace
 
 
@@ -234,6 +248,11 @@ def plan(workspace_dir: str, inventory: dict) -> tuple[list[Page], list[dict]]:
             continue
         found = locate(view, e.get("source", ""))
         if not found:
+            jsp = _locate_static(root, view)
+            if jsp and (jsp, e["path"]) not in used:
+                used.update({(jsp, e["path"]), ("", jsp)})
+                pages.append(Page(jsp, "", e, static=True))
+                continue
             skipped.append({"what": what, "template": view,
                             "reason": "no Thymeleaf template with this name (JSP or another view technology)"})
             continue
@@ -255,7 +274,101 @@ def plan(workspace_dir: str, inventory: dict) -> tuple[list[Page], list[dict]]:
             if _is_page_template(text, name):
                 used.add((r, name))
                 pages.append(Page(name, r, None))
+    for rel, reason in _static_pages(root, roots):
+        if ("", rel) in used:
+            continue
+        used.add(("", rel))
+        if reason:
+            skipped.append({"what": f"page {rel}", "template": rel, "reason": reason})
+        else:
+            pages.append(Page(rel, "", None, static=True))
     return pages, skipped
+
+
+def _locate_static(root: Path, view: str) -> str:
+    """The JSP (or HTML) file a view name resolves to, e.g. `orders/list` → `…/WEB-INF/views/orders/list.jsp`."""
+    name = view.strip().lstrip("/")
+    for path in _safe_files(root):
+        rel = path.relative_to(root).as_posix()
+        if "/src/test/" in "/" + rel:
+            continue
+        for suffix in (".jsp", ".jspx"):
+            if rel.endswith("/" + name + suffix) or rel == name + suffix:
+                return rel
+    return ""
+
+
+_SPA_SHELL = re.compile(r"<div[^>]*\bid\s*=\s*[\"'](?:root|app)[\"'][^>]*>\s*</div>", re.I)
+
+
+def _static_pages(root: Path, template_roots: list[str]) -> list[tuple[str, str]]:
+    """[(page file, "" or why it is not shown)]: the JSP and HTML pages outside the Thymeleaf
+    template folders — fragments, includes, tests and generated output left out."""
+    out = []
+    for path in _safe_files(root):
+        rel = path.relative_to(root).as_posix()
+        if not rel.endswith(_PREVIEW_SUFFIXES) or any(rel.startswith(t + "/") for t in template_roots):
+            continue
+        if re.search(r"(?:^|/)(?:src/test|test|tests|e2e|coverage|docs?|WEB-INF/tags|META-INF/maven)/", rel):
+            continue
+        if _FRAGMENT_DIRS.search(rel):
+            continue
+        try:
+            if path.stat().st_size > 1_000_000:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not re.search(r"<html|<!doctype|<body", text, re.I):
+            continue                                        # an include, not a page
+        body = re.sub(r"<script\b.*?</script>|<!--.*?-->", "", text, flags=re.S | re.I)
+        inner = re.search(r"<body[^>]*>(.*)</body>", body, re.S | re.I)
+        if inner and _SPA_SHELL.search(inner.group(1)) and len(re.sub(r"<[^>]+>|\s", "", inner.group(1))) < 40:
+            out.append((rel, "a single-page application shell: its screens are drawn by scripts at run time"))
+            continue
+        out.append((rel, ""))
+    return out
+
+
+_FORM_TAG = {"form:form": "form", "form:input": "input", "form:password": 'input type="password"',
+             "form:hidden": 'input type="hidden"', "form:select": "select", "form:option": "option",
+             "form:options": "option", "form:textarea": "textarea", "form:checkbox": 'input type="checkbox"',
+             "form:checkboxes": 'input type="checkbox"', "form:radiobutton": 'input type="radio"',
+             "form:radiobuttons": 'input type="radio"', "form:button": "button", "form:errors": "span",
+             "form:label": "label", "html:form": "form", "html:text": "input", "html:submit": 'input type="submit"',
+             "html:password": 'input type="password"', "html:select": "select", "html:option": "option",
+             "html:textarea": "textarea", "html:link": "a", "h:form": "form", "h:inputtext": "input",
+             "h:commandbutton": 'input type="submit"', "h:outputtext": "span", "h:commandlink": "a"}
+
+
+def preview_html(text: str) -> str:
+    """A JSP / JSF page as a browser would show its source: scriptlets and directives removed,
+    form tags turned into their HTML elements, other server tags dropped (their content kept)."""
+    text = re.sub(r"<%--.*?--%>|<%.*?%>", "", text, flags=re.S)
+
+    def tag(m):
+        closing, name, rest = m.group(1), m.group(2).lower(), m.group(3)
+        html_tag = _FORM_TAG.get(name)
+        if html_tag is None:
+            return ""
+        if closing:
+            return f"</{html_tag.split()[0]}>"
+        rest = re.sub(r"\bpath\s*=", "name=", rest)
+        rest = re.sub(r"\bproperty\s*=", "name=", rest)
+        return f"<{html_tag}{rest}>"
+    return re.sub(r"<(/?)([a-zA-Z]+:[\w.-]+)([^<>]*)>", tag, text)
+
+
+def _static_dirs_for(workspace: Path, rel: str) -> list[Path]:
+    """Folders a static page's own references resolve against: its folder, then the web roots above it."""
+    path = workspace / rel
+    found = [path.parent]
+    for parent in path.parents:
+        if parent == workspace or workspace not in parent.parents:
+            break
+        if parent.name in ("static", "public", "webapp", "WebContent", "www", "resources", "html", "web"):
+            found.append(parent)
+    return [d for d in dict.fromkeys(found) if d.is_dir() and not d.is_symlink()]
 
 
 # ── rendering ───────────────────────────────────────────────────────────────
@@ -432,6 +545,16 @@ async def capture(workspace_dir: str, inventory: dict, out_dir: str,
     # Screens, in page order, each page's states in their fixed order, up to the limit.
     screens = []
     for page in pages:
+        if page.static:
+            if len(screens) >= max_screens:
+                manifest["not_rendered"].append({"what": _what(page), "template": page.template,
+                                                 "reason": f"screen limit reached (UI_SCREENSHOTS_MAX_PAGES = "
+                                                           f"{max_screens})"})
+                continue
+            page.files = [page.template]
+            screens.append((f"SCR-{len(screens) + 1:04d}", page, ui_mock_data.PageState(
+                "static preview", {}, [], True, "the page's source as a browser shows it, without data")))
+            continue
         troot = workspace / page.templates_root
         facts = ui_mock_data.read_template(troot, page.template)
         page.files = [f"{page.templates_root}/{f}" for f in facts.files]
@@ -451,7 +574,8 @@ async def capture(workspace_dir: str, inventory: dict, out_dir: str,
         html_dir = work / "html"
         html_dir.mkdir()
         results: dict[str, dict] = {}
-        roots = sorted({p.templates_root for _, p, _ in screens})
+        roots = sorted({p.templates_root for _, p, _ in screens if not p.static})
+        (work / "static").mkdir()
         for k, troot in enumerate(roots):
             copy = work / f"templates-{k}"
             await asyncio.to_thread(_copy_tree, workspace / troot, copy, (".html", ".htm", ".xml", ".txt", ".css",
@@ -466,6 +590,19 @@ async def capture(workspace_dir: str, inventory: dict, out_dir: str,
 
         shots = []
         for sid, page, st in screens:
+            if page.static:
+                html_file = work / "static" / f"{sid}.html"
+                text = (workspace / page.template).read_text(encoding="utf-8", errors="replace")
+                html_file.write_text(preview_html(text) if not page.template.endswith((".html", ".htm")) else text,
+                                     encoding="utf-8")
+                shots.append((sid, html_file, _static_dirs_for(workspace, page.template), out / f"{sid}.png"))
+                manifest["screens"].append({
+                    "id": sid, "image": f"{sid}.png", "mode": "static preview",
+                    "note": "" if page.template.endswith((".html", ".htm")) else
+                    "Server tags and scriptlets removed; expressions are shown as written.",
+                    "template": page.template, "files": page.files, "endpoint": page.endpoint,
+                    "state": st.name, "description": st.description, "model": {}})
+                continue
             k = roots.index(page.templates_root)
             r = results.get(sid, {"ok": False, "error": "the Thymeleaf renderer is not available"})
             if r.get("ok"):
@@ -509,7 +646,7 @@ def _clean(text: str, tmp: str, workspace_dir: str) -> str:
 def _what(page: Page) -> str:
     if page.endpoint:
         return f"{page.endpoint['verb']} {page.endpoint['path']}"
-    return f"template {page.template}"
+    return f"page {page.template}" if page.static else f"template {page.template}"
 
 
 def _what_from(screen: dict) -> str:
@@ -553,12 +690,20 @@ def _display(value):
     return value
 
 
-def to_markdown(manifest: dict, ledger: dict | None = None, image_prefix: str = "screens/") -> str:
+def to_markdown(manifest: dict, ledger: dict | None = None, image_prefix: str = "screens/",
+                page_titles: dict[str, str] | None = None) -> str:
+    """`page_titles`: {page file: "PG-nn Title"} from the UI Pages document — the screens are
+    then given in its page order, under its page ids, so the two documents read side by side."""
     screens = manifest.get("screens", [])
+    page_titles = page_titles or {}
+    if page_titles:
+        order = {f: i for i, f in enumerate(page_titles)}
+        screens = sorted(screens, key=lambda x: order.get(x["template"], len(order)))
     lines = ["## UI Screens", "",
              "_Rendered by the pipeline from the repository's own templates with generated sample data — not "
              "screenshots of a running system. Layout, labels, conditions and role-based visibility come from the "
-             "templates; every value shown is made up. Scripts are not run._", ""]
+             "templates; every value shown is made up. Scripts are not run. JSP and HTML pages are static "
+             "previews of their source._", ""]
     if manifest.get("failed"):
         for note in manifest.get("notes", []):
             lines += [f"> {note}", ""]
@@ -581,11 +726,13 @@ def to_markdown(manifest: dict, ledger: dict | None = None, image_prefix: str = 
             current = key
             e = s.get("endpoint")
             title = f"`{e['verb']} {e['path']}`" if e else f"`{s['template'].rsplit('/templates/', 1)[-1]}`"
+            if page_titles.get(s["template"]):
+                title = f"{page_titles[s['template']]} — {title}"
             lines += ["", f"### {title}", ""]
             if e:
                 lines.append(f"- Handler: `{e['handler']}` (`{e['source']}`)")
             else:
-                lines.append("- Handler: none found — a template no controller names")
+                lines.append("- Handler: none found — a page no controller names")
             lines.append(f"- Template: `{s['template']}`")
         rules = _rules_for(s, ledger)
         lines += ["", f"#### {s['id']} · {s['state']}", "",
@@ -616,5 +763,5 @@ def to_markdown(manifest: dict, ledger: dict | None = None, image_prefix: str = 
         for n in manifest["not_rendered"]:
             lines.append(f"| {n['what'].replace('|', '/')} | `{n['template']}` | {n['reason'].replace('|', '/')} |")
     if not screens and not manifest.get("not_rendered"):
-        lines += ["", "No Thymeleaf pages were found in the confirmed stacks."]
+        lines += ["", "No Thymeleaf, JSP or HTML pages were found in the confirmed stacks."]
     return "\n".join(lines).rstrip() + "\n"
