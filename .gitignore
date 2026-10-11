@@ -22,3 +22,6 @@ modernizer-app/dist/
 *.SKILL.md.lock
 SKILL.md.lock
 agents/skills/*/SKILL.md.lock
+
+# Gemini CLI release build (gemini-cli/build-release.mjs)
+/dist/

@@ -19,6 +19,7 @@ any agent that reads the brief and writes its answer to `.modernizer/out/<step_i
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -29,6 +30,9 @@ if str(_BACKEND) not in sys.path:
 try:
     from dotenv import load_dotenv
     load_dotenv(_BACKEND / ".env")
+    # Settings that survive an extension update (an installed copy is replaced on update):
+    # MODERNIZER_HOME/.env, default ~/.modernizer/.env. The checkout's .env wins where both set a key.
+    load_dotenv(Path(os.getenv("MODERNIZER_HOME") or Path.home() / ".modernizer") / ".env")
 except ImportError:
     pass
 

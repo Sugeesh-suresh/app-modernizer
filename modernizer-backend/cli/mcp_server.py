@@ -33,6 +33,9 @@ if str(_BACKEND) not in sys.path:
 try:   # the same .env the web backend reads (MIGRATION_JAVA_HOME, MAVEN_SETTINGS, limits, ...)
     from dotenv import load_dotenv
     load_dotenv(_BACKEND / ".env")
+    # Settings that survive an extension update (an installed copy is replaced on update):
+    # MODERNIZER_HOME/.env, default ~/.modernizer/.env. The checkout's .env wins where both set a key.
+    load_dotenv(Path(os.getenv("MODERNIZER_HOME") or Path.home() / ".modernizer") / ".env")
 except ImportError:
     pass
 
