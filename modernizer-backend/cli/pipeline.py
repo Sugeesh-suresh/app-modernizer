@@ -34,7 +34,7 @@ from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11.fence_rules import FENCE_RULES, STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.java_8_to_25.stages import COMPANIONS_AFTER_STAGE, INCREMENTAL_STAGES, incremental_stages
 from agents.shared import (
-    approved_versions, callbacks, change_audit, companion_detector, dependency_graph, diffing, java_preflight,
+    approved_versions, progress, callbacks, change_audit, companion_detector, dependency_graph, diffing, java_preflight,
     learned_fixes, migration_inventory, plan_contract, plan_paths, plan_tasks, re_units, scope_fence, skill_manifest,
     skill_steps,
 )
@@ -257,6 +257,7 @@ def _phase_preflight(run: Run, log: list[str]) -> dict | None:
     java = next((p for p in _bundle(run) if java_preflight.module_for(p)), None) \
         if config.PREFLIGHT != "off" else None
     if java and not run.state.get("preflight_ok"):
+        progress.stage(f"Environment check for {P.get(java).label}: JDKs, Maven, then a build of the code as uploaded")
         module = java_preflight.module_for(java)
         pf = java_preflight.run(java, str(run.workspace), run.state.get("migration_strategy") or "bigbang",
                                 bool(run.state.get("springboot_upgrade")))
@@ -299,6 +300,8 @@ def _phase_analysis(run: Run, log: list[str]) -> dict | None:
     feedback = run.state.get("analysis_feedback")
     ws = str(run.workspace)
     if _uses_inventory(pattern):
+        progress.stage(f"Analysis: the {P.get(pattern).label} inventory — every relevant file scanned against the "
+                       "migration's checklist (no model)")
         if pattern == P.JAVA_8_TO_11:
             inv = java11_inventory.build(ws)
             document = java11_inventory.to_document(inv, max_rows=config.INVENTORY_MAX_ROWS)
@@ -975,6 +978,7 @@ def _complete_curate(run: Run, step: dict, output: str) -> str:
 # ── finish ───────────────────────────────────────────────────────────────────
 
 def _phase_finish(run: Run, log: list[str]) -> dict | None:
+    progress.stage("Finishing: comparing the repository with its baseline snapshot (changes.md, changes.patch)")
     ws, base = str(run.workspace), run.state.get("baseline_dir", "")
     for pattern in _bundle(run):
         if not scope_fence.fence_for(pattern):

@@ -85,7 +85,12 @@ def main(argv: list[str] | None = None) -> int:
             if args.cmd == "status":
                 print(pipeline.summary(run))
             elif args.cmd == "next":
-                step, log = pipeline.next_step(run)
+                from agents.shared import progress
+                previous = progress.activate(progress.Tracker(echo=True))   # each stage on stderr as it starts
+                try:
+                    step, log = pipeline.next_step(run)
+                finally:
+                    progress.activate(previous)
                 print(_format_step(step, log))
             elif args.cmd == "complete":
                 print(pipeline.complete_step(run, args.step_id))

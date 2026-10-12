@@ -39,7 +39,7 @@ from pathlib import Path
 
 from .. import config
 from ..java_8_to_11.preflight import check_approved, maven_roots
-from ..shared import approved_versions, java_env
+from ..shared import approved_versions, java_env, progress
 from .stages import INCREMENTAL_STAGES, incremental_stages
 
 TARGET = 25
@@ -170,6 +170,8 @@ def run(workspace_dir: str, strategy: str = "bigbang", springboot_upgrade: bool 
     import platform
     workspace = Path(workspace_dir)
     pf = Preflight(os=f"{platform.system()} {platform.release()}", settings=config.MAVEN_SETTINGS)
+    progress.stage("Environment check: finding the JDKs (MIGRATION_JAVA_HOMES, MIGRATION_JAVA_HOME, "
+                   "BASELINE_JAVA_HOME, JAVA_HOME, PATH)")
     pf.jdks = available_jdks()
     releases = releases_for(strategy, springboot_upgrade)
     chosen = assign(releases, pf.jdks)
@@ -185,6 +187,7 @@ def run(workspace_dir: str, strategy: str = "bigbang", springboot_upgrade: bool 
                             f"— they compile for {r}, but tests run on a Java {chosen[r]['major']} runtime. Name a "
                             f"JDK {r} in MIGRATION_JAVA_HOMES for an exact check.")
 
+    progress.stage("Environment check: finding the Maven builds in the repository")
     roots = maven_roots(workspace)
     pf.roots = [r.relative_to(workspace).as_posix() or "." for r in roots]
     if not roots:
@@ -198,6 +201,7 @@ def run(workspace_dir: str, strategy: str = "bigbang", springboot_upgrade: bool 
     if not mvn:
         problems.append("Maven is not installed (no `mvn` on PATH and no `mvnw` in the project).")
     else:
+        progress.stage(f"Environment check: `{Path(mvn).name} -v`")
         code, out = java_env._run([mvn, "-v"], roots[0], java_env.build_env(None), 120)
         first = next((l for l in out.splitlines() if l.startswith("Apache Maven")), "")
         pf.maven = first.strip()
@@ -222,10 +226,14 @@ def run(workspace_dir: str, strategy: str = "bigbang", springboot_upgrade: bool 
     pf.baseline_jdk = baseline["major"]
     if entries:
         pf.approved_checked = sum(1 for e in entries if e.artifact != "*")
+        progress.stage(f"Environment check: can each of the {pf.approved_checked} approved versions be downloaded")
         pf.approved_unavailable = check_approved(entries, java_home=baseline["home"] or None)
 
     coords: list[str] = []
-    for root in roots:
+    for n, root in enumerate(roots, 1):
+        progress.stage(f"Environment check: baseline build of `{root.relative_to(workspace).as_posix() or '.'}` "
+                       f"({n} of {len(roots)}) on JDK {baseline['major']} — `mvn -fae -DskipTests clean package` "
+                       "of the code as uploaded (a first build downloads every dependency)")
         code, out = java_env.run_maven(root, ["-fae", "-DskipTests", "clean", "package"],
                                        java_home=baseline["home"] or None)
         res = java_env.classify(out, code, root)

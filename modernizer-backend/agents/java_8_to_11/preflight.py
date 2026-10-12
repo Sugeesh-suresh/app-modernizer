@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .. import config
-from ..shared import approved_versions, java_env
+from ..shared import approved_versions, java_env, progress
 from ..shared.dependency_graph import EXCLUDED_DIRS
 
 TARGET = 11
@@ -101,12 +101,14 @@ def check_approved(entries, java_home: str | None = None, workers: int = 4) -> l
 def run(workspace_dir: str) -> Preflight:
     workspace = Path(workspace_dir)
     pf = Preflight()
+    progress.stage("Environment check: finding the Maven builds in the repository")
     roots = maven_roots(workspace)
     pf.roots = [r.relative_to(workspace).as_posix() or "." for r in roots]
     gradle = any(workspace.rglob("build.gradle")) or any(workspace.rglob("build.gradle.kts"))
     if not roots:
         pf.build_tool = "gradle" if gradle else "none"
 
+    progress.stage("Environment check: the JDK and Maven (`java -version`, `mvn -v`)")
     tc = java_env.probe(roots[0] if roots else workspace, target=TARGET)
     pf.toolchain = asdict(tc)
     if not roots:
@@ -131,6 +133,7 @@ def run(workspace_dir: str) -> Preflight:
         return pf
     if entries:
         pf.approved_checked = sum(1 for e in entries if e.artifact != "*")
+        progress.stage(f"Environment check: can each of the {pf.approved_checked} approved versions be downloaded")
         pf.approved_unavailable = check_approved(entries)
 
     coords: list[str] = []
@@ -141,7 +144,9 @@ def run(workspace_dir: str) -> Preflight:
             pf.notes.append(f"BASELINE_JAVA_HOME (`{config.BASELINE_JAVA_HOME}`) could not run Java — "
                             "baseline tests skipped.")
         else:
-            for root in roots:
+            for n, root in enumerate(roots, 1):
+                progress.stage(f"Environment check: baseline tests of `{root.relative_to(workspace).as_posix() or '.'}` "
+                               f"({n} of {len(roots)}) on JDK {base_tc.java_major} — `mvn -fae clean test`")
                 java_env.clear_reports(root)
                 code, out = java_env.run_maven(root, ["-fae", "clean", "test", "-Dmaven.test.failure.ignore=true"],
                                                java_home=config.BASELINE_JAVA_HOME)
@@ -152,7 +157,10 @@ def run(workspace_dir: str) -> Preflight:
                 pf.baseline_failing_tests += java_env.surefire_failures(root)
             pf.baseline_tests_run = True
 
-    for root in roots:
+    for n, root in enumerate(roots, 1):
+        progress.stage(f"Environment check: baseline build of `{root.relative_to(workspace).as_posix() or '.'}` "
+                       f"({n} of {len(roots)}) on Java {TARGET} — `mvn -fae -DskipTests clean package` of the code "
+                       "as uploaded (a first build downloads every dependency)")
         code, out = java_env.run_maven(root, ["-fae", "-DskipTests", "clean", "package"])
         res = java_env.classify(out, code, root)
         _merge(pf, res, root.relative_to(workspace).as_posix(), coords)

@@ -29,6 +29,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 
 from .change_audit import LEGACY_MARKERS, Marker
+from . import progress
 from .dependency_graph import EXCLUDED_DIRS
 from .evidence import redact, sample
 from .pom_facts import parse_pom, resolver
@@ -401,6 +402,8 @@ def scan(workspace_dir: str, suffixes: frozenset) -> Scan:
             continue
         rel_s = rel.as_posix()
         files.append(rel_s)
+        if len(files) % 250 == 0:
+            progress.detail(f"{len(files):,} files listed, {len(texts):,} read so far — now `{rel_s}`")
         name = PurePosixPath(rel_s).name.lower()
         if PurePosixPath(rel_s).suffix.lower() in suffixes or name == "managed-schema":
             try:

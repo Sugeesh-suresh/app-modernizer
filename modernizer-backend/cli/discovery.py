@@ -24,6 +24,7 @@ import pickle
 from pathlib import Path
 
 from agents import config
+from agents.shared import progress
 from agents.shared import (
     arch_diagrams, config_matrix, current_state, dependency_graph, evidence_pack, existing_tests, external_rules,
     grounding, interfaces, plain_language, repo_fingerprint, rule_candidates, rules_ledger, stack_detector,
@@ -123,6 +124,8 @@ def next_step(run: Run) -> tuple[dict, list[str]]:
             if group is None:
                 continue                                   # jobs that needed no agent: look again
             return group, log
+        if job["kind"] in _JOB_LABELS:
+            progress.stage(_JOB_LABELS[job["kind"]])
         step = _JOBS[job["kind"]](run, job, log)
         if step is not None:
             return step, log
@@ -724,18 +727,22 @@ def _job_screens(run: Run, job: dict, log: list[str]) -> None:
 def _job_computed(run: Run, job: dict, log: list[str]) -> None:
     ws = str(run.workspace)
     docs = _documents(run)
+    progress.detail("Now: interfaces (endpoints, messaging, scheduled jobs)")
     inv = interfaces.scan(ws)
     _write(_d(run, "computed", "interfaces.json"), json.dumps(inv))
     _write(_d(run, "computed", "interfaces.md"), interfaces.to_markdown(inv))
     _write(_d(run, "computed", "config_matrix.md"), config_matrix.to_markdown(config_matrix.scan(ws), None) or "")
+    progress.detail("Now: system inventory (database, integrations, security, observability)")
     sysinv = system_inventory.scan(ws)
     _write(_d(run, "computed", "system_inventory.json"), json.dumps(sysinv))
     _write(_d(run, "computed", "system_inventory.md"), system_inventory.to_markdown(sysinv))
+    progress.detail("Now: setup facts")
     _write(_d(run, "computed", "setup_facts.md"), setup_facts.to_markdown(setup_facts.scan(ws)))
     ui_result = {"screens": [], "contracts": [], "unmatched": [], "uncalled": [], "pages": []}
     pages_md, covered = "", {}
     try:
         # Needed by every document: the strategy signals, the UI pass, the OpenAPI file, the debt scan.
+        progress.detail("Now: UI contracts")
         ui_result = ui_contracts.scan(ws, inv)
     except Exception as exc:                                  # noqa: BLE001 — the documents do not depend on it
         log.append(f"UI contracts scan failed: {type(exc).__name__}: {exc}")
@@ -749,6 +756,7 @@ def _job_computed(run: Run, job: dict, log: list[str]) -> None:
     _write(_d(run, "computed", "endpoint_contracts.md"), ui_contracts.contracts_markdown(ui_result))
     _write(_d(run, "computed", "ui_pages.md"), pages_md)
     _write(_d(run, "computed", "ui_to_backend.md"), ui_contracts.to_markdown(ui_result, covered))
+    progress.detail("Now: existing tests")
     tests = existing_tests.scan(ws) if "test_inventory" in docs else []
     _write(_d(run, "computed", "test_files.md"), existing_tests.to_markdown(tests))
     _write(_d(run, "computed", "modules.json"), json.dumps(module_names(ws)))
@@ -1130,6 +1138,19 @@ _JOBS = {
     "ui_batch": _job_ui_batch, "assemble": _job_assemble, "review": _job_review, "strategy": _job_strategy,
     "layer": _job_layer, "layer_batch": _job_layer_batch, "layer_merge": _job_layer_merge,
     "evidence_unit": _job_evidence_unit, "evidence_merge": _job_evidence_merge, "health": _job_health,
+}
+# What the deterministic jobs are doing, for the progress report while they run (agents/shared/progress.py).
+_JOB_LABELS = {
+    "ground": "Grounding: checking every evidence item against the repository",
+    "rules_prepare": "Business rules: scanning the code for rule candidates",
+    "rules_finalize": "Business rules: finalising the ledger, coverage and the external rules scan",
+    "screens": "UI screens: rendering the screens",
+    "computed": "Computed sections: interfaces, configuration, system inventory, setup facts, UI contracts, tests",
+    "health": "Tech debt and dead code: scanning the repository",
+    "assemble": "Assembling the documents: grounding, computed sections, diagrams and citation checks",
+    "layer_merge": "Merging the pass's batch outputs",
+    "evidence_merge": "Merging the evidence units",
+    "ui_prepare": "Preparing the UI batches",
 }
 _DONE = {"mapper": _done_mapper, "evidence": _done_evidence, "evidence_unit": _done_evidence_unit,
          "layer_batch": _done_layer_batch, "rules_batch": _done_rules, "writer": _done_writer, "ui_batch": _done_ui}

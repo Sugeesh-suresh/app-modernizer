@@ -142,6 +142,32 @@ same response, and Gemini CLI runs those calls at the same time. Each batch gets
 checks it gets when run alone, its result is recorded when it completes (in any order), and whatever depends
 on a group — a pass's merge, the rules finalisation, the writers — waits until every batch of it is in. Set
 `DISCOVERY_CONCURRENCY=1` to run one at a time, or lower it if Gemini reports rate limits (429).
+
+### Progress while the pipeline works
+
+Some steps need no model and can still take minutes: the Java preflight builds the code as uploaded with
+Maven (the first build downloads every dependency), the inventories scan every file, discovery computes its
+sections. `next_step` runs that work in the background and, instead of leaving Gemini on "Thinking…",
+answers after `PROGRESS_FIRST_REPORT_SECONDS` (default 20) and then every `PROGRESS_REPORT_SECONDS` (default
+60) with what is running:
+
+```text
+## Still working — no step for you yet
+
+**The run is working through its deterministic steps** — running for 4m10s (no model involved).
+
+- **Now:** Environment check: baseline build of `rest` (2 of 3) on JDK 8 — `mvn -fae -DskipTests clean package` … — 2m05s
+  - Maven: building `security-rest 1.0 [2/5]`; step `maven-compiler-plugin:compile`; 412 artifact(s) downloaded, last `spring-core-3.2.18.RELEASE.jar`
+  - Last output (2m05s in, 1830 lines): `[INFO] Compiling 214 source files to …/target/classes`
+
+Finished so far:
+- Environment check: finding the JDKs (…) (6s)
+- Environment check: baseline build of `.` (1 of 3) on JDK 8 — … (1m52s)
+```
+
+Gemini relays the **Now:** line and calls `next_step` again; that call re-attaches to the same work, so
+pressing Esc and resuming never restarts a build. `/modernize:status` shows the same report while it runs.
+`python -m cli next` prints each stage to stderr as it starts.
 ## Without Gemini CLI
 
 The pipeline is plain Python; `python -m cli` (in `modernizer-backend/`, with the `.venv-cli` Python) drives it

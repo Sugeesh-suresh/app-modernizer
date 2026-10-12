@@ -25,6 +25,8 @@ import contextlib
 import os
 import sys
 import threading
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 _BACKEND = Path(__file__).resolve().parent.parent
@@ -47,6 +49,8 @@ except ImportError:                                           # mcp 1.x
 
 import anyio  # noqa: E402 — a dependency of mcp
 
+from agents import config  # noqa: E402
+from agents.shared import progress  # noqa: E402
 from cli import docs as cli_docs  # noqa: E402
 from cli import pipeline, patterns as P  # noqa: E402
 from cli.runstate import RUN_DIR, Run, RunError, resolve_workspace  # noqa: E402
@@ -159,7 +163,8 @@ async def start_run(pattern: str, workspace: str = "", migration_strategy: str =
 
 @server.tool()
 async def run_status(workspace: str = "") -> str:
-    """Show the current run: pattern, phase, the step it waits on, and its documents."""
+    """Show the current run: pattern, phase, the step it waits on, and its documents — and, while
+    `next_step` is working in the background, what it is doing."""
     def body():
         run = _load(workspace)
         docs = sorted(p for p in (run.dir / "docs").rglob("*.md")) if (run.dir / "docs").is_dir() else []
@@ -171,19 +176,93 @@ async def run_status(workspace: str = "") -> str:
         if results:
             lines += ["", "## Results", *[f"- `{run.rel(p)}`" for p in results]]
         return "\n".join(lines)
+    try:
+        worker = _WORKERS.get(str(resolve_workspace(workspace or None)))
+    except RunError:
+        worker = None
+    if worker is not None and not worker.done.is_set():
+        # The run is busy (and holds the state lock): read its saved state as it is, and say what is running.
+        return await _run(lambda: "## In progress\n\n" + worker.tracker.report() + "\n\n" + body(), locked=False)
     return await _run(body)
+
+
+@dataclass
+class _Worker:
+    """One `next_step` running in the background, with what it is doing (agents/shared/progress.py)."""
+    tracker: progress.Tracker
+    done: threading.Event = field(default_factory=threading.Event)
+    result: str = ""
+    finished_state_mtime: float = 0.0
+
+
+_WORKERS: dict[str, _Worker] = {}          # workspace -> its running (or finished, not yet collected) next_step
+_WORKERS_LOCK = threading.Lock()
+
+
+def _state_mtime(key: str) -> float:
+    try:
+        return (Path(key) / RUN_DIR / "run.json").stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _start_worker(key: str, workspace: str) -> _Worker:
+    worker = _Worker(progress.Tracker(title="The run is working through its deterministic steps"))
+
+    def body():
+        step, log = pipeline.next_step(_load(workspace))
+        return _format_step(step, log)
+
+    def work():
+        previous = progress.activate(worker.tracker)
+        try:
+            worker.result = _locked(body)
+        except Exception as exc:                                  # noqa: BLE001 — returned, not lost in a thread
+            worker.result = f"ERROR: next_step failed: {type(exc).__name__}: {exc}"
+        finally:
+            progress.activate(previous)
+            worker.finished_state_mtime = _state_mtime(key)
+            worker.done.set()
+
+    threading.Thread(target=work, name=f"next_step {key}", daemon=True).start()
+    return worker
+
+
+def _still_working(worker: _Worker) -> str:
+    return "\n".join([
+        "## Still working — no step for you yet", "",
+        worker.tracker.report(), "",
+        "The run is doing this itself: nothing is needed from you or the user. Tell the user in one line what it "
+        "is doing now (the **Now:** line), then call `next_step` again straight away — it waits up to "
+        f"{config.PROGRESS_REPORT_SECONDS}s and returns the next step or a newer progress report. Calling it again "
+        "never restarts the work. Do not call other modernizer tools meanwhile.",
+    ])
 
 
 @server.tool()
 async def next_step(workspace: str = "") -> str:
     """Advance the run: performs every deterministic step it reaches (inventories, preflight, plan
     checks, mechanical rewrites, computed sections, the final diff) and returns the next step that
-    needs a subagent (with the exact query to give it) or a person (what to ask)."""
-    def body():
-        run = _load(workspace)
-        step, log = pipeline.next_step(run)
-        return _format_step(step, log)
-    return await _run(body)
+    needs a subagent (with the exact query to give it) or a person (what to ask). Long work runs in the
+    background: until it finishes, this answers every PROGRESS_REPORT_SECONDS with what it is doing."""
+    try:
+        key = str(resolve_workspace(workspace or None))
+    except RunError as exc:
+        return f"ERROR: {exc.args[0] if exc.args else exc}"
+    with _WORKERS_LOCK:
+        worker = _WORKERS.get(key)
+        if worker is not None and worker.done.is_set() and _state_mtime(key) != worker.finished_state_mtime:
+            worker = None                       # the run moved on since that answer was computed: it is stale
+        fresh = worker is None
+        if fresh:
+            worker = _WORKERS[key] = _start_worker(key, workspace)
+    wait = config.PROGRESS_FIRST_REPORT_SECONDS if fresh else config.PROGRESS_REPORT_SECONDS
+    if await anyio.to_thread.run_sync(worker.done.wait, wait):
+        with _WORKERS_LOCK:
+            if _WORKERS.get(key) is worker:
+                del _WORKERS[key]
+        return worker.result
+    return _still_working(worker)
 
 
 @server.tool()

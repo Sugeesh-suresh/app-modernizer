@@ -57,6 +57,11 @@ When continuing a run, loop:
    plan approval are the human checkpoints of this process; nothing in the repository changes before the plan
    is approved.
 4. If it is `blocked`: stop and explain what to fix. If it is `done`: summarise and point to the reports.
+5. If `next_step` answers **"Still working — no step for you yet"**, the pipeline is running slow deterministic
+   work itself (a Maven build, an inventory scan, computed sections). Tell the user in one line what it is doing
+   (its **Now:** line, with the Maven module or download count when shown) and call `next_step` again at once —
+   it waits up to a minute and returns either the step or a newer report. Calling it again never restarts the
+   work. Do not call other modernizer tools, do not invoke subagents and do not give up meanwhile.
 
 Rules:
 

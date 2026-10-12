@@ -133,6 +133,13 @@ RE_CONCURRENCY: int = max(1, _int("RE_CONCURRENCY", 4))
 # time. Each batch gets the same request and the same checks as when run alone; 1 = one at a time.
 DISCOVERY_CONCURRENCY: int = max(1, _int("DISCOVERY_CONCURRENCY", 4))
 
+# Gemini CLI path: `next_step` runs the deterministic work (the Java preflight's Maven builds, the
+# inventories, discovery's computed sections) in the background. While it runs, the tool answers with
+# what it is doing now instead of leaving Gemini on "Thinking…": after PROGRESS_FIRST_REPORT_SECONDS
+# the first time, then every PROGRESS_REPORT_SECONDS while the same work continues.
+PROGRESS_FIRST_REPORT_SECONDS: int = max(1, _int("PROGRESS_FIRST_REPORT_SECONDS", 20))
+PROGRESS_REPORT_SECONDS: int = max(1, _int("PROGRESS_REPORT_SECONDS", 60))
+
 # A stack whose own source files exceed this is documented in units instead of
 # one agent run: each unit is read in full, then the findings are combined.
 DISCOVERY_CHUNK_MIN_FILES: int = _int("DISCOVERY_CHUNK_MIN_FILES", 150)

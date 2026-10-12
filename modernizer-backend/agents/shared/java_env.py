@@ -23,11 +23,13 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import config
+from . import progress
 
 _IS_WINDOWS = os.name == "nt"
 
@@ -69,6 +71,8 @@ def maven_settings_args(args: list[str]) -> list[str]:
 
 
 def _run(cmd: list[str], cwd: Path, env: dict, timeout: int) -> tuple[int, str]:
+    if progress.wants_output():
+        return _run_streaming(cmd, cwd, env, timeout)
     try:
         r = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout,
                            errors="replace")
@@ -77,6 +81,34 @@ def _run(cmd: list[str], cwd: Path, env: dict, timeout: int) -> tuple[int, str]:
     except subprocess.TimeoutExpired:
         return 124, f"TIMEOUT after {timeout}s: {' '.join(cmd)}"
     return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
+def _run_streaming(cmd: list[str], cwd: Path, env: dict, timeout: int) -> tuple[int, str]:
+    """`_run`, with each output line passed to the active progress tracker as it is printed (stdout
+    and stderr merged), so a person waiting on a long build sees what it is doing."""
+    try:
+        proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, errors="replace")
+    except FileNotFoundError:
+        return 127, f"{cmd[0]}: not found"
+    chunks: list[str] = []
+
+    def pump():
+        for line in proc.stdout:
+            chunks.append(line)
+            progress.output(line)
+
+    reader = threading.Thread(target=pump, daemon=True)
+    reader.start()
+    try:
+        code = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        reader.join(5)
+        return 124, f"TIMEOUT after {timeout}s: {' '.join(cmd)}"
+    reader.join()
+    return code, "".join(chunks)
 
 
 def run_maven(cwd: Path, args: list[str], java_home: str | None = None,

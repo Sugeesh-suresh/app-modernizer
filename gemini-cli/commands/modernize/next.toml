@@ -15,6 +15,9 @@ Stella Modernizer context exactly:
   the reminder above. Then call next_step again.
 - kind `ask_user` or `review_gate`: stop and present the step's text to the user in plain words, with the
   file paths to review and the commands that answer it. Do not answer a gate yourself.
+- "Still working — no step for you yet": slow deterministic work is running (a Maven build, a scan). Tell the
+  user in one line what its **Now:** line says, then call next_step again at once; repeat until a step comes
+  back. Calling it again never restarts the work.
 - kind `blocked`: stop and explain what must be fixed.
 - kind `done`: summarise the outcome and where the reports are.
 
