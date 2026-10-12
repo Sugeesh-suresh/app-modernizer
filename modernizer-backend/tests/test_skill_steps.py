@@ -86,3 +86,23 @@ def test_lessons_and_curation_reach_the_step_files_in_the_one_skill_folder(tmp_p
     list_files, read_file, _ = make_skill_curator_tools(["oracle-19c-to-23ai:plan", "oracle-19c-to-23ai:fix"])
     assert "references/steps/fix.md" in list_files("oracle-19c-to-23ai")
     assert read_file("solr-4-to-9", "SKILL.md").startswith("ERROR")
+
+
+def test_inventory_only_migrations_have_no_reverse_engineering_step(monkeypatch):
+    """Java 8 -> 25, Solr and Oracle analyse with the deterministic inventory only: their skills have
+    no `re` step, and MIGRATION_ANALYSIS=agent does not send them looking for one."""
+    import main
+    from agents import config
+    from agents.shared import migration_inventory
+    from cli import patterns, pipeline
+
+    monkeypatch.setattr(config, "MIGRATION_ANALYSIS", "agent")
+    for m in ("java-8-to-25", "solr-4-to-9", "oracle-19c-to-23ai"):
+        assert m in migration_inventory.INVENTORY_ONLY
+        assert not (skill_steps.SKILLS_DIR / m / "references" / "steps" / "re.md").exists(), m
+        assert "`re`" not in (skill_steps.SKILLS_DIR / m / "SKILL.md").read_text(encoding="utf-8"), m
+        spec = patterns.PATTERNS[m]
+        assert not spec.re_skills and f"{m}:re" not in spec.curator_skills, m
+        assert pipeline._uses_inventory(m) and main._uses_inventory(m, False), m
+        assert not main._analysis_review(m), m
+    assert not pipeline._uses_inventory("tibco-ems-to-pubsub")       # still has its agent

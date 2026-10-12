@@ -32,16 +32,6 @@ _MODEL = make_model()
 _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
 
 
-re_agent = LlmAgent(
-    name="oracle_re",
-    model=_MODEL,
-    description="Reverse-engineers an Oracle 19c SQL/PLSQL codebase and produces Analysis, BRD, Technical Specification, and an Existing Test Inventory.",
-    instruction=skill_steps.instruction("oracle-19c-to-23ai:re") + ", using the list_files and read_file tools to explore the workspace.",
-    tools=[skill_steps.toolset("oracle-19c-to-23ai:re"), FunctionTool(fs_tools.list_files), FunctionTool(fs_tools.read_file)],
-    output_key="analysis",
-    include_contents="none",
-)
-
 # The plan's Skill Composition section, computed from each SKILL.md's frontmatter rather
 # than left to the model: the planner cannot see the roster, the order or the versions,
 # so a table it wrote itself would be invented.
@@ -168,7 +158,7 @@ reporter_agent = LlmAgent(
 skill_curator_agent = make_skill_curator_agent(
     _MODEL,
     allowed_skills=[
-        "oracle-19c-to-23ai:re", "oracle-19c-to-23ai:plan", "oracle-19c-to-23ai:modify",
+        "oracle-19c-to-23ai:plan", "oracle-19c-to-23ai:modify",
         "oracle-19c-to-23ai:validate", "oracle-19c-to-23ai:fix", "oracle-19c-to-23ai:report",
     ],
     context_instruction=(

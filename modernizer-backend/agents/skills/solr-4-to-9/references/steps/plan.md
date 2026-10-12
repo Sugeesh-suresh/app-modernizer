@@ -42,7 +42,7 @@ Every field-type/field change from the checklist's Schema Changes table that app
 Every request-handler/search-component/lib-path change from the checklist's solrconfig.xml Changes table that applies.
 
 ### SolrJ Client Code Migration
-Every client class/method rename from the checklist's SolrJ Client API Changes table, with the exact call sites found during reverse engineering.
+Every client class/method rename from the checklist's SolrJ Client API Changes table, with the exact call sites listed in the analysis.
 
 ### Dependency Upgrades
 `solr-solrj`/`solr-core`/`solr-test-framework` version bumps in the build file.

@@ -125,7 +125,6 @@ def test_junit_3_and_4_are_called_out_as_deprecated_even_without_the_junit_toggl
     # Only the migration is gated by the toggle — the call-out is not.
     checklist = _read("java-8-to-25/references/java8-to-java25-checklist.md")
     assert "Only the migration is gated by `{junit_upgrade}`" in checklist
-    assert "Deprecated" in _read("java-8-to-25/references/steps/re.md")
     assert "deprecated" in _read("java-8-to-25/references/steps/readiness.md")
     plan = _read("java-8-to-25/references/steps/plan.md")
     # Count real headings, not inline mentions of the section name.

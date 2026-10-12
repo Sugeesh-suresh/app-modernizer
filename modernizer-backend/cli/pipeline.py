@@ -134,7 +134,9 @@ def summary(run: Run) -> str:
 def _uses_inventory(pattern: str) -> bool:
     if pattern == P.JAVA_8_TO_11:
         return config.JAVA11_ANALYSIS != "agent"
-    return pattern in migration_inventory.INVENTORY_PATTERNS and config.MIGRATION_ANALYSIS != "agent"
+    if pattern not in migration_inventory.INVENTORY_PATTERNS:
+        return False
+    return pattern in migration_inventory.INVENTORY_ONLY or config.MIGRATION_ANALYSIS != "agent"
 
 
 def _approved(run: Run, pattern: str, stage: int | None = None) -> str:

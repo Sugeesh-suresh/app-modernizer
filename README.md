@@ -19,7 +19,7 @@ It also runs **from Gemini CLI with no ADK pipeline and no web server** — the 
 | **TIBCO EMS → Cloud Pub/Sub** | EMS destinations, JMS clients | Pub/Sub topics, `Publisher`/`Subscriber` | Real `mvn`/`gradle` compile | Single pass |
 | **JSP → React + BFF** | JSP/JSTL WAR | React frontend + Spring Boot 4 BFF (JAR) | Real `mvn compile` + `npm run build` | Single pass, dual tree |
 
-Every migration pattern runs the full pipeline: analyse → plan → **Plan review (HITL)** → code generation → build/fix loop → independent code review → report. When the analysis comes from an AI agent (JSP → React + BFF, or `MIGRATION_ANALYSIS=agent`), a person reviews it first (**Analysis review (HITL)**).
+Every migration pattern runs the full pipeline: analyse → plan → **Plan review (HITL)** → code generation → build/fix loop → independent code review → report. When the analysis comes from an AI agent (JSP → React + BFF, or TIBCO with `MIGRATION_ANALYSIS=agent`), a person reviews it first (**Analysis review (HITL)**).
 
 **The migration patterns analyse without a model by default.** Java 8 → 11, Java 8 → 25, Solr, Oracle and TIBCO go from the dependency graph straight to the planner. The analysis step is a deterministic **migration inventory**, not a reverse-engineering agent: `java_8_to_11/inventory.py` for Java 11, and `shared/migration_inventory.py` for the other four. The planner needs facts, not a narrative, and the agent loop resent everything it had read on every call, which is what exhausted token quotas (429) on large repositories. The inventory reads every relevant file once and matches it against the pattern's legacy checklist. That checklist is the same set of markers the code review later audits the result against (`shared/change_audit.py`), plus the items from the pattern's own RE checklist. The Technical Specification gets:
 - **Repo Facts:** modules, declared Java levels, and dependency versions resolved through in-repo parents.
@@ -28,7 +28,7 @@ Every migration pattern runs the full pipeline: analyse → plan → **Plan revi
 - Pattern tables: packaging and persistence for Java 25; schema field types, `luceneMatchVersion` and handlers for Solr; database objects and JDBC URLs for Oracle; destinations, producers and consumers, selectors, acknowledgement modes and EMS URLs for TIBCO.
 - A **Behaviour Inventory** of what must keep working.
 
-Credentials are never quoted. The inventory is the planner's input and is not shown for review: the run goes dependency graph → (companion choice) → plan generation, and the approved plan is the human checkpoint. `POST /api/upload` reports `analysis_review: false` for such runs (and `GET /api/patterns/analysis-review` says it per pattern before uploading), so the UI leaves those steps out. Swagger / OpenAPI / design files for the planner are attached on the upload page (`context_files`) instead of the review screen. It does not infer business intent. Set `MIGRATION_ANALYSIS=agent` (or `JAVA11_ANALYSIS=agent` for Java 11) to use the reverse-engineering agents instead. **JSP → React + BFF** and **Discover & Reverse Engineer My Stack** always run their agents: their output is a description of the application, not a checklist.
+Credentials are never quoted. The inventory is the planner's input and is not shown for review: the run goes dependency graph → (companion choice) → plan generation, and the approved plan is the human checkpoint. `POST /api/upload` reports `analysis_review: false` for such runs (and `GET /api/patterns/analysis-review` says it per pattern before uploading), so the UI leaves those steps out. Swagger / OpenAPI / design files for the planner are attached on the upload page (`context_files`) instead of the review screen. It does not infer business intent. Set `MIGRATION_ANALYSIS=agent` (TIBCO) or `JAVA11_ANALYSIS=agent` (Java 11) to use the reverse-engineering agents instead; **Java 8 → 25, Solr and Oracle** have no reverse-engineering step and always use the inventory. **JSP → React + BFF** and **Discover & Reverse Engineer My Stack** always run their agents: their output is a description of the application, not a checklist.
 
 ### Java 8 → Java 11: a JDK upgrade inside a scope fence
 
@@ -516,13 +516,13 @@ Every agent loads its prompt and reference material at runtime from `agents/skil
 
 ```text
 agents/skills/oracle-19c-to-23ai/
-  SKILL.md                    the migration, its workflow (re → plan → [approval] → modify → validate/fix → report)
+  SKILL.md                    the migration, its workflow (plan → [approval] → modify → validate/fix → report)
                               and the rules every step follows
-  references/steps/           re.md  plan.md  modify.md  validate.md  fix.md  report.md
+  references/steps/           plan.md  modify.md  validate.md  fix.md  report.md
   references/                 the migration's knowledge, shared by every step (baseline facts, checklist, patterns)
 ```
 
-The same holds for `solr-4-to-9`, `tibco-ems-to-pubsub`, `java-8-to-11` (with a `re-module` step), `java-8-to-25` (with the stage guides `readiness`, `springboot-incremental` and `springboot-boot4` as steps the modifier and fixer follow when a stage calls for them) and `jsp-to-react-bff` (with `classify`). Each agent is given the migration's skill and told which step file is its own; each step file names the knowledge files it needs — so the fixer, for example, sees the plan's checklist and the rewrite patterns. The pipeline, not the skill, decides which step runs and enforces the plan approval and the validate/fix loop. A step is named `"<migration>:<step>"` everywhere — the agents, the Gemini CLI briefs, the plan's Skill Composition table (`` `oracle-19c-to-23ai` › plan ``), the learned-fix targets and the curator's allow-list — through that one module. Skills that several pipelines share stay whole: `code-review`, `skill-curator`, the generators `react-frontend-generate` and `spring-boot-bff-generate`, and the reverse-engineering skills.
+Oracle, `solr-4-to-9` and `java-8-to-25` have no `re` step: their analysis is always the deterministic inventory. The same layout holds for `solr-4-to-9`, `tibco-ems-to-pubsub` (with an `re` step), `java-8-to-11` (with `re` and `re-module` steps), `java-8-to-25` (with the stage guides `readiness`, `springboot-incremental` and `springboot-boot4` as steps the modifier and fixer follow when a stage calls for them) and `jsp-to-react-bff` (with `classify`). Each agent is given the migration's skill and told which step file is its own; each step file names the knowledge files it needs — so the fixer, for example, sees the plan's checklist and the rewrite patterns. The pipeline, not the skill, decides which step runs and enforces the plan approval and the validate/fix loop. A step is named `"<migration>:<step>"` everywhere — the agents, the Gemini CLI briefs, the plan's Skill Composition table (`` `oracle-19c-to-23ai` › plan ``), the learned-fix targets and the curator's allow-list — through that one module. Skills that several pipelines share stay whole: `code-review`, `skill-curator`, the generators `react-frontend-generate` and `spring-boot-bff-generate`, and the reverse-engineering skills.
 
 After each run, a **skill curator** agent refines that pattern's own skills from concrete evidence — a real build error, a real review finding — with write access scoped to an explicit allow-list. Validators also append the errors they observe to their own step file (`references/steps/validate.md`).
 
@@ -700,7 +700,7 @@ The suite covers the deterministic guardrails, the stage/task and manifest parse
 2. Select a pattern and upload your project as a `.zip`
 3. For **Java 8 → 25**, choose a strategy (bigbang or phased incremental) and the JUnit / Spring Boot toggles. **Java 8 → 11** has no options — it goes straight to upload, and the API rejects the Java 8 → 25 options for it
 4. Review any **companion migrations** detected in your repo, with their evidence
-5. For **JSP → React** (or with `MIGRATION_ANALYSIS=agent`), watch the reverse-engineering run, then review and edit the **BRD** and **Technical Specification**, optionally attaching Swagger / OpenAPI / design files (and UX designs, for JSP → React). The other migrations skip this step: their deterministic inventory goes straight to the planner, and context files are attached on the upload page
+5. For **JSP → React** (or TIBCO with `MIGRATION_ANALYSIS=agent`), watch the reverse-engineering run, then review and edit the **BRD** and **Technical Specification**, optionally attaching Swagger / OpenAPI / design files (and UX designs, for JSP → React). The other migrations skip this step: their deterministic inventory goes straight to the planner, and context files are attached on the upload page
 6. Review the **Migration Plan**. Read its Change Manifest, its coverage gaps, and its open questions before approving — this is the scope agreement the code review will hold the run to
 7. Watch code generation, the per-stage build/fix loops, and the independent code review
 8. Inspect the **Changed Files** diff, browse the result, and download
@@ -823,7 +823,7 @@ app-modernizer/
 | `VALIDATE_TIMEOUT_SECONDS` | No | `3600` | One Maven build, tests included |
 | `APPROVED_VERSIONS_FILE` | No | `approved-versions.txt` | Exact versions every code-changing pipeline must use for listed artifacts (your Nexus's versions); supports `[pipeline]` and `[java-8-to-25 stage N]` sections |
 | `APPROVED_VERSIONS_STRICT` | No | `false` | `true`: no version may be introduced unless it is on the list |
-| `MIGRATION_ANALYSIS` | No | `inventory` | Java 8 → 25, Solr, Oracle and TIBCO analysis: `inventory` (deterministic, no model tokens) or `agent` (the pattern's reverse-engineering agent). JSP → React and stack discovery always use their agents |
+| `MIGRATION_ANALYSIS` | No | `inventory` | TIBCO analysis: `inventory` (deterministic, no model tokens) or `agent` (its reverse-engineering agent). Java 8 → 25, Solr and Oracle always use the inventory (no reverse-engineering step); JSP → React and stack discovery always use their agents |
 | `INVENTORY_MAX_ROWS` | No | `400` | Rows per inventory table before it states how many more exist |
 | `RE_UNIT_MAX_FILES` | No | `300` | Java 8 → 11: files per reverse-engineering unit, each analysed in its own run. `0` = one run over the whole repository |
 | `RE_FINDINGS_MAX_CHARS` | No | `20000` | Characters of findings kept per unit; a cut is stated in the document |

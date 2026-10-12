@@ -154,13 +154,13 @@ class TestSkillComposition:
 
     def test_the_table_is_the_roster_and_the_order_only(self):
         table = skill_manifest.to_markdown([
-            ("java-8-to-25:re", "Reverse-engineered this repository"),
             ("java-8-to-25:plan", "Produces this plan"),
+            ("java-8-to-25:modify", "Applies this plan"),
         ])
 
         assert "| # | Skill › step | What it governs in this run |" in table
-        assert "| 1 | `java-8-to-25` › re |" in table
-        assert "| 2 | `java-8-to-25` › plan |" in table
+        assert "| 1 | `java-8-to-25` › plan |" in table
+        assert "| 2 | `java-8-to-25` › modify |" in table
 
     def test_no_version_or_maturity_is_claimed_anywhere(self):
         table = skill_manifest.to_markdown([("java-8-to-25:plan", "Produces this plan")])

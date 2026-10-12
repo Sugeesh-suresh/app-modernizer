@@ -381,6 +381,9 @@ SPECS: dict[str, Spec] = {
 }
 
 INVENTORY_PATTERNS = frozenset(SPECS)
+# Patterns whose skills have no reverse-engineering step: their analysis is always this inventory,
+# whatever MIGRATION_ANALYSIS says.
+INVENTORY_ONLY = frozenset({"java-8-to-25", "solr-4-to-9", "oracle-19c-to-23ai"})
 
 
 # ---------------------------------------------------------------------------

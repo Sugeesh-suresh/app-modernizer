@@ -27,9 +27,13 @@ _RE_OUTPUT = (
 )
 
 
+_AGENT_PATTERN = "tibco-ems-to-pubsub"
+
+
 @pytest.fixture
 def stub_re(monkeypatch):
-    # These pin the agent path; the inventory path has its own test below.
+    # These pin the agent path (TIBCO keeps its reverse-engineering agent under
+    # MIGRATION_ANALYSIS=agent); the inventory path has its own test below.
     monkeypatch.setattr(config, "MIGRATION_ANALYSIS", "agent")
     async def fake_run_step(session_id, step_key, pattern, message, sse_event_type):
         await main._update_state(session_id, {"analysis": _RE_OUTPUT})
@@ -43,7 +47,7 @@ def stub_re(monkeypatch):
 
 def _session(ingestion_warning: str) -> str:
     state = main._initial_state(
-        "java-8-to-25", "/tmp/ws-warn", "/tmp/base-warn",
+        _AGENT_PATTERN, "/tmp/ws-warn", "/tmp/base-warn",
         json.dumps({"nodes": [], "edges": [], "groups": []}),
         "bigbang", False, False, ingestion_warning=ingestion_warning,
     )
@@ -70,7 +74,7 @@ class TestWarningReachesTheDocument:
     def test_banner_leads_the_brd_and_the_technical_spec(self, stub_re):
         sid = _session("**3 of 10 files were not unpacked** because the limit was reached.")
 
-        asyncio.run(main._run_bundle_re(sid, ["java-8-to-25"]))
+        asyncio.run(main._run_bundle_re(sid, [_AGENT_PATTERN]))
 
         state = asyncio.run(main._get_state(sid))
         for key in ("brd", "technical_spec"):
@@ -80,7 +84,7 @@ class TestWarningReachesTheDocument:
     def test_the_agent_output_is_kept_not_replaced(self, stub_re):
         sid = _session("**3 of 10 files were not unpacked**.")
 
-        asyncio.run(main._run_bundle_re(sid, ["java-8-to-25"]))
+        asyncio.run(main._run_bundle_re(sid, [_AGENT_PATTERN]))
 
         state = asyncio.run(main._get_state(sid))
         assert "the brd body" in state["brd"]
@@ -90,7 +94,7 @@ class TestWarningReachesTheDocument:
         """The UI renders from the SSE payload, not from a later state read."""
         sid = _session("**3 of 10 files were not unpacked**.")
 
-        asyncio.run(main._run_bundle_re(sid, ["java-8-to-25"]))
+        asyncio.run(main._run_bundle_re(sid, [_AGENT_PATTERN]))
 
         ready = next(e for e in _events(sid) if e["type"] == "brd-ready")
         assert "Incomplete repository" in ready["brd"]
@@ -100,7 +104,7 @@ class TestWarningReachesTheDocument:
         """A warning on every run would train reviewers to ignore it."""
         sid = _session("")
 
-        asyncio.run(main._run_bundle_re(sid, ["java-8-to-25"]))
+        asyncio.run(main._run_bundle_re(sid, [_AGENT_PATTERN]))
 
         state = asyncio.run(main._get_state(sid))
         assert "Incomplete repository" not in state["brd"]

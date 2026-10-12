@@ -103,7 +103,9 @@ JAVA11_ANALYSIS: str = (os.getenv("JAVA11_ANALYSIS", "inventory") or "inventory"
 #   inventory — deterministic: every relevant file scanned once against the
 #               pattern's legacy checklist, no model tokens (default).
 #   agent     — that pattern's reverse-engineering agent (business-level BRD;
-#               token cost grows with the repository).
+#               token cost grows with the repository). Only tibco-ems-to-pubsub has
+#               one: java-8-to-25, solr-4-to-9 and oracle-19c-to-23ai always use the
+#               inventory (migration_inventory.INVENTORY_ONLY).
 # JSP -> React + BFF and stack discovery always use their agents.
 MIGRATION_ANALYSIS: str = (os.getenv("MIGRATION_ANALYSIS", "inventory") or "inventory").strip().lower()
 

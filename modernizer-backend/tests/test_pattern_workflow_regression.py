@@ -175,7 +175,7 @@ def test_upload_still_accepts_each_patterns_own_options(monkeypatch, pattern, da
     assert started == [res.json()["session_id"]]
 
 
-@pytest.mark.parametrize("pattern", ["java-8-to-25", "solr-4-to-9", "oracle-19c-to-23ai", "tibco-ems-to-pubsub"])
+@pytest.mark.parametrize("pattern", ["tibco-ems-to-pubsub"])
 def test_migration_analysis_agent_restores_the_reverse_engineering_agent(monkeypatch, tmp_path, pattern):
     monkeypatch.setattr(main.config, "MIGRATION_ANALYSIS", "agent")
     harness = _Harness(monkeypatch)
@@ -186,6 +186,18 @@ def test_migration_analysis_agent_restores_the_reverse_engineering_agent(monkeyp
     assert "brd-review" in [e["step"] for e in events if e["type"] == "step-change"]
     assert any(e["type"] == "brd-ready" for e in events)
     assert main._analysis_review(pattern) is True
+
+
+@pytest.mark.parametrize("pattern", ["java-8-to-25", "solr-4-to-9", "oracle-19c-to-23ai"])
+def test_migration_analysis_agent_keeps_the_inventory_where_the_skill_has_no_re_step(monkeypatch, tmp_path, pattern):
+    """These skills have no reverse-engineering step: MIGRATION_ANALYSIS=agent still runs the inventory."""
+    monkeypatch.setattr(main.config, "MIGRATION_ANALYSIS", "agent")
+    harness = _Harness(monkeypatch)
+    events, _ = _run(tmp_path, pattern)
+    assert not [e for e in events if e["type"] == "error"], events
+    assert harness.steps == [("plan", pattern)]
+    assert "brd-review" not in [e["step"] for e in events if e["type"] == "step-change"]
+    assert main._analysis_review(pattern) is False
 
 
 @pytest.mark.parametrize("pattern", ["java-8-to-25", "solr-4-to-9", "oracle-19c-to-23ai", "tibco-ems-to-pubsub"])

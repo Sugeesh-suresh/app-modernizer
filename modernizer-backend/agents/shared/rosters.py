@@ -20,7 +20,6 @@ PLAN_SKILL_ROSTERS: dict[str, list[tuple[str, str]]] = {
         ("java-8-to-11:report", "Produces the final migration report"),
     ],
     "java-8-to-25": [
-        ("java-8-to-25:re", "Reverse-engineered this repository into the confirmed BRD, Technical Specification and Test Inventory"),
         ("java-8-to-25:plan", "Produces this plan"),
         ("java-8-to-25:readiness", "Incremental only — Stages 1-2: build modernisation, the test-stack safety net and OpenRewrite setup"),
         ("java-8-to-25:springboot-incremental", "Incremental only, and only when a Spring Boot upgrade was requested — Stages 4-5: Spring Boot 2.7, then 3.x with the Jakarta rename"),
@@ -43,7 +42,6 @@ PLAN_SKILL_ROSTERS: dict[str, list[tuple[str, str]]] = {
         ("jsp-to-react-bff:report", "Produces the final migration report"),
     ],
     "oracle-19c-to-23ai": [
-        ("oracle-19c-to-23ai:re", "Reverse-engineered this repository into the confirmed BRD, Technical Specification and Test Inventory"),
         ("oracle-19c-to-23ai:plan", "Produces this plan"),
         ("oracle-19c-to-23ai:modify", "Applies the plan's file changes to the workspace"),
         ("oracle-19c-to-23ai:validate", "Validates the migrated SQL/PLSQL after each pass"),
@@ -52,7 +50,6 @@ PLAN_SKILL_ROSTERS: dict[str, list[tuple[str, str]]] = {
         ("oracle-19c-to-23ai:report", "Produces the final migration report"),
     ],
     "solr-4-to-9": [
-        ("solr-4-to-9:re", "Reverse-engineered this repository into the confirmed BRD, Technical Specification and Test Inventory"),
         ("solr-4-to-9:plan", "Produces this plan"),
         ("solr-4-to-9:modify", "Applies the plan's file changes to the workspace"),
         ("solr-4-to-9:validate", "Validates the migrated schema and config after each pass"),

@@ -38,7 +38,6 @@ from google.adk.sessions import InMemorySessionService
 
 from .shared.unknown_tool_guard import UnknownToolGuard
 from .java_8_to_25.agents import (
-    re_agent as j8_re,
     planner_agent as j8_plan,
     code_pipeline_bigbang as j8_code_bigbang,
     INCREMENTAL_STAGES as j8_incremental_stages,
@@ -59,10 +58,10 @@ from .java_8_to_11.agents import (
     re_synthesis_agent as j11_re_synthesize,
 )
 from .solr_4_to_9.agents import (
-    re_agent as solr_re, planner_agent as solr_plan, code_pipeline as solr_code,
+    planner_agent as solr_plan, code_pipeline as solr_code,
 )
 from .oracle_19c_to_23ai.agents import (
-    re_agent as oracle_re, planner_agent as oracle_plan, code_pipeline as oracle_code,
+    planner_agent as oracle_plan, code_pipeline as oracle_code,
 )
 from .tibco_ems_to_pubsub.agents import (
     re_agent as tibco_ems_re, planner_agent as tibco_ems_plan, code_pipeline as tibco_ems_code,
@@ -108,7 +107,6 @@ _ROOT_AGENTS: list = []
 
 PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
     "java-8-to-25": {
-        "re": _runner(j8_re),
         "plan": _runner(j8_plan),
         "code_bigbang": _runner(j8_code_bigbang),
         # Per stage: the whole pipeline, plus its halves — main.py runs the modifier once per
@@ -142,12 +140,10 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
         "code_finish": _runner(j11_code_finish),
     },
     "solr-4-to-9": {
-        "re": _runner(solr_re),
         "plan": _runner(solr_plan),
         "code": _runner(solr_code),
     },
     "oracle-19c-to-23ai": {
-        "re": _runner(oracle_re),
         "plan": _runner(oracle_plan),
         "code": _runner(oracle_code),
     },

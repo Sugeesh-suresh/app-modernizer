@@ -2,7 +2,7 @@
 name: oracle-19c-to-23ai
 description: >
   Migrates Oracle 19c SQL/PL-SQL source (and the JDBC driver in the build) to be Oracle
-  23ai-compatible: reverse engineering, migration plan, applying the plan, static validation and
+  23ai-compatible: migration plan, applying the plan, static validation and
   repair, and the final report — one step file per pipeline step, sharing one body of Oracle migration
   knowledge.
 ---
@@ -17,12 +17,11 @@ The pipeline runs the steps in this order, holds every change until a person app
 
 | # | Step | Step file | What it does |
 |---|---|---|---|
-| 1 | `re` | `references/steps/re.md` | Reverse engineering: the confirmed BRD, Technical Specification and Test Inventory |
-| 2 | `plan` | `references/steps/plan.md` | The migration plan a person approves before anything changes |
-| 3 | `modify` | `references/steps/modify.md` | Applies the approved plan (or one task of it) to the workspace |
-| 4 | `validate` | `references/steps/validate.md` | Validates the workspace for real and reports pass/fail as JSON |
-| 5 | `fix` | `references/steps/fix.md` | Repairs what the validation reported, inside the loop |
-| 6 | `report` | `references/steps/report.md` | The final migration report |
+| 1 | `plan` | `references/steps/plan.md` | The migration plan a person approves before anything changes |
+| 2 | `modify` | `references/steps/modify.md` | Applies the approved plan (or one task of it) to the workspace |
+| 3 | `validate` | `references/steps/validate.md` | Validates the workspace for real and reports pass/fail as JSON |
+| 4 | `fix` | `references/steps/fix.md` | Repairs what the validation reported, inside the loop |
+| 5 | `report` | `references/steps/report.md` | The final migration report |
 
 Two more steps run in every migration and belong to shared skills: `code-review` (an independent review of the result against the plan) after the loop, and `skill-curator` (refines this skill from the run's evidence) at the very end.
 
@@ -31,7 +30,7 @@ Two more steps run in every migration and belong to shared skills: `code-review`
 - **Evidence before claims.** Read a file before you describe it or change it; never reconstruct a file's contents
   from memory. Cite the file (and line) for what you state.
 - **Nothing changes before a person approves the plan.** The pipeline holds every write until the plan is approved;
-  the analysis and plan steps only read.
+  the plan step only reads.
 - **Change only what your step is given.** The modify and fix steps apply the confirmed plan (or the one task they
   are given) and nothing else; anything more is reported, not done.
 - **The validator's result is the truth.** No step reports success the validation did not show.
@@ -42,6 +41,6 @@ Two more steps run in every migration and belong to shared skills: `code-review`
 
 | File | Used by the steps |
 |---|---|
-| `references/oracle19c-baseline-facts.md` | `re`, `plan` |
+| `references/oracle19c-baseline-facts.md` | `plan` |
 | `references/oracle19c-to-23ai-checklist.md` | `plan`, `modify`, `fix` |
 | `references/plsql-patterns.md` | `modify`, `fix` |

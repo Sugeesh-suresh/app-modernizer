@@ -1177,11 +1177,13 @@ async def _run_stack_mapping(session_id: str) -> list[dict]:
 
 def _uses_inventory(pattern: str, discovery: bool) -> bool:
     """Whether `pattern`'s analysis is the deterministic inventory rather than
-    its reverse-engineering agent. Stack discovery always runs the agents — its
+    its reverse-engineering agent. Java 8 -> 25, Solr and Oracle have no such
+    agent (migration_inventory.INVENTORY_ONLY). Stack discovery always runs the agents — its
     output is a description of each stack, not a migration checklist — and so
     does JSP -> React + BFF, which has no inventory."""
-    return (not discovery and pattern in migration_inventory.INVENTORY_PATTERNS
-            and config.MIGRATION_ANALYSIS != "agent")
+    if discovery or pattern not in migration_inventory.INVENTORY_PATTERNS:
+        return False
+    return pattern in migration_inventory.INVENTORY_ONLY or config.MIGRATION_ANALYSIS != "agent"
 
 
 class PreflightFailed(RuntimeError):

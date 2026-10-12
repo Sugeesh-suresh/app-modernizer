@@ -35,10 +35,9 @@ Two migration strategies, chosen by the user before upload
                  reasons over every stage's results, so it cannot reuse the
                  single-stage reporter's instruction).
 
-Both strategies share the same `re_agent` (reverse-engineering: explores the
-workspace and produces Analysis + BRD + Technical Specification + Existing
-Test Inventory) and `planner_agent` (produces the confirmed Plan from the
-BRD/TechSpec, strategy/JUnit/Spring-Boot-aware).
+Both strategies share the same `planner_agent` (produces the confirmed Plan
+from the deterministic migration inventory — agents/shared/migration_inventory.py;
+this pattern has no reverse-engineering agent — strategy/JUnit/Spring-Boot-aware).
 
 Skills (Pattern 2 -- file-based):
   Each agent loads its instructions and reference material from
@@ -70,17 +69,6 @@ from .stages import (  # noqa: E402,F401 (re-exported for main.py and the tests)
     INCREMENTAL_STAGES, IncrementalStage, incremental_stages,
 )
 
-
-# ── re_agent: explores the real workspace, produces Analysis/BRD/TechSpec/Tests ──
-re_agent = LlmAgent(
-    name="java8_re",
-    model=_MODEL,
-    description="Reverse-engineers a Java 8 repository workspace via list_files/read_file and produces Analysis, BRD, Technical Specification, and an Existing Test Inventory.",
-    instruction=skill_steps.instruction("java-8-to-25:re") + ", using the list_files and read_file tools to explore the workspace.",
-    tools=[skill_steps.toolset("java-8-to-25:re"), FunctionTool(fs_tools.list_files), FunctionTool(fs_tools.read_file)],
-    output_key="analysis",
-    include_contents="none",
-)
 
 # ── planner_agent: pure reasoning over the confirmed BRD/TechSpec ──────────────
 
@@ -205,7 +193,7 @@ build_loop = LoopAgent(
 
 # Skills the skill-curator agent may refine for this pattern (bigbang and incremental alike).
 CURATED_SKILLS: list[str] = [
-    "java-8-to-25:re", "java-8-to-25:plan", "java-8-to-25:modify",
+    "java-8-to-25:plan", "java-8-to-25:modify",
     "java-8-to-25:validate", "java-8-to-25:fix", "java-8-to-25:report",
     "java-8-to-25:springboot-boot4", "java-8-to-25:readiness", "java-8-to-25:springboot-incremental",
 ]

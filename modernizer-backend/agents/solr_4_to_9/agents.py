@@ -32,16 +32,6 @@ _MODEL = make_model()
 _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
 
 
-re_agent = LlmAgent(
-    name="solr_re",
-    model=_MODEL,
-    description="Reverse-engineers a Solr 4.x deployment (config + any SolrJ client code) and produces Analysis, BRD, Technical Specification, and an Existing Test Inventory.",
-    instruction=skill_steps.instruction("solr-4-to-9:re") + ", using the list_files and read_file tools to explore the workspace.",
-    tools=[skill_steps.toolset("solr-4-to-9:re"), FunctionTool(fs_tools.list_files), FunctionTool(fs_tools.read_file)],
-    output_key="analysis",
-    include_contents="none",
-)
-
 # The plan's Skill Composition section, computed from each SKILL.md's frontmatter rather
 # than left to the model: the planner cannot see the roster, the order or the versions,
 # so a table it wrote itself would be invented.
@@ -168,7 +158,7 @@ reporter_agent = LlmAgent(
 skill_curator_agent = make_skill_curator_agent(
     _MODEL,
     allowed_skills=[
-        "solr-4-to-9:re", "solr-4-to-9:plan", "solr-4-to-9:modify",
+        "solr-4-to-9:plan", "solr-4-to-9:modify",
         "solr-4-to-9:validate", "solr-4-to-9:fix", "solr-4-to-9:report",
     ],
     context_instruction=(
