@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorator="layout">
+<head><title>Your cart</title></head>
+<body>
+<main layout:fragment="content">
+  <h1>Your cart</h1>
+  <p th:if="${cart.count == 0}">Your cart is empty.</p>
+  <table th:unless="${cart.count == 0}">
+    <tr><th>Item</th><th>Qty</th><th>Price</th><th></th></tr>
+    <tr th:each="i : ${cart.items}">
+      <td th:text="${i.name}">name</td>
+      <td th:text="${i.quantity}">1</td>
+      <td th:text="${#numbers.formatDecimal(i.lineTotal, 1, 2)}">0.00</td>
+      <td><form th:action="@{/cart/remove}" method="post">
+        <input type="hidden" name="productId" th:value="${i.productId}"/><button>Remove</button></form></td>
+    </tr>
+    <tr><td colspan="2">Total</td><td th:text="${#numbers.formatDecimal(cart.total, 1, 2)}">0.00</td><td></td></tr>
+  </table>
+</main>
+</body>
+</html>

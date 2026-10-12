@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorator="layout">
+<head><title>Search admin</title></head>
+<body>
+<main layout:fragment="content">
+  <h1>Search index</h1>
+  <button id="reindex">Rebuild the product index</button>
+  <p id="reindex-result"></p>
+  <script th:inline="javascript">
+    /*<![CDATA[*/
+    var reindexUrl = /*[[@{/api/search/reindex}]]*/ '/api/search/reindex';
+    document.getElementById('reindex').addEventListener('click', function () {
+      fetch(reindexUrl, { method: 'POST', credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (body) { document.getElementById('reindex-result').textContent = body.indexed + ' products indexed'; })
+        .catch(function () { document.getElementById('reindex-result').textContent = 'Reindex failed'; });
+    });
+    /*]]>*/
+  </script>
+</main>
+</body>
+</html>

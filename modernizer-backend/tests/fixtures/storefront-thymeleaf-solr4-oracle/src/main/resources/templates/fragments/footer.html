@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<footer th:fragment="footer"><p>&copy; Acme Store</p></footer>
+<div th:fragment="productCard(p)" class="card">
+  <a th:href="@{/products/{sku}(sku=${p.sku})}" th:text="${p.name}">name</a>
+  <span class="price" th:text="${#numbers.formatDecimal(p.price, 1, 2)}">0.00</span>
+</div>
+</body>
+</html>

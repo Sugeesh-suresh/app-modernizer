@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorator="layout">
+<head><title>Home</title></head>
+<body>
+<main layout:fragment="content">
+  <h1>Top sellers this month</h1>
+  <div class="grid">
+    <div th:each="p : ${topSellers}" th:include="fragments/footer :: productCard(${p})">card</div>
+  </div>
+</main>
+</body>
+</html>

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorator="layout">
+<head><title th:text="'Search: ' + ${q}">Search</title></head>
+<body>
+<main layout:fragment="content">
+  <p th:if="${searchDown}" class="error">Search is temporarily unavailable. Please try again shortly.</p>
+  <div th:unless="${searchDown}">
+    <p th:if="${result.spellcheck}">Did you mean
+      <a th:href="@{/search(q=${result.spellcheck})}" th:text="${result.spellcheck}">x</a>?</p>
+    <p><span th:text="${result.total}">0</span> result(s)</p>
+    <aside class="facets">
+      <div th:each="facet : ${result.facets}">
+        <h3 th:text="${facet.key}">category</h3>
+        <ul>
+          <li th:each="v : ${facet.value}">
+            <a th:href="@{/search(q=${q},category=${v.key})}" th:text="${v.key} + ' (' + ${v.value} + ')'">value</a>
+          </li>
+        </ul>
+      </div>
+    </aside>
+    <ol class="hits" id="hits">
+      <li th:each="h : ${result.hits}">
+        <a th:href="@{/products/{sku}(sku=${h.sku})}" th:text="${h.name}">name</a>
+        <span th:text="${h.brand}">brand</span>
+        <span class="price" th:text="${#numbers.formatDecimal(h.price, 1, 2)}">0.00</span>
+        <p th:utext="${h.highlight}">highlight</p>
+      </li>
+    </ol>
+    <button id="more" th:attr="data-page=${result.page + 1},data-q=${q},data-category=${category}"
+            th:if="${result.total > (result.page + 1) * result.size}">More results</button>
+  </div>
+  <script th:inline="javascript">
+    /*<![CDATA[*/
+    var searchApi = /*[[@{/api/search}]]*/ '/api/search';
+    $('#more').on('click', function () {
+      var btn = $(this);
+      $.getJSON(searchApi, { q: btn.data('q'), category: btn.data('category'), page: btn.data('page') }, function (res) {
+        $.each(res.hits, function (i, h) {
+          $('#hits').append($('<li>').append($('<a>').attr('href', '/products/' + h.sku).text(h.name)));
+        });
+        btn.data('page', res.page + 1).toggle(res.total > (res.page + 1) * res.size);
+      });
+    });
+    /*]]>*/
+  </script>
+</main>
+</body>
+</html>

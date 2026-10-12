@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<header th:fragment="header" class="top">
+  <a th:href="@{/}" class="logo">Acme Store</a>
+  <form th:action="@{/search}" method="get" class="search-box">
+    <input type="search" name="q" id="q" autocomplete="off" placeholder="Search products"/>
+    <ul id="suggestions"></ul>
+  </form>
+  <a th:href="@{/cart}">Cart (<span th:text="${@cart.count}">0</span>)</a>
+</header>
+</body>
+</html>

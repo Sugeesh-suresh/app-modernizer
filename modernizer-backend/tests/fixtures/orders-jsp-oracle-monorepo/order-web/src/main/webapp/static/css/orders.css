@@ -1,0 +1,5 @@
+body { font-family: Arial, sans-serif; margin: 0 2em; }
+header.top { display: flex; justify-content: space-between; border-bottom: 1px solid #ccc; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border-bottom: 1px solid #eee; padding: 4px 8px; text-align: left; }
+.error { color: #b00; }

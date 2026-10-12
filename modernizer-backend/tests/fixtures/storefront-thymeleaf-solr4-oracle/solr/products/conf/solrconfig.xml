@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<config>
+  <luceneMatchVersion>4.10.4</luceneMatchVersion>
+  <lib dir="../../../contrib/analysis-extras/lib" regex=".*\.jar"/>
+  <dataDir>${solr.data.dir:}</dataDir>
+  <directoryFactory name="DirectoryFactory" class="${solr.directoryFactory:solr.NRTCachingDirectoryFactory}"/>
+  <indexConfig>
+    <lockType>${solr.lock.type:native}</lockType>
+  </indexConfig>
+  <updateHandler class="solr.DirectUpdateHandler2">
+    <updateLog><str name="dir">${solr.ulog.dir:}</str></updateLog>
+    <autoCommit><maxTime>15000</maxTime><openSearcher>false</openSearcher></autoCommit>
+  </updateHandler>
+  <query>
+    <filterCache class="solr.FastLRUCache" size="512" initialSize="512" autowarmCount="0"/>
+    <queryResultCache class="solr.LRUCache" size="512" initialSize="512" autowarmCount="0"/>
+    <documentCache class="solr.LRUCache" size="512" initialSize="512" autowarmCount="0"/>
+  </query>
+  <requestDispatcher handleSelect="true">
+    <requestParsers enableRemoteStreaming="true" multipartUploadLimitInKB="2048000"/>
+  </requestDispatcher>
+  <requestHandler name="/select" class="solr.SearchHandler" default="true">
+    <lst name="defaults">
+      <str name="echoParams">explicit</str>
+      <int name="rows">24</int>
+      <str name="df">text</str>
+    </lst>
+    <arr name="last-components"><str>spellcheck</str></arr>
+  </requestHandler>
+  <requestHandler name="/update" class="solr.UpdateRequestHandler"/>
+  <requestHandler name="/admin/" class="solr.admin.AdminHandlers"/>
+  <searchComponent name="spellcheck" class="solr.SpellCheckComponent">
+    <lst name="spellchecker">
+      <str name="name">default</str>
+      <str name="field">text</str>
+      <str name="classname">solr.DirectSolrSpellChecker</str>
+    </lst>
+  </searchComponent>
+  <searchComponent name="suggest" class="solr.SuggestComponent">
+    <lst name="suggester">
+      <str name="name">productSuggester</str>
+      <str name="lookupImpl">AnalyzingInfixLookupFactory</str>
+      <str name="dictionaryImpl">DocumentDictionaryFactory</str>
+      <str name="field">name</str>
+      <str name="suggestAnalyzerFieldType">text_suggest</str>
+      <str name="buildOnCommit">true</str>
+    </lst>
+  </searchComponent>
+  <requestHandler name="/suggest" class="solr.SearchHandler" startup="lazy">
+    <lst name="defaults"><str name="suggest">true</str><str name="suggest.count">8</str></lst>
+    <arr name="components"><str>suggest</str></arr>
+  </requestHandler>
+</config>

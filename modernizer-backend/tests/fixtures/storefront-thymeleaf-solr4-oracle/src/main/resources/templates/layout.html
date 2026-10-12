@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout">
+<head>
+  <meta charset="UTF-8"/>
+  <title layout:title-pattern="$CONTENT_TITLE | Acme Store">Acme Store</title>
+  <link rel="stylesheet" th:href="@{/css/store.css}"/>
+  <script th:src="@{/js/jquery-1.12.4.min.js}"></script>
+  <script th:src="@{/js/search-box.js}"></script>
+</head>
+<body>
+  <div th:replace="fragments/header :: header">header</div>
+  <div class="flash" th:if="${message}" th:text="${message}">message</div>
+  <div class="flash error" th:if="${error}" th:text="${error}">error</div>
+  <main layout:fragment="content">page content</main>
+  <div th:replace="fragments/footer :: footer">footer</div>
+</body>
+</html>

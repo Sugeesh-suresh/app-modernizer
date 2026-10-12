@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorator="layout">
+<head><title th:text="${product.name}">Product</title></head>
+<body>
+<main layout:fragment="content">
+  <h1 th:text="${product.name}">name</h1>
+  <p class="brand" th:text="${product.brand}">brand</p>
+  <p class="price" th:text="${#numbers.formatDecimal(product.price, 1, 2)}">0.00</p>
+  <div th:utext="${product.description}">description</div>
+  <form th:action="@{/cart/add}" method="post" th:if="${product.inStock()}">
+    <input type="hidden" name="sku" th:value="${product.sku}"/>
+    <input type="number" name="qty" value="1" min="1" max="10"/>
+    <button type="submit">Add to cart</button>
+  </form>
+  <p th:unless="${product.inStock()}" class="error">Out of stock</p>
+  <h2>More in <span th:text="${product.category}">category</span></h2>
+  <div class="grid">
+    <div th:each="p : ${related}" th:if="${p.id != product.id}" th:include="fragments/footer :: productCard(${p})">card</div>
+  </div>
+</main>
+</body>
+</html>
