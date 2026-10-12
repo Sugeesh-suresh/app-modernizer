@@ -40,3 +40,15 @@ def test_the_inventories_see_both_modules_and_the_legacy_apis():
     solr = migration_inventory.to_document("solr-4-to-9", str(STORE), 400)
     for token in ("SolrJ 4 server classes", "SolrConfig.java", "schema.xml", "solrconfig.xml"):
         assert token in solr, token
+
+
+HIBERNATE = FIXTURES / "orders-jsp-hibernate-monorepo"
+
+
+def test_the_java11_inventory_sees_the_hibernate_variants_frameworks():
+    """orders-jsp-hibernate-monorepo: the monorepo with a Hibernate 4.3 data layer (orm.hibernate4,
+    HQL `?` parameters, Criteria), used for the Java 8 -> 11 run that keeps the JSP WARs as they are."""
+    from agents.java_8_to_11 import inventory
+    doc = inventory.to_document(inventory.build(str(HIBERNATE)))
+    assert "org.hibernate:hibernate-core | 4.3.11.Final" in doc and "must move" in doc
+    assert maven_roots(HIBERNATE) == [HIBERNATE]
