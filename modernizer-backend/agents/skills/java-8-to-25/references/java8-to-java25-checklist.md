@@ -113,3 +113,21 @@ Never rename Java SE `javax.*` packages (`javax.sql`, `javax.naming`, `javax.cry
 - Maven: bump `<maven.compiler.release>` to the current stage's target JDK (with `spring-boot-starter-parent`, set `<java.version>` instead); update `maven-compiler-plugin` to a version that supports it
 - Gradle: `options.release` / toolchain `languageVersion` = the current stage's target JDK; update the Gradle wrapper to a version with the target JDK's toolchain support (9.1+ for Java 25)
 - CI: update the pinned JDK distribution in pipeline config
+
+## Plain Spring 6 (no Spring Boot) — the Jakarta artifacts of a WAR
+
+When `{springboot_upgrade}` is false, the Java 25 stage still moves Spring 5.3 → 6.x, which is Jakarta EE 9+ only.
+The `javax` → `jakarta` rename (see the stage guardrail) also changes these artifacts:
+
+| javax artifact | Jakarta replacement | Note |
+|---|---|---|
+| `javax.servlet:javax.servlet-api` (provided) | `jakarta.servlet:jakarta.servlet-api` 6.0.x (provided) | Tomcat 10.1+ / Jetty 12 |
+| `javax.servlet.jsp:jsp-api` (provided) | `jakarta.servlet.jsp:jakarta.servlet.jsp-api` 3.1.x (provided) | |
+| `javax.servlet:jstl` 1.2 / `taglibs:standard` | `jakarta.servlet.jsp.jstl:jakarta.servlet.jsp.jstl-api` 3.0.x **plus** the implementation `org.glassfish.web:jakarta.servlet.jsp.jstl` 3.0.x | Without the implementation `JstlView` fails at runtime, not at compile time. The `http://java.sun.com/jsp/jstl/core` taglib URIs keep working |
+| `javax.validation:validation-api` | `jakarta.validation:jakarta.validation-api` 3.x | plus a provider (Hibernate Validator 8+) if validation runs |
+| `javax.annotation:javax.annotation-api` | `jakarta.annotation:jakarta.annotation-api` 2.x | |
+| `web.xml` with the `javaee` namespace | `https://jakarta.ee/xml/ns/jakartaee` namespace, `version="6.0"` | |
+
+`WebMvcConfigurerAdapter` / `HandlerInterceptorAdapter` are removed in Spring 6 — implement `WebMvcConfigurer` /
+`HandlerInterceptor` directly (the methods are default methods). Each of these files is a manifest row of that stage.
+

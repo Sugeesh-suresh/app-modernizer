@@ -53,7 +53,8 @@ PATTERNS: dict[str, Pattern] = {
         curator_skills=("java-8-to-25:plan", "java-8-to-25:modify", "java-8-to-25:validate",
                         "java-8-to-25:fix", "java-8-to-25:report", "java-8-to-25:readiness",
                         "java-8-to-25:springboot-incremental", "java-8-to-25:springboot-boot4"),
-        validator_note="Build with ws_run_command (`mvn -q -DskipTests compile`, or the Gradle equivalent).",
+        validator_note="Build with ws_run_command (`mvn -q -DskipTests clean test-compile` — main and test sources, "
+                       "no stale output — or `gradle clean testClasses`).",
     ),
     JAVA_8_TO_11: Pattern(
         JAVA_8_TO_11, "Java 8 → Java 11 (JSP & WildFly preserved)", "agents.java_8_to_11.tools",

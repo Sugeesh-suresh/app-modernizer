@@ -115,8 +115,9 @@ class TestManifestParsing:
         planned = {e.path: e for e in parse_plan_manifest(combined)}
 
         assert len(planned) == 3
-        # The task's own Change: text wins for files the tasks name.
-        assert planned["pom.xml"].source == "Task 3.1"
+        # The manifest row says what happens to THAT file; the task's Change: line describes the task.
+        assert planned["pom.xml"].source == "manifest table"
+        assert planned["pom.xml"].change == "dependency bump — spring-* → 5.3.39"
         # The table still adds the file no task touches.
         assert planned["src/main/java/com/acme/Address.java"].no_change_expected
 

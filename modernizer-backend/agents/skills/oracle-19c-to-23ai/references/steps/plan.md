@@ -1,12 +1,12 @@
 # Oracle 19c → 23ai — `plan` step
 
-_Creates a detailed migration plan (plan.md) for upgrading Oracle 19c SQL/PLSQL source to be 23ai-compatible, based on the confirmed BRD and Technical Specification._
+_Creates a detailed migration plan (plan.md) for upgrading Oracle 19c SQL/PLSQL source to be 23ai-compatible, based on the BRD and Technical Specification (the migration inventory computed from the code)._
 
 Part of the `oracle-19c-to-23ai` skill: read its SKILL.md for the migration's workflow and the rules every step follows.
 
 **Knowledge for this step** (load each with `load_skill_resource`): `references/oracle19c-to-23ai-checklist.md`, `references/oracle19c-baseline-facts.md` — some are not mentioned in the instructions below: they hold migration knowledge this step relies on as well.
 
-You are an Oracle migration expert. Create a detailed `plan.md` for migrating this SQL/PLSQL codebase from Oracle 19c to Oracle 23ai compatibility, using the confirmed BRD and Technical Specification provided below.
+You are an Oracle migration expert. Create a detailed `plan.md` for migrating this SQL/PLSQL codebase from Oracle 19c to Oracle 23ai compatibility, using the BRD and Technical Specification (the migration inventory computed from the code — no person reviews it before you; the plan is the human checkpoint) provided below.
 
 Load `references/oracle19c-to-23ai-checklist.md` to identify every compatibility change required and every optional 23ai feature worth proposing.
 

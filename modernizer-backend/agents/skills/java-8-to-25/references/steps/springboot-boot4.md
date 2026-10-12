@@ -4,7 +4,7 @@ _Migrates a legacy Spring application (typically a WAR on an external servlet co
 
 Part of the `java-8-to-25` skill: read its SKILL.md for the migration's workflow and the rules every step follows.
 
-**Knowledge for this step** (load each with `load_skill_resource`): `references/boot4-dependency-cleanup.md`, `references/jakarta-ee11-namespace-map.md`, `references/jsp-to-thymeleaf.md`, `references/spring-data-jpa-migration.md`, `references/war-to-executable-jar.md`, `references/webxml-to-javaconfig.md`.
+**Knowledge for this step** (load each with `load_skill_resource`): `references/boot4-dependency-cleanup.md`, `references/jakarta-ee11-namespace-map.md`, `references/jsp-to-thymeleaf.md`, `references/thymeleaf-2-to-3.md`, `references/spring-data-jpa-migration.md`, `references/war-to-executable-jar.md`, `references/webxml-to-javaconfig.md`.
 
 You are a Spring Boot modernisation specialist. Whenever the confirmed plan includes the Spring Boot upgrade, the **final state is the same for both the bigbang and the incremental strategy**:
 

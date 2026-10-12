@@ -11,6 +11,7 @@ and deciding pass/fail as JSON) — only the fact-gathering is deterministic.
 import re
 
 from ..shared.adk_compat import ToolContext
+from ..shared.change_audit import sql_code
 
 from ..shared.workspace_tools import (  # noqa: F401 (re-exported)
     EXCLUDED_DIRS,
@@ -32,7 +33,9 @@ _DEPRECATED_PATTERNS: list[tuple[str, str]] = [
     (r"\bDBMS_AQADM\.CREATE_QUEUE_TABLE\b.*\bcompatible\s*=>\s*'8\.", "AQ queue table created with a very old 'compatible' level — bump to a current release level."),
     (r"\bRAW\(\s*\d+\s*\)\s+DEFAULT\s+SYS_GUID\(\)", None),
     (r"\bCONNECT\s+BY\s+NOCYCLE\b", None),
-    (r"\bLONG\b\s+(RAW\b)?", "LONG/LONG RAW columns are long-deprecated — migrate to CLOB/BLOB before or during this migration."),
+    # A column of type LONG [RAW] — the change audit's definition (agents/shared/change_audit.py).
+    (r"(?<=\w)\s+LONG(?:\s+RAW)?\b(?=\s*(?:,|\)|$|NOT\b|NULL\b|DEFAULT\b))",
+     "LONG/LONG RAW columns are long-deprecated — migrate to CLOB/BLOB before or during this migration."),
     (r"\bDBMS_LOB\.SUBSTR\s*\([^)]*,\s*32767", "DBMS_LOB.SUBSTR with the old 32767-byte VARCHAR2 ceiling — 23ai supports larger VARCHAR2/LOB handling; review if this limit is now artificial."),
     (r"\bALTER\s+SESSION\s+SET\s+OPTIMIZER_FEATURES_ENABLE\s*=\s*'11\.", "OPTIMIZER_FEATURES_ENABLE pinned to an 11g-era value — review whether this still needs to be pinned on 23ai."),
 ]
@@ -74,20 +77,21 @@ def validate_sql_syntax(tool_context: ToolContext) -> str:
             continue
 
         file_issues: list[str] = []
+        code = sql_code(text)              # comments and string literals are not code: never judged
 
-        openers = len(_BLOCK_OPENERS.findall(text))
-        closers = len(_BLOCK_CLOSERS.findall(text))
+        openers = len(_BLOCK_OPENERS.findall(code))
+        closers = len(_BLOCK_CLOSERS.findall(code))
         if openers > closers:
             file_issues.append(
                 f"possible unbalanced block — {openers} BEGIN/CASE opener(s) vs {closers} matching END terminator(s)"
             )
 
-        stripped = text.rstrip()
+        stripped = code.rstrip()
         if stripped and not stripped.endswith((";", "/")):
             file_issues.append("file does not end with a statement terminator (';' or '/') — possible truncated statement")
 
         for pattern, message in _DEPRECATED_PATTERNS:
-            if message and re.search(pattern, text, re.IGNORECASE):
+            if message and re.search(pattern, code, re.IGNORECASE | re.MULTILINE):
                 file_issues.append(message)
 
         if file_issues:

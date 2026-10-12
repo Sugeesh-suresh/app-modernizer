@@ -139,7 +139,7 @@ def _entry(lesson: dict, label: str) -> str:
     # a heading or a comment to it, wherever the lesson came from.
     lesson = {k: _clean(str(lesson.get(k, ""))) for k in ("error", "cause", "resolution")}
     general = generalise(lesson["error"])
-    title = general[:90] + ("…" if len(general) > 90 else "")
+    title = general if len(general) <= 90 else general[:90].rsplit(" ", 1)[0].rstrip(" ,;:—-") + " …"
     return (
         f"### {title}\n"
         f"<!-- learned-fix: {key(lesson['error'])} -->\n"

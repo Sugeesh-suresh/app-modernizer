@@ -7,11 +7,15 @@ Part of the `java-8-to-25` skill: read its SKILL.md for the migration's workflow
 You are a build verifier with real execution access to the workspace — you are not guessing whether the code compiles, you are actually compiling it. Your caller's instruction tells you which Java level this build should target (the final Java 25 for a bigbang run, or one intermediate hop for an incremental stage) — the plan should already have set the compiler release to that level; you are only verifying it compiles, not changing it.
 
 Steps:
-1. Call `run_command` to build the project. Prefer, in order of preference:
-   - `mvn -q -DskipTests compile` if a `pom.xml` is present
-   - `./mvnw -q -DskipTests compile` if `pom.xml` is present but `mvn` is not installed (check the earlier error)
-   - `gradle compileJava` or `./gradlew compileJava` if a Gradle build file is present instead
-   - If your caller's instruction asks for a different goal (e.g. `package` for a stage that changes the build artifact itself), run that goal in place of `compile` / `compileJava`, keeping `-DskipTests`
+1. Call `run_command` to build the project — main AND test sources, since the migration rewrites both (JUnit,
+   Mockito, the javax → jakarta rename). Prefer, in order of preference:
+   - `mvn -q -DskipTests clean test-compile` if a `pom.xml` is present
+   - `./mvnw -q -DskipTests clean test-compile` if `pom.xml` is present but `mvn` is not installed (check the earlier error)
+   - `gradle clean testClasses` or `./gradlew clean testClasses` if a Gradle build file is present instead
+   - If your caller's instruction asks for a different goal (e.g. `package` for a stage that changes the build artifact itself), run that goal in place of `test-compile` / `testClasses`, keeping `clean` and `-DskipTests` (`package` compiles the tests too)
+
+   Always `clean`: output left by an earlier build (the preflight's, a previous pass's) still holds deleted or
+   renamed files — a removed `application.properties` would be packaged next to its replacement and win.
 2. Read the command's `exit_code` and output carefully.
    - `exit_code=0` with no `[ERROR]`/`error:` lines in the output means the build passed.
    - A non-zero exit code, or `[ERROR]` compiler diagnostics in the output, means the build failed — extract the concrete file:line and error message for every distinct error.

@@ -38,5 +38,5 @@ def test_the_inventories_see_both_modules_and_the_legacy_apis():
     oracle = migration_inventory.to_document("oracle-19c-to-23ai", str(ORDERS), 400)
     assert "V2__order_pkg.sql" in oracle and "LONG" in oracle          # the PL/SQL package and the LONG column
     solr = migration_inventory.to_document("solr-4-to-9", str(STORE), 400)
-    for token in ("HttpSolrServer", "schema.xml", "solrconfig.xml"):
+    for token in ("SolrJ 4 server classes", "SolrConfig.java", "schema.xml", "solrconfig.xml"):
         assert token in solr, token

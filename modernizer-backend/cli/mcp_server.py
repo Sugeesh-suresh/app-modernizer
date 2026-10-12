@@ -281,10 +281,11 @@ async def save_output(step_id: str, content: str, workspace: str = "") -> str:
         if step_id not in waiting:
             raise RunError(f"The run is waiting on {', '.join(f'`{w}`' for w in waiting) or 'nothing'}, "
                            f"not `{step_id}`.")
+        text = content if isinstance(content, str) else __import__("json").dumps(content, ensure_ascii=False)
         path = run.out_path(step_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-        return f"Saved {len(content):,} characters for `{step_id}`."
+        path.write_text(text, encoding="utf-8")
+        return f"Saved {len(text):,} characters for `{step_id}`."
     return await _run(body)
 
 
@@ -429,14 +430,19 @@ async def ws_run_command(command: str, subdir: str = ".", workspace: str = "") -
     call, no `&&`, `|` or `;`. Java 8 -> 11 builds run on MIGRATION_JAVA_HOME with MAVEN_SETTINGS.
 
     Args:
-        command: The command line, e.g. "mvn -q -DskipTests compile".
+        command: The command line, e.g. "mvn -q -DskipTests test-compile".
         subdir: Directory relative to the repository root (e.g. "backend", "frontend").
     """
     def body():
         run = _load(workspace)
-        _, tools = _pattern_tools(run)
+        pattern, tools = _pattern_tools(run)
         if not hasattr(tools, "run_command"):
-            return "ERROR: this pattern has no build toolchain — call ws_validate for its static check."
+            # A companion (Oracle, Solr) builds with the run's Java build tool: its pass changes dependencies
+            # and client code that only a real build verifies.
+            borrowed = pipeline.build_pattern(run, pattern)
+            if not borrowed:
+                return "ERROR: this pattern has no build toolchain — call ws_validate for its static check."
+            tools = P.get(borrowed).tools()
         return tools.run_command(run.tool_context(), command, subdir)
     return await _run(body, locked=False)
 

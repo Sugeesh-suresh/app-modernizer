@@ -23,10 +23,10 @@
 
 | Item | Action |
 |---|---|
-| Old Oracle JDBC driver version (`ojdbc7`/old `ojdbc8`) | Bump to a 23ai-certified driver version (e.g., `ojdbc11:23.3.0.0`) in `pom.xml`/`build.gradle` |
-| Application Java version | Align application's `maven.compiler.source`/`target` with the target runtime and chosen JDBC driver, if not already compatible. This may require a separate, broader Java upgrade effort. |
+| Old Oracle JDBC driver version (`ojdbc7`/old `ojdbc8`) | Bump to a 23ai-certified driver version (e.g., `com.oracle.database.jdbc:ojdbc11:23.3.0.23.09` — the published coordinates have five version parts; take the exact version from the approved-versions list) in `pom.xml`/`build.gradle` |
+| Application Java version | Align application's `maven.compiler.source`/`target` with the target runtime and chosen JDBC driver, if not already compatible. This may require a separate, broader Java upgrade effort. **In a run that also migrates Java (java-8-to-25 / java-8-to-11), the Java plan owns the compiler level and the test framework: leave them to it.** In an incremental Java run this pass runs after the Java 17 stage, on JDK 17 — `ojdbc11` and HikariCP 5 are safe there. |
 | Outdated connection pool (e.g., `commons-dbcp` 1.4) | Replace with a modern connection pool (e.g., HikariCP 5.x.x or Oracle UCP) and map properties accordingly (e.g., `commons-dbcp` `initialSize` to `HikariCP` `minimumIdle`, `maxActive` to `maximumPoolSize`). |
-| Outdated JUnit version (e.g., JUnit 3.x) | Upgrade to JUnit 5 (e.g., `junit-jupiter-api` and `junit-jupiter-engine` `5.10.0`) and update test cases as needed. |
+| Outdated JUnit version (e.g., JUnit 3.x) | Only when no Java migration runs alongside (otherwise its plan owns the tests): upgrade to JUnit 5 (e.g., `junit-jupiter-api` and `junit-jupiter-engine` `5.10.0`) and update test cases as needed. |
 
 ## Explicitly Out of Scope (document, do not attempt)
 - The database engine upgrade/patch itself (19c binaries → 23ai binaries) — infrastructure/DBA operation

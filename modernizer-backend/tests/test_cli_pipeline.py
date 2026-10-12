@@ -41,7 +41,8 @@ def _solr_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "solr"
     (repo / "conf").mkdir(parents=True)
     (repo / "conf" / "schema.xml").write_text(SOLR_SCHEMA)
-    (repo / "conf" / "solrconfig.xml").write_text("<config><luceneMatchVersion>4.10.4</luceneMatchVersion></config>")
+    # luceneMatchVersion already moved (8.x is accepted by Solr 9): this run's plan is only Trie -> Point.
+    (repo / "conf" / "solrconfig.xml").write_text("<config><luceneMatchVersion>8.11.2</luceneMatchVersion></config>")
     return repo
 
 

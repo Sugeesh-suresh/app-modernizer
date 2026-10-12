@@ -12,11 +12,16 @@ import re
 _SECRET_LINE = re.compile(r"passw(?:or)?d|pwd|secret|token|api[_-]?key|credential", re.IGNORECASE)
 
 
+_SECRET_VALUE = re.compile(
+    r"((?:passw(?:or)?d|pwd|secret|token|api[_-]?key|credentials?)[\w.\-]*\s*[=:]\s*)[^\s;,&\"'<>]+", re.IGNORECASE)
+
+
 def redact(value: str) -> str:
-    """Remove credentials from connection strings: jdbc:oracle:thin:user/pass@host
-    and scheme://user:pass@host."""
+    """Remove credentials: jdbc:oracle:thin:user/pass@host, scheme://user:pass@host,
+    and any password= / secret: / token= style value."""
     value = re.sub(r"(jdbc:oracle:\w+:)[^@\s]+@", r"\1<redacted>@", value)
-    return re.sub(r"(//)[^@/\s]+@", r"\1<redacted>@", value)
+    value = re.sub(r"(//)[^@/\s]+@", r"\1<redacted>@", value)
+    return _SECRET_VALUE.sub(r"\1<redacted>", value)
 
 
 def sample(line: str, limit: int = 160) -> str:

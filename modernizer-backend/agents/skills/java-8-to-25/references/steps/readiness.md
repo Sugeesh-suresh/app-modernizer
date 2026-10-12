@@ -44,6 +44,7 @@ Do this before any production code is touched, in this stage, while the release 
 | `maven-surefire-plugin` / `maven-failsafe-plugin` | 2.x | **3.2.5+** | 2.x forks its test JVM using internal APIs that JDK 9+ rejects |
 
 - `mockito-all` is a discontinued shaded jar — replace it with `mockito-core`, not with a newer `mockito-all`.
+- `org.mockito.Matchers` was removed in Mockito 4: the bump to 4.11.0 must change those imports to `org.mockito.ArgumentMatchers` in the same task (the readiness build compiles the tests, so it would fail).
 - Mockito 2+ replaced cglib with ByteBuddy, so mocking final classes/static methods now needs `mockito-inline` (4.x). Add it only if the suite actually does that.
 - Leave the JUnit 3/4 → Jupiter migration alone here: it belongs to the Java 8 → 17 stage, and only when it was requested.
 - **But call JUnit 3 and JUnit 4 out as deprecated in your summary**, with the number of JUnit 3 (`extends TestCase`) and JUnit 4 test classes — whether or not the JUnit upgrade was requested. JUnit 4 is maintenance-only, JUnit 6 deprecates the Vintage engine that runs both, and Spring Framework 7 deprecates `SpringRunner`; the 4.13.2 bump buys time, it does not clear the debt.

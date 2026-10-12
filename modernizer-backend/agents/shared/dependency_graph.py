@@ -26,6 +26,8 @@ from typing import TypedDict
 #: `npm run build`) dominated the change audit and the Changed Files view.
 EXCLUDED_DIRS = {
     ".git", ".gradle", ".idea", ".vscode", "__pycache__",
+    # macOS archive metadata: `._name` resource forks of every file, never source
+    "__MACOSX",
     # JVM build output
     "target", "build", "bin", "obj",
     # JS/TS dependencies and build output

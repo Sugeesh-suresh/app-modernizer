@@ -55,7 +55,18 @@ _PATH_LIKE = re.compile(
     r"js|jsx|ts|tsx|json|conf|cfg|md|txt)$",
     re.IGNORECASE,
 )
-_NO_CHANGE = re.compile(r"\bno\s+change(?:s)?\s+(?:needed|required)\b|\bunchanged\b", re.IGNORECASE)
+# "No change" is what an entry SAYS it is — the explicit phrase anywhere, or a change cell / description that
+# opens with a no-change word — never a passing mention ("keeps the URLs unchanged" is a change).
+_NO_CHANGE = re.compile(r"\bno\s+change(?:s)?\s+(?:needed|required|planned)\b|"
+                        r"^\W*(?:no\s+changes?|unchanged|none|keep(?:s)?\s+as[\s-]+is|leave\s+as[\s-]+is|left\s+as[\s-]+is|"
+                        r"left\s+alone|untouched|read[\s-]only)\b", re.IGNORECASE)
+# A table cell that, on its own, says the file stays as it is ("unchanged", "frozen", "no change needed").
+_NO_CHANGE_WORD = (r"(?:no\s+changes?(?:\s+(?:needed|required|planned))?|unchanged|frozen|none|"
+                   r"keep(?:s)?\s+as[\s-]+is|left\s+alone|untouched|read[\s-]only)")
+_NO_CHANGE_CELL = re.compile(rf"[\W_]*{_NO_CHANGE_WORD}(?:[\s\W_]+{_NO_CHANGE_WORD})*[\W_]*", re.IGNORECASE)
+# A list the plan introduces as files it will NOT change ("Seen and deliberately left alone:").
+_LEFT_ALONE = re.compile(r"left\s+alone|not\s+(?:be\s+)?(?:changed|touched|modified)|no\s+changes?\b|unchanged|"
+                         r"out\s+of\s+scope|untouched|do\s+not\s+(?:change|touch)|excluded|deliberately", re.IGNORECASE)
 _NOT_A_PATH = {"none", "n/a", "na", "file", "files", "path", "—", "-"}
 
 _MAX_ROWS = 40
@@ -120,12 +131,22 @@ def _looks_like_path(candidate: str) -> bool:
     return bool(_PATH_LIKE.search(candidate))
 
 
+#: Which mention of a file describes it best: the manifest's own row says what happens to THAT file,
+#: while a task's `Change:` line describes the whole task.
+_SOURCE_RANK = {"manifest table": 3, "manifest list": 2, "plan list": 0, "Files: line": 0}
+_LABELLED = re.compile(r"^\**(?:Files|Change|Done when|Verify|Verification|Risk|Rollback|Depends on)\**\s*:", re.IGNORECASE)
+
+
+def _rank(entry: PlannedFile) -> int:
+    return _SOURCE_RANK.get(entry.source, 1)                 # "Task <id>"
+
+
 def _add(out: dict[str, PlannedFile], entry: PlannedFile) -> None:
-    """First mention of a path wins, but a later entry that carries a real
-    change description upgrades a bare one — a path can appear both in a task's
-    `Files:` line and again in a stage's summary table."""
+    """A path can appear in a task's `Files:` line and again in the manifest: the manifest's per-file row
+    wins over the task text, and any description wins over a bare mention."""
     existing = out.get(entry.path)
-    if existing is None or (not existing.change and entry.change):
+    if existing is None or (not existing.change and entry.change) or \
+            (entry.change and _rank(entry) > _rank(existing)):
         out[entry.path] = entry
 
 
@@ -142,6 +163,15 @@ def manifest_section(plan: str) -> str:
         end = re.compile(rf"^#{{1,{level}}}\s", re.MULTILINE).search(plan, match.end())
         parts.append(plan[match.end():end.start() if end else len(plan)])
     return "\n".join(parts)
+
+
+def _list_lead(text: str, pos: int) -> str:
+    """The line introducing the list a bullet at `pos` belongs to: the nearest line above it that is
+    neither a bullet nor blank (a heading, or a lead-in such as "**Seen and deliberately left alone:**")."""
+    for line in reversed(text[:pos].splitlines()):
+        if line.strip() and not _BULLET.match(line):
+            return line
+    return ""
 
 
 def parse_plan_manifest(plan: str) -> list[PlannedFile]:
@@ -185,17 +215,24 @@ def parse_plan_manifest(plan: str) -> list[PlannedFile]:
         # A cell holding only a dash is a deliberate blank (an unowned stage for a
         # "no change needed" row), not content — joining it yields "x — — — y".
         change = _clip(" — ".join(c for c in cells[1:] if c.strip(" -—–") ))
-        _add(out, PlannedFile(candidate, change, "manifest table", bool(_NO_CHANGE.search(change))))
+        no_change = any(_NO_CHANGE_CELL.fullmatch(c) for c in cells[1:] if c.strip()) or bool(_NO_CHANGE.search(change))
+        _add(out, PlannedFile(candidate, change, "manifest table", no_change))
 
-    # 3 — bullet / checkbox lines whose first backticked span is a path.
+    # 3 — bullet / checkbox lines whose first backticked span is a path. A task's labelled lines
+    # (`- Files: ...`, `- Change: ...`) are its own, read above.
+    in_manifest = bool(manifest_section(plan))
     for match in _BULLET.finditer(listing):
         body = match.group("body")
+        if _LABELLED.match(body):
+            continue
         backticked = _BACKTICKED.findall(body)
         if not backticked or not _looks_like_path(backticked[0]):
             continue
         path = backticked[0].strip()
         change = _clip(re.sub(r"^\s*[`]" + re.escape(path) + r"[`]\s*[—:-]*\s*", "", body))
-        _add(out, PlannedFile(path, change, "manifest list", bool(_NO_CHANGE.search(change))))
+        left_alone = bool(_LEFT_ALONE.search(_list_lead(listing, match.start())))
+        _add(out, PlannedFile(path, change, "manifest list" if in_manifest else "plan list",
+                              left_alone or bool(_NO_CHANGE.search(change))))
 
     return sorted(out.values(), key=lambda e: e.path)
 

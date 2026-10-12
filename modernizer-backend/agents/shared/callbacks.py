@@ -112,7 +112,13 @@ def _locked(path: pathlib.Path):
     read the same content and the second write silently discards the first —
     or interleaves into a file every later run then loads as its prompt.
     """
-    lock_path = path.with_suffix(path.suffix + ".lock")
+    # The lock file lives outside the skills tree: a skill folder holds only what the agents read.
+    import hashlib
+    import tempfile
+    lock_dir = pathlib.Path(tempfile.gettempdir()) / "modernizer-skill-locks"
+    with contextlib.suppress(OSError):
+        lock_dir.mkdir(exist_ok=True)
+    lock_path = lock_dir / (hashlib.sha1(str(path.resolve()).encode()).hexdigest() + ".lock")
     handle = None
     locked = False
     try:
@@ -195,6 +201,11 @@ def make_skill_update_callback(
         except OSError:
             return
 
+        # What the skill keeps is the error, never this repository's paths and line numbers: the
+        # file is every later run's prompt, for every repository.
+        from .learned_fixes import generalise
+        errors = list(dict.fromkeys(g for g in (generalise(e) for e in errors) if g))
+        summary = generalise(summary) if summary else ""
         # Skip errors the file already mentions (simple substring check).
         new_errors = [e for e in errors if e.strip() and e.strip() not in content]
         if not new_errors:

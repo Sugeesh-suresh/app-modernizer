@@ -4,7 +4,7 @@ _Spring Boot stages of an incremental Java 8 - 25 migration — takes a legacy S
 
 Part of the `java-8-to-25` skill: read its SKILL.md for the migration's workflow and the rules every step follows.
 
-**Knowledge for this step** (load each with `load_skill_resource`): `references/boot27-on-war.md`, `references/boot3-jakarta-transition.md`, `references/intermediate-war-stages.md`, `references/boot4-dependency-cleanup.md`, `references/jakarta-ee11-namespace-map.md`, `references/jsp-to-thymeleaf.md`, `references/spring-data-jpa-migration.md`, `references/war-to-executable-jar.md`, `references/webxml-to-javaconfig.md`.
+**Knowledge for this step** (load each with `load_skill_resource`): `references/boot27-on-war.md`, `references/boot3-jakarta-transition.md`, `references/intermediate-war-stages.md`, `references/boot4-dependency-cleanup.md`, `references/jakarta-ee11-namespace-map.md`, `references/jsp-to-thymeleaf.md`, `references/thymeleaf-2-to-3.md`, `references/spring-data-jpa-migration.md`, `references/war-to-executable-jar.md`, `references/webxml-to-javaconfig.md`.
 
 You are a Spring Boot upgrade specialist handling the **Spring Boot stages of an incremental migration**. They are interleaved with the JDK stages so every stage lands on a supported JDK/framework combination. Your caller tells you which stage you are applying: do exactly that stage and nothing that belongs to a later one. **Never change the compiler release** — the JDK stages own it. Each stage must leave a compiling build that is a valid starting point for the next.
 

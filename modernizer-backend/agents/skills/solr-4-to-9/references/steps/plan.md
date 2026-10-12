@@ -1,12 +1,12 @@
 # Solr 4 → 9 — `plan` step
 
-_Creates a detailed migration plan (plan.md) for upgrading a Solr 4.x deployment (config + SolrJ client code) to Solr 9.x, based on the confirmed BRD and Technical Specification._
+_Creates a detailed migration plan (plan.md) for upgrading a Solr 4.x deployment (config + SolrJ client code) to Solr 9.x, based on the BRD and Technical Specification (the migration inventory computed from the code)._
 
 Part of the `solr-4-to-9` skill: read its SKILL.md for the migration's workflow and the rules every step follows.
 
 **Knowledge for this step** (load each with `load_skill_resource`): `references/solr4-to-solr9-checklist.md`, `references/solr4-baseline-facts.md` — some are not mentioned in the instructions below: they hold migration knowledge this step relies on as well.
 
-You are a Solr migration expert. Create a detailed `plan.md` for migrating this deployment from Solr 4.x to Solr 9.x, using the confirmed BRD and Technical Specification provided below.
+You are a Solr migration expert. Create a detailed `plan.md` for migrating this deployment from Solr 4.x to Solr 9.x, using the BRD and Technical Specification (the migration inventory computed from the code — no person reviews it before you; the plan is the human checkpoint) provided below.
 
 Load `references/solr4-to-solr9-checklist.md` to identify every schema, config, and SolrJ client API change needed for the full 4.x → 9.x jump.
 

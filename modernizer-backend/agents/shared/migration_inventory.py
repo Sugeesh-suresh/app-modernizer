@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
-from .change_audit import LEGACY_MARKERS, Marker
+from .change_audit import LEGACY_MARKERS, Marker, code_text
 from . import progress
 from .dependency_graph import EXCLUDED_DIRS
 from .evidence import redact, sample
@@ -134,8 +134,13 @@ def _persistence_view(scan: Scan) -> list[str]:
         if PurePosixPath(f).suffix.lower() in (".jsp", ".jspf", ".jspx", ".tag", ".tagx"):
             jsp[str(PurePosixPath(f).parent)] += 1
     views = [f"| `{d}/` | {n} JSP/tag file(s) |" for d, n in sorted(jsp.items())]
+    thymeleaf = defaultdict(int)
+    for rel, text in scan.texts.items():
+        if PurePosixPath(rel).suffix.lower() in (".html", ".htm") and re.search(r"\bth:\w+\s*=|xmlns:th=", text):
+            thymeleaf[str(PurePosixPath(rel).parent)] += 1
+    views += [f"| `{d}/` | {n} Thymeleaf template(s) |" for d, n in sorted(thymeleaf.items())]
     return _rows("| File | Persistence / configuration role |", rows, "| — | none found |") + \
-        ["", "Views:", ""] + _rows("| Directory | Views |", views, "| — | no JSP views |")
+        ["", "Views:", ""] + _rows("| Directory | Views |", views, "| — | no JSP or Thymeleaf views |")
 
 
 def _solr_schema(scan: Scan) -> list[str]:
@@ -215,7 +220,8 @@ def _sql_objects(scan: Scan) -> list[str]:
 def _jdbc_config(scan: Scan) -> list[str]:
     rows = []
     for rel, text in sorted(scan.texts.items()):
-        for m in re.finditer(r"jdbc:oracle:[\w:@/.\-()=\s]+", text):
+        # One line only: a properties file's next lines are the user and the password.
+        for m in re.finditer(r"jdbc:oracle:[\w:@/.\-()=\t ]+", text):
             url = redact(m.group(0).strip())[:120]
             rows.append(f"| `{rel}` | `{url}` |")
     return _rows("| File | JDBC URL (credentials redacted) |", rows[:200], "| — | none found |")
@@ -301,7 +307,7 @@ SPECS: dict[str, Spec] = {
         objective="Compile and run the application on Java 25; with the Spring Boot option, on the newest "
                   "Spring Boot 4.x as an executable JAR. Business behaviour does not change.",
         out_of_scope="Business logic, API contracts, database schema and message contracts.",
-        suffixes=frozenset(_JAVA_BUILD | {".jsp", ".jspf", ".tag"}),
+        suffixes=frozenset(_JAVA_BUILD | {".jsp", ".jspf", ".tag", ".html", ".htm"}),
         checks=tuple(LEGACY_MARKERS["java-8-to-25"]) + _JAVA11_AS_MARKERS + _JAVA25_EXTRA,
         dependency_filter=r".",
         tables=(("Packaging & Deployment Model", _packaging), ("Persistence & View Layer", _persistence_view)),
@@ -463,7 +469,7 @@ def _file_findings(spec: Spec, sc: Scan) -> dict[str, list[tuple]]:
     prefilter = _prefilter(spec.checks)
     out: dict[str, list[tuple]] = defaultdict(list)
     for rel in sorted(sc.texts):
-        text = sc.texts[rel]
+        text = code_text(rel, sc.texts[rel])
         # Candidate lines: every line a prefilter match touches. Each check
         # still decides per line, so the result is what a full line-by-line
         # scan gives, without running every check over every line.
@@ -473,10 +479,14 @@ def _file_findings(spec: Spec, sc: Scan) -> dict[str, list[tuple]]:
         lines = text.splitlines()
         candidates = sorted({n for a, b in spans
                              for n in range(text.count("\n", 0, a) + 1, text.count("\n", 0, b) + 2)})
+        original = sc.texts[rel].splitlines()
         for check in spec.checks:
+            if not getattr(check, "applies_to", lambda _t: True)(text):
+                continue
             hits = [n for n in candidates if n <= len(lines) and check.pattern.search(lines[n - 1])]
             if hits:
-                out[check.name].append((rel, hits, sample(lines[hits[0] - 1])))
+                out[check.name].append((rel, hits, sample(original[hits[0] - 1] if hits[0] <= len(original)
+                                                          else lines[hits[0] - 1])))
     return out
 
 

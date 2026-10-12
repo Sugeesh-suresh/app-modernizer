@@ -55,6 +55,7 @@ Two more steps run in every migration and belong to shared skills: `code-review`
 | `references/java8-baseline-facts.md` | `plan` |
 | `references/java8-to-java25-checklist.md` | `plan`, `modify`, `fix` |
 | `references/jsp-to-thymeleaf.md` | `springboot-incremental`, `springboot-boot4` |
+| `references/thymeleaf-2-to-3.md` | `plan`, `springboot-incremental`, `springboot-boot4`, `fix` |
 | `references/legacy-library-modernization.md` | `modify`, `fix` |
 | `references/migration-patterns.md` | `modify`, `fix` |
 | `references/openrewrite-setup.md` | `readiness` |

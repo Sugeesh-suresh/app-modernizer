@@ -143,6 +143,14 @@ checks it gets when run alone, its result is recorded when it completes (in any 
 on a group — a pass's merge, the rules finalisation, the writers — waits until every batch of it is in. Set
 `DISCOVERY_CONCURRENCY=1` to run one at a time, or lower it if Gemini reports rate limits (429).
 
+### Skills learn from runs
+
+A run writes what it learns into the extension's own skill files: verified fixes into the pattern's `modify` and
+`fix` step files, validation errors into its `validate` step file, and the curator's edits. That is how the
+skills improve, and every later run on this machine reads them. Set `MODERNIZER_SKILL_LEARNING=0` in
+`~/.modernizer/.env` for trial runs, or where several people share one installation. An extension update
+replaces the files (and what they learned).
+
 ### Progress while the pipeline works
 
 Some steps need no model and can still take minutes: the Java preflight builds the code as uploaded with

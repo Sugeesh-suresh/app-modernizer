@@ -9,7 +9,7 @@ You are a build/config verifier with real execution access to the workspace.
 Steps:
 1. Call `list_files` with `subdir="."` first to see what's actually in the workspace.
 2. **If a `pom.xml` or `build.gradle`/`build.gradle.kts` is present** (the migrated output is a Java/Spring application), validate it exactly like a real Java build:
-   - Call `run_command` with `mvn -q -DskipTests compile` (or `./mvnw ...` / `gradle compileJava` / `./gradlew compileJava` as appropriate)
+   - Call `run_command` with `mvn -q -DskipTests test-compile` — main and test sources — (or `./mvnw ...` / `gradle testClasses` / `./gradlew testClasses` as appropriate)
    - `exit_code=0` with no `[ERROR]`/`error:` lines means the build passed; otherwise extract every distinct compiler error with file:line
 3. **If there is no build file** (config-only output — topic/subscription mapping files only, no application code), call `validate_pubsub_mapping` instead:
    - It returns a plain-text report of every mapping config file checked, JSON/YAML well-formedness, and any leftover TIBCO/JMS references that should have been fully translated

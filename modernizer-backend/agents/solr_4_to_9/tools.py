@@ -36,6 +36,16 @@ _DEPRECATED_PATTERNS: list[tuple[str, str]] = [
     (r"solr\.DirectSolrSpellChecker", None),  # informational only, not necessarily an error
     (r"<field\s+name=\"_version_\"[^>]*indexed=\"false\"", "_version_ field must be indexed for optimistic concurrency / real-time get since Solr 4.x — do not set indexed=\"false\"."),
     (r"class=\"solr\.LatLonType\"", "solr.LatLonType is deprecated — use solr.LatLonPointSpatialField."),
+    (r"<luceneMatchVersion>\s*[4-7]\.", "luceneMatchVersion is older than 8 — set it to the Solr 9 release (e.g. 9.x) and reindex."),
+    (r"<defaultSearchField>", "<defaultSearchField> was removed in Solr 7 — set df in the request handler defaults."),
+    (r"<solrQueryParser\b", "<solrQueryParser defaultOperator> was removed in Solr 7 — set q.op in the request handler defaults."),
+    (r"\benablePositionIncrements\s*=", "enablePositionIncrements is no longer accepted by the filter factories — remove it."),
+    (r"solr\.StandardFilterFactory", "StandardFilterFactory was removed in Solr 8 — remove it from the analyzer chain."),
+    (r"solr\.(?:Fast)?LRUCache|solr\.LFUCache", "LRUCache/FastLRUCache/LFUCache were removed in Solr 9 — use solr.CaffeineCache."),
+    (r"solr\.admin\.AdminHandlers", "solr.admin.AdminHandlers was removed in Solr 6 — the admin handlers are implicit; delete it."),
+    (r"<mergePolicy\b", "<mergePolicy> was removed in Solr 7 — use <mergePolicyFactory>."),
+    (r"<lib\s+dir=\"[^\"]*contrib/", "contrib/ became modules/ in Solr 9 — enable modules (solr.modules) instead of <lib> paths into contrib/."),
+    (r"\benableRemoteStreaming\s*=", "Remote streaming is no longer configured in solrconfig.xml in Solr 9 — use the system property if still needed."),
 ]
 
 

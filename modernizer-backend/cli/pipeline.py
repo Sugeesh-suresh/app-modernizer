@@ -174,6 +174,18 @@ def _bundle(run: Run) -> list[str]:
     return run.state.get("bundle") or [run.state["pattern"]]
 
 
+def build_pattern(run: Run, pattern: str) -> str | None:
+    """The pattern whose build tool a `pattern` without one borrows: a companion (Oracle, Solr) changes
+    dependencies, drivers and client code of a Java build, which only a real build can verify. It
+    builds with the run's Java pattern's tool, on the JDK of the Java stage it follows. None when the
+    pattern builds itself, or the run has no Java build."""
+    if hasattr(P.get(pattern).tools(), "run_command"):
+        return None
+    return next((p for p in _bundle(run) if p in (P.JAVA_8_TO_25, P.JAVA_8_TO_11)
+                 and hasattr(P.get(p).tools(), "run_command")
+                 and (any(run.workspace.rglob("pom.xml")) or any(run.workspace.rglob("build.gradle*")))), None)
+
+
 def _results(run: Run, pattern: str, name: str) -> Path:
     return run.result_path(f"{pattern}/{name}")
 
@@ -246,7 +258,7 @@ def _phase_select(run: Run, log: list[str]) -> dict | None:
     recs = run.state.get("recommendations") or []
     rows = "\n".join(
         f"- `{r['pattern']}` — {r.get('label', '')}: {r.get('reason', '')}"
-        + "".join(f"\n    - {e}" for e in (r.get("evidence") or [])[:3]) for r in recs)
+        + "".join(f"\n    - {e}" for e in (r.get("evidence") or [])[:8]) for r in recs)
     return _step(run, "select-companions", "ask_user", title="Choose companion migrations", text=(
         f"The repository also uses technologies that must move for the {run.state['pattern']} migration to "
         f"keep working:\n\n{rows}\n\nAsk the user which of these to migrate in the same run (any, all or "
@@ -788,10 +800,20 @@ def _validate_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
         body += (f" This is validating the '{st.title}' stage (Phase {st.phase}: {st.phase_title}) of an incremental "
                  f"migration — the build should target Java {st.java_release}.")
         if st.build_goal == "package":
-            body += (" For this stage run the `package` goal instead of `compile` (`mvn -q -DskipTests package`, or "
+            body += (" For this stage run the `package` goal instead of `test-compile` (`mvn -q -DskipTests clean package`, or "
                      "`./gradlew assemble` for Gradle) so the new executable artifact is actually produced — a "
                      "failed repackage is a failed build.")
-    body += (f"\n\n{spec.validator_note}\n\nIf — and only if — the validation succeeded, call "
+    if pattern == P.JAVA_8_TO_25 and not suffix and run.state.get("springboot_upgrade"):
+        body += (" This big-bang run converts the application to a Spring Boot executable JAR: run the `package` goal "
+                 "instead of `test-compile` (`mvn -q -DskipTests clean package`, or `./gradlew clean bootJar`) so the "
+                 "artifact is really produced — a failed repackage is a failed build.")
+    note = spec.validator_note
+    if build_pattern(run, pattern):
+        note += (" This pass may also change the build (dependencies, the JDBC driver or client library) and Java "
+                 "code: ALSO build with ws_run_command (`mvn -q -DskipTests clean test-compile`, or `gradle clean testClasses`) — "
+                 "it runs on the JDK of the Java stage this pass follows. The validation passes only when the "
+                 "static check AND the build pass.")
+    body += (f"\n\n{note}\n\nIf — and only if — the validation succeeded, call "
              "`ws_signal_build_success`; it refuses while an approved-versions or scope-fence check still fails, "
              "and then validation has failed. Never edit files: you only build and report.")
     q = body + _output_rule(sid, 'result as the JSON object the skill specifies: {"passed": true|false, "errors": '

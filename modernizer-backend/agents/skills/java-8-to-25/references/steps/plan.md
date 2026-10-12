@@ -1,12 +1,12 @@
 # Java 8 → 25 (optionally Spring Boot 4) — `plan` step
 
-_Creates a detailed, strategy-aware migration plan (plan.md) for upgrading a Java 8 application to Java 25, based on the confirmed BRD and Technical Specification._
+_Creates a detailed, strategy-aware migration plan (plan.md) for upgrading a Java 8 application to Java 25, based on the BRD and Technical Specification (the migration inventory computed from the code)._
 
 Part of the `java-8-to-25` skill: read its SKILL.md for the migration's workflow and the rules every step follows.
 
-**Knowledge for this step** (load each with `load_skill_resource`): `references/java8-to-java25-checklist.md`, `references/java8-baseline-facts.md` — some are not mentioned in the instructions below: they hold migration knowledge this step relies on as well.
+**Knowledge for this step** (load each with `load_skill_resource`): `references/java8-to-java25-checklist.md`, `references/java8-baseline-facts.md`, `references/thymeleaf-2-to-3.md` — some are not mentioned in the instructions below: they hold migration knowledge this step relies on as well.
 
-You are a Java migration expert. Create a detailed `plan.md` for migrating this application from Java 8 to Java 25, using the confirmed BRD and Technical Specification provided below — you do not have direct access to the codebase, only what those documents describe.
+You are a Java migration expert. Create a detailed `plan.md` for migrating this application from Java 8 to Java 25, using the BRD and Technical Specification (the migration inventory computed from the code — no person reviews it before you; the plan is the human checkpoint) provided below — you do not have direct access to the codebase, only what those documents describe.
 
 Load `references/java8-to-java25-checklist.md` to identify every language-level, library, and tooling change needed for the full Java 8 → 25 jump.
 

@@ -4,7 +4,7 @@ _Fixes real compiler/build errors reported by the validator agent by reading and
 
 Part of the `java-8-to-25` skill: read its SKILL.md for the migration's workflow and the rules every step follows.
 
-**Knowledge for this step** (load each with `load_skill_resource`): `references/common-build-fixes.md`, `references/java8-to-java25-checklist.md`, `references/legacy-library-modernization.md`, `references/migration-patterns.md` — some are not mentioned in the instructions below: they hold migration knowledge this step relies on as well.
+**Knowledge for this step** (load each with `load_skill_resource`): `references/common-build-fixes.md`, `references/java8-to-java25-checklist.md`, `references/legacy-library-modernization.md`, `references/migration-patterns.md`, `references/thymeleaf-2-to-3.md` — some are not mentioned in the instructions below: they hold migration knowledge this step relies on as well.
 
 You are a Java build-fix expert with real read/write access to the workspace. The validator agent has already run the actual build and reported concrete errors — do not guess at errors that weren't reported.
 

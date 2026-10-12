@@ -61,14 +61,61 @@ _MAX_LINE_CHARS = 200
 
 @dataclass(frozen=True)
 class Marker:
-    """One regex signature, with the note the reviewer needs to adjudicate it."""
+    """One regex signature, with the note the reviewer needs to adjudicate it. `requires`, when set,
+    must also match somewhere in the file: a line that only means something in a context (HQL `?`
+    parameters, which are JDBC's own syntax outside Hibernate) is not judged without it."""
     name: str
     pattern: re.Pattern
     note: str = ""
+    requires: re.Pattern | None = None
+
+    def applies_to(self, text: str | None) -> bool:
+        """Whether the marker applies to a file with this text (None: the file is not known — it applies)."""
+        return self.requires is None or text is None or bool(self.requires.search(text))
 
 
-def _m(name: str, regex: str, note: str = "", flags: int = 0) -> Marker:
-    return Marker(name, re.compile(regex, flags), note)
+def _m(name: str, regex: str, note: str = "", flags: int = 0, requires: str = "") -> Marker:
+    return Marker(name, re.compile(regex, flags), note, re.compile(requires) if requires else None)
+
+
+SQL_SUFFIXES = frozenset({".sql", ".pks", ".pkb", ".ddl", ".plsql", ".prc", ".fnc", ".trg"})
+
+
+def sql_code(text: str) -> str:
+    """`text` with SQL comments (`--`, `/* */`, SQL*Plus `REM`) blanked out, line breaks kept: keyword
+    checks then see only code, so a migration script's comment ("NOTES LONG -> CLOB") is never read as a
+    LONG column. String literals are kept — `EXECUTE IMMEDIATE '...'` is code — but a `--` inside one
+    does not start a comment."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith("--", i) or (c in "Rr" and (i == 0 or text[i - 1] == "\n")
+                                         and re.match(r"rem(?:ark)?\b", text[i:i + 6], re.IGNORECASE)):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append(re.sub(r"[^\n]", " ", text[i:j]))
+            i = j
+        elif c == "'":
+            j = i + 1
+            while j < n and not (text[j] == "'" and not text.startswith("''", j)):
+                j += 2 if text.startswith("''", j) else 1
+            j = min(j + 1, n)
+            out.append(text[i:j])
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def code_text(path: str, text: str) -> str:
+    """What the markers read: SQL without comments and literals; any other file as it is."""
+    return sql_code(text) if Path(path).suffix.lower() in SQL_SUFFIXES else text
 
 
 # ---------------------------------------------------------------------------
@@ -96,9 +143,13 @@ _JAVA_LEGACY = [
        "(versioned XSD locations become versionless)."),
     _m("Hibernate 3/4", r"<hibernate\.version>\s*[34]\.|<artifactId>hibernate-(?:core|entitymanager|annotations)</artifactId>\s*<version>\s*[34]\.",
        "Hibernate 3/4 → Hibernate 6/7 (with Spring Boot 3/4): Criteria, HibernateTemplate and positional HQL are gone."),
+    # `?` is JDBC's own placeholder (JdbcTemplate, PreparedStatement): only a file that builds Hibernate /
+    # JPA queries can hold HQL.
     _m("HQL positional parameter", r"\"(?:from|select|update|delete)\b[^\"\n]*\?(?!\d)[^\"\n]*\"",
        "JDBC-style `?` parameters in HQL were removed in Hibernate 5.3 — use `?1` ordinals or `:named` parameters.",
-       re.IGNORECASE),
+       re.IGNORECASE,
+       requires=r"\b(?:createQuery|createFilter|HibernateTemplate|getHibernateTemplate|org\.hibernate\.(?:Session|Query)\b|"
+                r"Restrictions\.sqlRestriction|@(?:Named)?Query\s*\((?![^)]*nativeQuery\s*=\s*true))"),
     _m("commons-lang 2", r"\borg\.apache\.commons\.lang\.(?!3\b)|<artifactId>commons-lang</artifactId>",
        "commons-lang 2 is EOL — org.apache.commons.lang3 (commons-lang3)."),
     # Only the 2.x artifact is javax-era: RI 4 (Jakarta) keeps the WSServlet class names and the
@@ -146,6 +197,28 @@ _JAVA_LEGACY = [
        "The compiler level never left Java 8 — expected only if the run stopped before the Java 17 stage."),
     _m("dead build plugin", r"maven-svn-revision-number-plugin|cargo-maven2-plugin",
        "Dead build cruft removed in the readiness stage."),
+    _m("Spring MVC adapter class", r"\b(?:WebMvcConfigurerAdapter|HandlerInterceptorAdapter|WebSecurityConfigurerAdapter)\b",
+       "Removed in Spring 6 / Spring Security 6 — implement WebMvcConfigurer / HandlerInterceptor directly; a "
+       "SecurityFilterChain bean replaces WebSecurityConfigurerAdapter (Java 25 / Spring 6 stage)."),
+    _m("Java EE descriptor namespace", r"\bxmlns(?::\w+)?=\"https?://(?:xmlns\.jcp\.org|java\.sun\.com)/xml/ns/(?:javaee|j2ee)\"",
+       "A Java EE web.xml / descriptor header — the jakartaee namespace (web-app 6.0) at the Jakarta stage."),
+    _m("JSTL 1.2 (javax)", r"<groupId>javax\.servlet(?:\.jsp\.jstl)?</groupId>\s*<artifactId>(?:jstl|javax\.servlet\.jsp\.jstl-api)</artifactId>|"
+                          r"<groupId>taglibs</groupId>\s*<artifactId>standard</artifactId>",
+       "The javax JSTL — jakarta.servlet.jsp.jstl-api 3.x plus an implementation (org.glassfish.web:"
+       "jakarta.servlet.jsp.jstl) at the Jakarta stage; JSP taglib URIs keep working."),
+    # Thymeleaf 2.1 (Spring Boot 1.5) → 3.x (Boot 2+); 3.1 with Boot 3/4 — references/thymeleaf-2-to-3.md.
+    _m("Thymeleaf 2 template mode", r"\bspring\.thymeleaf\.mode\s*[=:]\s*(?:LEGACY)?HTML5\b|"
+                                   r"setTemplateMode\s*\(\s*\"(?:LEGACY)?HTML5\"|TemplateMode\.(?:LEGACY)?HTML5\b",
+       "HTML5 / LEGACYHTML5 do not exist in Thymeleaf 3 — mode HTML (the default: drop the property)."),
+    _m("layout dialect decorator", r"\blayout:decorator\s*=",
+       "Removed from the Thymeleaf Layout Dialect 3 — layout:decorate=\"~{layout}\"."),
+    _m("Thymeleaf th:include", r"\bth:include\s*=",
+       "Deprecated since Thymeleaf 3.0 — th:replace (or th:insert, which keeps the host element) with a "
+       "~{...} fragment expression. Fragment inclusion runs BEFORE th:each on the same element."),
+    _m("Thymeleaf 3.1 removed expression object", r"#(?:request|response|session|servletContext|httpServletRequest|httpSession)\b",
+       "Removed in Thymeleaf 3.1 (Spring Boot 3+) — put what the template needs in the model."),
+    _m("old Thymeleaf Spring Security extras", r"thymeleaf-extras-springsecurity[345]\b",
+       "→ thymeleaf-extras-springsecurity6 with Spring Security 6+."),
 ]
 
 _JAVA_MODERN = [
@@ -164,6 +237,10 @@ _JAVA_MODERN = [
     _m("modern Guava", r"\bguava-bom\b|MoreObjects|Stopwatch\.create|directExecutor\s*\("),
     _m("ojdbc11", r"\bojdbc11\b"),
     _m("Spring Data JPA", r"spring-boot-starter-data-jpa|org\.springframework\.data\.jpa"),
+    _m("Spring MVC interfaces", r"\bimplements\s+(?:[\w.]+\s*,\s*)*WebMvcConfigurer\b|\bSecurityFilterChain\b"),
+    _m("Jakarta EE descriptor namespace", r"jakarta\.ee/xml/ns/jakartaee"),
+    _m("Jakarta JSTL", r"jakarta\.servlet\.jsp\.jstl"),
+    _m("Thymeleaf 3 fragment expression", r"~\{|\blayout:decorate\s*="),
 ]
 
 _JAVA_FORBIDDEN = [
@@ -211,12 +288,26 @@ _JAVA11_FORBIDDEN = [
 ]
 
 _SOLR_LEGACY = [
-    _m("SolrJ 4 server classes", r"\b(?:Http|Cloud|Concurrent|LBHttp)Solr(?:Server)\b",
-       "Renamed to *SolrClient with builder construction in SolrJ 5+."),
+    _m("SolrJ 4 server classes", r"\b(?:Http|Cloud|Concurrent|LBHttp)Solr(?:Server)\b|\bSolrServer\b",
+       "Renamed to *SolrClient with builder construction in SolrJ 5+ (the SolrServer base type is SolrClient; "
+       "EmbeddedSolrServer keeps its name). SolrClient is Closeable and query() also throws IOException."),
     _m("Trie field types", r"solr\.Trie\w*Field",
        "Removed in Solr 9 — Point field types with docValues."),
     _m("legacy solrconfig", r"<luceneMatchVersion>\s*4\.|\bsolr\.clustering\b",
        "luceneMatchVersion still on 4.x, or a contrib removed in Solr 9."),
+    _m("schema defaults removed in Solr 7", r"<defaultSearchField>|<solrQueryParser\b",
+       "Removed in Solr 7 — the df and q.op request parameters (in the handler defaults; note edismax's sow default "
+       "also changed to false in Solr 7)."),
+    _m("removed analysis option", r"\benablePositionIncrements\s*=|solr\.StandardFilterFactory",
+       "enablePositionIncrements and StandardFilterFactory are gone from Lucene 5+/8 — drop them."),
+    _m("removed Solr cache / handler class", r"solr\.(?:Fast)?LRUCache|solr\.LFUCache|solr\.admin\.AdminHandlers|<mergePolicy\b",
+       "LRUCache/FastLRUCache/LFUCache were removed in Solr 9 (solr.CaffeineCache); AdminHandlers in Solr 6 (implicit "
+       "handlers); <mergePolicy> in Solr 7 (<mergePolicyFactory>)."),
+    _m("Solr 9 contrib / remote streaming", r"<lib\s+dir=\"[^\"]*contrib/|\benableRemoteStreaming\s*=",
+       "contrib/ became modules/ in Solr 9 (enable with solr.modules, not <lib>); remote streaming is a system "
+       "property, not a solrconfig attribute."),
+    _m("graph-unaware synonyms", r"solr\.SynonymFilterFactory",
+       "Deprecated — SynonymGraphFilterFactory (+ FlattenGraphFilterFactory at index time) for multi-word synonyms."),
 ]
 
 _SOLR_MODERN = [
@@ -349,8 +440,10 @@ def _clip(line: str) -> str:
     return line if len(line) <= _MAX_LINE_CHARS else line[:_MAX_LINE_CHARS] + " …"
 
 
-def _scan(lines: list[str], markers: list[Marker]) -> list[MarkerHit]:
-    """First `_MAX_HITS_PER_FILE` distinct markers matched anywhere in *lines*."""
+def _scan(lines: list[str], markers: list[Marker], context: str | None = None) -> list[MarkerHit]:
+    """First `_MAX_HITS_PER_FILE` distinct markers matched anywhere in *lines* (of a file whose text
+    is `context`: a marker whose `requires` it does not meet is skipped)."""
+    markers = [m for m in markers if m.applies_to(context)]
     hits: list[MarkerHit] = []
     seen: set[str] = set()
     for line in lines:
@@ -482,6 +575,7 @@ def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str,
     for rel in sorted(set(before) | set(after)):
         before_text = _read(before[rel]) if rel in before else ""
         after_text = _read(after[rel]) if rel in after else ""
+        before_code, after_code = code_text(rel, before_text), code_text(rel, after_text)
 
         if rel in before and rel in after and before_text == after_text:
             audit.unchanged_total += 1
@@ -495,7 +589,7 @@ def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str,
                 continue
             if Path(rel).suffix.lower() in _SCAN_SUFFIXES and legacy:
                 audit.unchanged_scanned += 1
-                present = _scan(after_text.splitlines(), legacy)
+                present = _scan(after_code.splitlines(), legacy, after_code)
                 if present:
                     audit.residual_legacy.append({"path": rel, "legacy_present": present})
             continue
@@ -513,8 +607,8 @@ def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str,
 
         removed_lines: list[str] = []
         added_lines: list[str] = []
-        for line in difflib.unified_diff(
-            before_text.splitlines(), after_text.splitlines(), lineterm="", n=0
+        for line in difflib.unified_diff(          # code only: a reworded SQL comment is not a change
+            before_code.splitlines(), after_code.splitlines(), lineterm="", n=0
         ):
             if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
                 continue
@@ -526,10 +620,10 @@ def audit_changes(baseline_dir: str, workspace_dir: str, pattern: str,
         entry: ChangedFileAudit = {
             "path": rel,
             "status": status,
-            "legacy_removed": _scan(removed_lines, legacy),
-            "modern_added": _scan(added_lines, modern),
-            "legacy_added": _scan(added_lines, legacy),
-            "forbidden_added": _scan(added_lines, forbidden),
+            "legacy_removed": _scan(removed_lines, legacy, before_code),
+            "modern_added": _scan(added_lines, modern, after_code),
+            "legacy_added": _scan(added_lines, legacy, after_code),
+            "forbidden_added": _scan(added_lines, forbidden, after_code),
         }
         frozen = scope_fence.frozen_reason(pattern, rel)
         if frozen:
