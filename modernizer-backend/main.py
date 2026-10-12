@@ -1628,7 +1628,7 @@ async def _run_discovery_documents(session_id: str, bundle: list[str], feedback:
         else:
             await _push(session_id, "re-stream", content=f"\n\n### Gathering evidence: {label}\n")
             if strategy["passes"]:
-                raw = await _gather_layer_evidence(session_id, pack_id)
+                raw = await _gather_layer_evidence(session_id, pack_id, {pid: t for pid, _, t in packs})
             else:
                 raw = await _gather_stack_evidence(session_id, pack_id, stack_info.get(pack_id, {"pattern": pack_id}),
                                                    label)
@@ -2484,9 +2484,11 @@ def _strategy_of(state: dict) -> dict:
     return next((s for s in offered if s["id"] == sid), {"id": sid, "name": sid, "passes": []})
 
 
-async def _gather_layer_evidence(session_id: str, pass_id: str) -> str:
+async def _gather_layer_evidence(session_id: str, pass_id: str, earlier: dict[str, str] | None = None) -> str:
     """One pass of a layered strategy: its batches (computed starting points), each
-    traced by the pass's agent — RE_CONCURRENCY at once — and returned together."""
+    traced by the pass's agent — RE_CONCURRENCY at once — and returned together.
+    `earlier` holds the numbered packs of the passes already run: the UI pass links to
+    the API pass's endpoint traces instead of re-reading the backend."""
     state = await _get_state(session_id)
     workspace_dir = state.get("workspace_dir", "")
     spec = re_strategy.PASSES[pass_id]
@@ -2499,7 +2501,8 @@ async def _gather_layer_evidence(session_id: str, pass_id: str) -> str:
     files = sorted({f for s in layer_stacks for f in (_stack_files(workspace_dir, s) or [])})
     batches = await asyncio.to_thread(re_strategy.pass_batches, pass_id, files, inv, ui_result,
                                       sysinv.get("database") or {}, workspace_dir, config.UI_CONTRACTS_BATCH_ELEMENTS,
-                                      config.UI_CONTRACTS_BATCH_CHARS, config.DISCOVERY_UNIT_MAX_FILES)
+                                      config.UI_CONTRACTS_BATCH_CHARS, config.DISCOVERY_UNIT_MAX_FILES,
+                                      (earlier or {}).get("api", "") if pass_id == "ui" else "")
     if not batches:
         return re_strategy.empty_pass_pack(pass_id)
     await _push(session_id, "re-stream", content=f"\n**{spec.label}:** {len(batches)} batch(es), "

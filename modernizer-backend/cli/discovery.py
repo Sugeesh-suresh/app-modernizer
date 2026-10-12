@@ -334,9 +334,13 @@ def _layer_batches(run: Run, pass_id: str) -> list[dict]:
     sysinv = json.loads(_computed(run, "system_inventory.json") or "{}")
     layer_stacks = [s for s in _stacks(run) if re_strategy.LAYER_OF_KIND.get(s.get("kind", "")) == pass_id]
     files = sorted({f for s in layer_stacks for f in (stack_files(ws, s) or [])})
+    # The UI pass links to the API pass's endpoint traces when that pass ran first (layered strategies).
+    api_pack = _d(run, "evidence", "api.md")
+    linked = pass_id == "ui" and api_pack.is_file()
     return re_strategy.pass_batches(pass_id, files, inv, ui_result, sysinv.get("database") or {}, ws,
                                     config.UI_CONTRACTS_BATCH_ELEMENTS, config.UI_CONTRACTS_BATCH_CHARS,
-                                    config.DISCOVERY_UNIT_MAX_FILES)
+                                    config.DISCOVERY_UNIT_MAX_FILES, _read(api_pack) if linked else "",
+                                    run.rel(api_pack) if linked else "")
 
 
 def _job_layer(run: Run, job: dict, log: list[str]) -> dict | None:
@@ -359,6 +363,9 @@ def _job_layer(run: Run, job: dict, log: list[str]) -> dict | None:
          f"file). {spec.summary} Explore the repository with read_file / glob / grep_search / list_directory (the "
          "workspace root; ignore `.modernizer/`). Do not assume any file contents you have not read. Describe the "
          "system as it is; record debt and dead code as observed facts in their own section."
+         + (f" The API pass's endpoint traces are in `{run.rel(_d(run, 'evidence', 'api.md'))}`: you may read it "
+            "(search it for an evidence id) — not the backend code behind those endpoints."
+            if pass_id == "ui" and _d(run, "evidence", "api.md").is_file() else "")
          + _output_rule(sid, "Evidence Pack, in the thirteen sections the skill specifies"))
     return _sub(run, sid, ANALYST, q, f"{spec.label}: {job['batches'][i]}", "layer")
 

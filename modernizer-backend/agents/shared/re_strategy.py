@@ -9,7 +9,8 @@ A *layered* reading follows the system the way a request moves through it:
 
 - **UI top-down** — every screen and control, traced downstream through the
   API, the services and the data access to the database reads and writes it
-  causes;
+  causes (after the API pass, the backend part is a link to the endpoint's trace:
+  each handler is read once, however many screens call it);
 - **Data bottom-up** — every table, view, procedure and trigger, traced upwards
   to every component and flow that reads or changes it, and how its rows change;
 - **API & business logic** — every endpoint, job and listener, with the business
@@ -52,8 +53,9 @@ class Pass:
 
 PASSES: dict[str, Pass] = {
     "ui": Pass("ui", "UI layer — top-down flow trace", "layer-ui-trace", "top-down",
-               "Every screen and control, traced through the API, services and data access to the database "
-               "reads and writes it causes."),
+               "Every screen and control, traced through the client code to the endpoint it calls, and from "
+               "there through the services and data access to the reads and writes it causes — the backend part "
+               "linked to the API pass's endpoint traces when that pass ran first."),
     "db": Pass("db", "Data layer — bottom-up trace", "layer-data-trace", "bottom-up",
                "Every table, view, procedure and trigger, traced up to the components and flows that read or "
                "change it, and how its rows change over their life."),
@@ -151,12 +153,13 @@ def options(stacks: list[dict], signals: dict | None = None) -> list[dict]:
     sig = signals or {}
     found = _describe(layers)
     out = [
-        Strategy("layered-trace", "Layered trace: UI top-down → data bottom-up → API & logic",
-                 ("ui", "db", "api"),
-                 "Three passes. (1) From every screen and control down through the API, services and data access "
-                 "to the rows it reads and writes. (2) From every table, procedure and trigger up to whatever "
-                 "changes it. (3) Every endpoint, job and listener for its business logic, marking what the UI "
-                 "and the data passes did not reach. Whatever no pass reaches becomes the dead-code list.",
+        Strategy("layered-trace", "Layered trace: API & logic → UI top-down → data bottom-up",
+                 ("api", "ui", "db"),
+                 "Three passes. (1) Every endpoint, job and listener traced once, down to the data store, for its "
+                 "business logic — marking which ones no screen calls. (2) From every screen and control through "
+                 "the client code to the endpoint it calls, linking to that endpoint's trace instead of reading "
+                 "the backend again. (3) From every table, procedure and trigger up to whatever changes it. "
+                 "Whatever no pass reaches becomes the dead-code list.",
                  "Full-stack monoliths with a UI, a service layer and a database.",
                  "End-to-end transaction tracing and the SEI 'horseshoe' architecture-recovery approach: recover "
                  "the as-is architecture from the code before any change; outside-in from the user interface, "
@@ -248,17 +251,114 @@ def _handler_class(handler: str) -> str:
     return handler.rsplit(".", 1)[0] if "." in handler else handler
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Endpoint traces: the API pass's work, reused by the UI pass
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Screens share their backend: thirteen screens calling the same services used to
+# mean thirteen agents each reading those services. When the API pass runs first,
+# every handler is traced once, down to the data store; each UI batch is then given
+# a one-line index of the traces of the endpoints its controls call and reads only
+# the UI side. The index is computed here from the numbered pack — no model.
+
+_TRACE_SECTIONS_RELATED = ("Entry Points & Interfaces", "Business Behaviour", "Data", "Security",
+                           "Component Interactions")
+_MAX_RELATED = 6
+_SUMMARY_CHARS = 240
+
+
+def _short_handler(handler: str) -> str:
+    """`com.acme.web.OrderController.cancel` -> `OrderController.cancel`."""
+    parts = handler.split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else handler
+
+
+def endpoint_traces(api_pack: str, inventory: dict) -> dict[str, dict]:
+    """{endpoint key `VERB /path Handler.method` (the key UI controls carry): {"trace": [ids],
+    "related": [ids], "summary": str}} from the API pass's numbered Evidence Pack. A trace is a
+    Flow Traces item naming the handler method (or the verb and path); related items are the
+    entry-point, behaviour, data, security and interaction items naming the handler method."""
+    from .evidence_pack import parse
+    if not api_pack:
+        return {}
+    sections = parse(api_pack)
+    item_re = re.compile(r"^[-*+]\s+\[(EV-[^\]]+)\]\s*(.*)$", re.S)
+
+    def items(section: str) -> list[tuple[str, str]]:
+        out = []
+        for raw in sections.get(section, []):
+            m = item_re.match(raw)
+            if m:
+                out.append((m.group(1), " ".join(m.group(2).split())))
+        return out
+
+    flows = items("Flow Traces")
+    related_pool = [(sec, i) for sec in _TRACE_SECTIONS_RELATED for i in items(sec)]
+    out: dict[str, dict] = {}
+    for e in inventory.get("endpoints", []):
+        key = f"{e['verb']} {e['path']} {e['handler']}"
+        method = _short_handler(e["handler"])
+        by_method = re.compile(rf"(?<![\w.]){re.escape(method)}\b")
+        by_route = re.compile(rf"\b{re.escape(e['verb'])}\s+`?[^\s`]*{re.escape(e['path'])}(?![\w/{{-])")
+        # The handler method identifies the endpoint; the route (which may carry a servlet prefix) only
+        # when no trace names the method, so a shared path suffix never borrows another endpoint's trace.
+        trace = [(i, t) for i, t in flows if by_method.search(t)] or [(i, t) for i, t in flows if by_route.search(t)]
+        related = [i for _sec, (i, t) in related_pool if by_method.search(t)][:_MAX_RELATED]
+        if trace or related:
+            summary = trace[0][1] if trace else ""
+            out[key] = {"trace": [i for i, _ in trace], "related": [i for i in related if i not in dict(trace)],
+                        "summary": summary[:_SUMMARY_CHARS] + (" …" if len(summary) > _SUMMARY_CHARS else "")}
+    return out
+
+
+def _batch_endpoints(batch: list[dict]) -> list[str]:
+    """The endpoint keys the controls of a UI batch call, in order."""
+    return list(dict.fromkeys(k for screen in batch for e in screen["elements"] for k in e["endpoints"]))
+
+
+def endpoint_index(keys: list[str], traces: dict[str, dict], trace_file: str = "") -> str:
+    """The section a UI batch gets: one line per endpoint its controls call, with the API pass's
+    evidence ids, or a note that no trace exists (then the agent traces that one itself)."""
+    if not keys:
+        return ""
+    lines = ["## Endpoint traces from the API pass — link to these, do not re-trace the backend", "",
+             "The API pass already traced each of these handlers to the data store (validations, decisions, data "
+             "effects, errors, with citations). For every control that calls one, read the UI side only and "
+             "link the backend part to these ids (`→ see EV-api-…`). Trace below the handler yourself only "
+             "for an endpoint marked **no trace**." + (f" For a detail a summary does not give, search "
+                                                     f"`{trace_file}` for the id instead of reading the backend."
+                                                     if trace_file else ""), ""]
+    for key in keys:
+        verb, path, handler = (key.split(" ", 2) + ["", ""])[:3]
+        t = traces.get(key)
+        head = f"- `{verb} {path}` → `{_short_handler(handler)}`"
+        if not t:
+            lines.append(f"{head}: **no trace** from the API pass — trace it below the handler yourself.")
+            continue
+        ids = ", ".join(t["trace"]) or "no flow trace"
+        also = f"; also {', '.join(t['related'])}" if t["related"] else ""
+        lines.append(f"{head}: trace {ids}{also}" + (f" — {t['summary']}" if t["summary"] else ""))
+    return "\n".join(lines)
+
+
 def ui_batches(ui_result: dict, ui_files: list[str], max_elements: int = 20, max_chars: int = 50_000,
-               max_files: int = 40) -> list[dict]:
+               max_files: int = 40, traces: dict[str, dict] | None = None, trace_file: str = "") -> list[dict]:
     """Screens with their controls and the handler contracts they call; when the
-    UI could not be parsed into screens, the UI files themselves in units."""
+    UI could not be parsed into screens, the UI files themselves in units. With the
+    API pass's endpoint traces, each batch also gets the index of the traces of the
+    endpoints its controls call."""
     out = []
     batches = ui_contracts.batches(ui_result, max_elements, max_chars) if ui_result.get("screens") else []
     for i, batch in enumerate(batches, 1):
+        request = ("## Screens and controls to trace (computed from the code)\n\n"
+                   + ui_contracts.batch_request(batch, ui_result))
+        if traces is not None:
+            index = endpoint_index(_batch_endpoints(batch), traces, trace_file)
+            if index:
+                request += "\n\n" + index
         out.append({"title": f"screens {i}/{len(batches)}: "
                              + ", ".join(dict.fromkeys(Path(s['file']).name for s in batch)),
-                    "request": "## Screens and controls to trace (computed from the code)\n\n"
-                               + ui_contracts.batch_request(batch, ui_result)})
+                    "request": request})
     covered = {s["file"] for s in ui_result.get("screens", [])}
     rest = [f for f in ui_files if f not in covered]
     units = [rest[i:i + max_files] for i in range(0, len(rest), max_files)]
@@ -390,11 +490,14 @@ def fallback_batches(files: list[str], label: str, max_files: int = 40) -> list[
 
 def pass_batches(pass_id: str, layer_files: list[str], inventory: dict, ui_result: dict, database: dict,
                  workspace_dir: str, max_elements: int = 20, max_chars: int = 50_000,
-                 max_files: int = 40) -> list[dict]:
+                 max_files: int = 40, api_pack: str = "", trace_file: str = "") -> list[dict]:
     """The batches of one pass: computed starting points first, the layer's files
-    when nothing was computed for it."""
+    when nothing was computed for it. `api_pack` (the API pass's numbered pack, when it
+    ran first) gives the UI batches their endpoint-trace index; `trace_file` is where an
+    agent can look an id up."""
     if pass_id == "ui":
-        return ui_batches(ui_result or {}, layer_files, max_elements, max_chars, max_files)
+        traces = endpoint_traces(api_pack, inventory or {}) if api_pack else None
+        return ui_batches(ui_result or {}, layer_files, max_elements, max_chars, max_files, traces, trace_file)
     if pass_id == "db":
         return db_batches(database or {}, workspace_dir) or fallback_batches(layer_files, "Data layer", max_files)
     return api_batches(inventory or {}, ui_result or {}) or fallback_batches(layer_files, "Service layer", max_files)

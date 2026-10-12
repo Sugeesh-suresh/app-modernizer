@@ -37,7 +37,14 @@ For every entry point in your request (do not skip any):
    Dead Code.
 
 Under **Flow Traces**, write one bullet per entry point, from the entry point to the
-data and back, with `path:line` at every hop and every error branch.
+data and back, with `path:line` at every hop and every error branch. **Start each
+bullet with the entry point exactly as your request names it, then its handler** —
+`` `POST /api/orders/{id}/cancel` → `OrderApiController.cancel` (OrderApiController.java:18) → … `` —
+because this pass runs before the UI pass: each screen's trace links to yours by that
+entry point instead of reading the backend again, so a trace that is missing or
+incomplete here is missing for every screen that calls it. Cover the whole path down
+to the data store: validations, decisions, the rows read and written, messages sent,
+the response, and every error branch with its status and message.
 
 Read with the file tools and search for callers; never state a hop you did not read.
 The UI and data passes cover screens and tables separately — focus on the logic.
@@ -96,8 +103,8 @@ and every audit record written (who/what/when, where stored).
 ### Flow Traces
 One bullet per flow, written as a chain from start to end with `path:line` at every
 hop, then the data effects, e.g.
-`- UI-007 "Cancel order" (orders/detail.html:41) → POST /api/orders/{id}/cancel →
-  OrderApiController.cancel (OrderApiController.java:18) → OrderService.cancel
+`- `POST /api/orders/{id}/cancel` → `OrderApiController.cancel`
+  (OrderApiController.java:18) — called from UI-007 → OrderService.cancel
   (OrderService.java:52) → OrderRepository.save → UPDATE orders.status = CANCELLED;
   INSERT order_history — returns 200 StatusResponse; on OrderNotOpenException 409,
   message "Order cannot be cancelled".`

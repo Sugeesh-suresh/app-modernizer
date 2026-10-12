@@ -112,7 +112,7 @@ Before any agent reads the code, the confirmation screen offers the strategies t
 
 | Strategy | Passes | Best for |
 |---|---|---|
-| **Layered trace** | (1) **UI top-down** (`skills/layer-ui-trace`): every screen and control traced through the API, services and data access to the rows it reads and writes. (2) **Data bottom-up** (`skills/layer-data-trace`): every table, view, procedure and trigger up to whatever changes it. (3) **API & business logic** (`skills/layer-api-logic`): every endpoint, job and listener for its logic, marking what the UI and data passes did not reach | Full-stack monoliths with a UI, a service layer and a database |
+| **Layered trace** | (1) **API & business logic** (`skills/layer-api-logic`): every endpoint, job and listener traced once, down to the data store, for its logic, marking which ones no screen calls. (2) **UI top-down** (`skills/layer-ui-trace`): every screen and control traced through the client code to the endpoint it calls; the backend part links to that endpoint's trace (each UI batch gets a computed one-line index of its endpoints' evidence ids) instead of reading the backend again, so shared services are read once, not once per screen batch. (3) **Data bottom-up** (`skills/layer-data-trace`): every table, view, procedure and trigger up to whatever changes it | Full-stack monoliths with a UI, a service layer and a database |
 | **API-first** | API & logic → data (→ UI when present) | Back-end services and APIs |
 | **Data-first** | Data → API & logic (→ UI) | Database-centric systems (much logic in procedures and triggers) |
 | **Stack-by-stack** | One evidence specialist per stack (the earlier behaviour) | Repositories with no layering to trace, e.g. a broker configuration |
@@ -371,7 +371,7 @@ flowchart TD
     G1 --> COMP[["Computed sections — no model<br/>interfaces · endpoint & UI→backend traces · UI pages<br/>system inventory (DB, Solr, integrations, security)<br/>config matrix · setup facts"]]
     COMP --> G2{{"HUMAN: choose the strategy<br/>(recommended one from the computed signals)"}}
 
-    G2 -->|layered-trace| L1["UI top-down → data bottom-up → API & logic"]
+    G2 -->|layered-trace| L1["API & logic (each endpoint once) → UI top-down (links to the endpoint traces) → data bottom-up"]
     G2 -->|api-first| L2["API & logic → data (→ UI)"]
     G2 -->|data-first| L3["data → API & logic → UI"]
     G2 -->|stack-by-stack| L4["one evidence pass per stack"]

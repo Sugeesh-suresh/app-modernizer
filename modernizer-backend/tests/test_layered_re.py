@@ -25,7 +25,7 @@ def test_full_stack_repository_recommends_the_layered_trace():
               {"pattern": "oracle", "kind": "database"}]
     opts = re_strategy.options(stacks, {"screens": 8, "endpoints": 10, "tables": 5})
     assert opts[0]["id"] == "layered-trace" and opts[0]["recommended"]
-    assert opts[0]["passes"] == ["ui", "db", "api"]
+    assert opts[0]["passes"] == ["api", "ui", "db"]          # endpoints first: the UI pass links to their traces
     assert {o["id"] for o in opts} == set(re_strategy.STRATEGY_IDS)
     assert all(o["available"] for o in opts)
 
@@ -267,3 +267,75 @@ def test_soap_operations_default_address_sun_jaxws_and_excluded_methods(tmp_path
     assert ops["ping"]["service"] == "LegacyService" and ops["ping"]["address"] == "/legacy"
     md = interfaces.to_markdown(interfaces.scan(str(tmp_path)))
     assert "### SOAP operations (2)" in md
+
+
+# ── the UI pass reuses the API pass's endpoint traces ──────────────────────────
+
+API_PACK = """### Entry Points & Interfaces
+- [EV-api-0001] `GET /api/search/suggest` served by SearchApiController.suggest (src/main/java/com/acme/catalog/api/SearchApiController.java:31)
+
+### Business Behaviour
+- [EV-api-0002] SearchApiController.suggest returns at most 10 names (src/main/java/com/acme/catalog/api/SearchApiController.java:33)
+- [EV-api-0003] CatalogPageController.home lists featured products (src/main/java/com/acme/catalog/web/CatalogPageController.java:20)
+
+### Flow Traces
+- [EV-api-0004] `GET /api/search/suggest` → `SearchApiController.suggest` (src/main/java/com/acme/catalog/api/SearchApiController.java:31) → SearchService.suggest → Solr /suggest — returns names
+- [EV-api-0005] `GET /api/search/products` → `SearchApiController.products` (src/main/java/com/acme/catalog/api/SearchApiController.java:23) → Solr /select
+"""
+
+
+def test_endpoint_traces_are_indexed_by_the_key_ui_controls_carry():
+    _, inv, _, _ = _computed("catalog-thymeleaf-solr")
+    traces = re_strategy.endpoint_traces(API_PACK, inv)
+    suggest = traces["GET /api/search/suggest SearchApiController.suggest"]
+    assert suggest["trace"] == ["EV-api-0004"] and suggest["related"] == ["EV-api-0001", "EV-api-0002"]
+    assert suggest["summary"].startswith("`GET /api/search/suggest` → `SearchApiController.suggest`")
+    assert traces["GET /api/search/products SearchApiController.products"]["trace"] == ["EV-api-0005"]
+    # a method named only in a related section is still found, without a flow trace
+    home = traces["GET / CatalogPageController.home"]
+    assert home["trace"] == [] and home["related"] == ["EV-api-0003"]
+    assert re_strategy.endpoint_traces("", inv) == {}
+
+
+def test_ui_batches_link_to_the_traces_instead_of_re_tracing_the_backend():
+    ws, inv, ui, sysinv = _computed("catalog-thymeleaf-solr")
+    plain = re_strategy.pass_batches("ui", [], inv, ui, sysinv.get("database") or {}, ws)
+    linked = re_strategy.pass_batches("ui", [], inv, ui, sysinv.get("database") or {}, ws,
+                                      api_pack=API_PACK, trace_file=".modernizer/discovery/evidence/api.md")
+    assert "Endpoint traces from the API pass" not in plain[0]["request"]
+    request = "\n".join(b["request"] for b in linked)
+    assert "`GET /api/search/suggest` → `SearchApiController.suggest`: trace EV-api-0004; also EV-api-0001, " \
+           "EV-api-0002 — `GET /api/search/suggest`" in request
+    assert "search `.modernizer/discovery/evidence/api.md` for the id" in request
+    # an endpoint the API pass did not trace is left for the UI agent to trace itself
+    assert "`GET /admin/reindex` → `CatalogPageController.reindexPage`: **no trace**" in request
+    # one line per endpoint: the index stays small next to the backend it replaces
+    index = request[request.index("## Endpoint traces"):]
+    assert len(index) < 2_500
+
+
+def test_the_web_pipeline_gives_the_ui_agent_the_same_index(monkeypatch):
+    import asyncio
+    import json
+    import main
+    ws, inv, ui, sysinv = _computed("catalog-thymeleaf-solr")
+    state = {"workspace_dir": ws, "interfaces_json": json.dumps(inv), "ui_contracts_json": json.dumps(ui),
+             "system_inventory_json": json.dumps(sysinv)}
+    requests = []
+
+    async def get_state(sid):
+        return state
+
+    async def push(*a, **k):
+        return None
+
+    async def run_isolated(runner, pattern, st, message, key):
+        requests.append(st["layer_request"])
+        return "### Limitations\nNone found.\n"
+    monkeypatch.setattr(main, "_get_state", get_state)
+    monkeypatch.setattr(main, "_push", push)
+    monkeypatch.setattr(main, "_run_isolated", run_isolated)
+    monkeypatch.setattr(main, "_confirmed_stacks", lambda st: [])
+    asyncio.run(main._gather_layer_evidence("s", "ui", {"api": API_PACK}))
+    assert requests and "trace EV-api-0004" in "\n".join(requests)
+    assert "search `" not in "\n".join(requests)        # web agents cannot open the run's evidence files

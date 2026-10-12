@@ -101,8 +101,9 @@ Stack discovery writes its deliverables as separate files to `.modernizer/delive
 `SETUP.md`, `BRD.md`, `TECHNICAL_SPECIFICATION.md`, `openapi.yaml` / `openapi.json` (OpenAPI 3.0.3),
 `TECH_DEBT_AND_DEAD_CODE.md`, `UI_PAGES.md` (every page's HTML elements, interactive elements and their traces
 to the backend, page by page), `UI_SCREENS.md` (a screenshot of each page, same order), `STRATEGY.md`, `EVIDENCE.md`. With the layered strategy the code is traced
-layer by layer: the UI top-down (skill `layer-ui-trace`), the data bottom-up (`layer-data-trace`), then the API
-and business logic (`layer-api-logic`).
+layer by layer: the API and business logic first (`layer-api-logic`, each endpoint traced once down to the data
+store), then the UI top-down (`layer-ui-trace`: the UI side only, linking each control to its endpoint's trace), then
+the data bottom-up (`layer-data-trace`).
 
 `/modernize:next` continues a run (also after restarting Gemini CLI), `/modernize:status` shows where it is,
 `/modernize:export` writes Word copies to `.modernizer/export/`.

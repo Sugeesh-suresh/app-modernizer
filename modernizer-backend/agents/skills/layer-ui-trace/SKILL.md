@@ -39,6 +39,28 @@ dynamic dispatch, a system outside the repository), say so under Limitations.
 Stay on this batch's controls; other batches and the data and API passes run
 separately.
 
+## When your request lists endpoint traces from the API pass
+
+The API pass ran first and traced each handler once, down to the data store. Your
+request then ends with **Endpoint traces from the API pass**: one line per endpoint
+your controls call, with its evidence ids. For those endpoints:
+
+- Do steps 1 and 5 (the UI side) in full: the element, its label and action, the
+  client-side validation, what the script sends, how the response and each error
+  are shown to the user.
+- **Do not read the handler or anything below it** — no controller, service, DAO,
+  entity or SQL. Steps 2–4 are already done: link to them. In Flow Traces write the
+  UI part with its citations, then `→ POST /path → see EV-api-0012` (the ids
+  from the index line). Record no backend Components, Data or Component
+  Interactions for them — the API pass has them.
+- If a detail you must state is not in the index line, look the id up where the
+  request says (when it names a file) instead of reading the backend.
+- An endpoint marked **no trace**, and a call the request does not tie to a
+  handler, is traced below the handler as in steps 2–4.
+
+Your Evidence Pack is then mostly UI: screens, controls, client validation, user
+messages, the screen-to-endpoint links, and the debt in the UI code.
+
 ## Output — Evidence Pack
 
 You gather evidence; you write no documents. A Product Owner agent writes the BRD

@@ -307,14 +307,31 @@ def test_layered_trace_strategy_produces_every_deliverable(tmp_path):
     assert gate["id"] == "select-strategy"
     run = Run.load(repo)
     offered = {o["id"]: o for o in run.state["strategy_options"]}
-    assert offered["layered-trace"]["recommended"] and offered["layered-trace"]["passes"] == ["ui", "db", "api"]
+    assert offered["layered-trace"]["recommended"] and offered["layered-trace"]["passes"] == ["api", "ui", "db"]
     assert "Reverse-Engineering Strategy Options" in (repo / ".modernizer/discovery/strategy.md").read_text()
     pipeline.confirm(Run.load(repo), "strategy", ["layered-trace"])
 
-    ui_step = _next(repo)
+    # The API pass runs first and traces each handler once, down to the data store.
+    api_step = _next(repo)
+    assert api_step["id"] == "layer-api-1" and "`layer-api-logic`" in api_step["query"]
+    api_pack = ("### Flow Traces\n- `GET /api/orders/{id}/status` → `OrderApiController.status` "
+                "(src/main/java/com/acme/orders/api/OrderApiController.java:18) → reads ORDERS.status\n\n"
+                "### Business Behaviour\n- OrderApiController.status answers 404 for an unknown order "
+                "(src/main/java/com/acme/orders/api/OrderApiController.java:18)\n\n### Limitations\nNone found.\n")
+    while api_step["id"].startswith("layer-api-"):
+        _save(repo, api_step["id"], api_pack)
+        pipeline.complete_step(Run.load(repo), api_step["id"])
+        api_step = _next(repo)
+    # The UI pass gets the index of its endpoints' traces and reads only the UI side.
+    ui_step = api_step
     assert ui_step["id"] == "layer-ui-1" and "`layer-ui-trace`" in ui_step["query"]
+    assert ".modernizer/discovery/evidence/api.md" in ui_step["query"]
     ui_request = (repo / ".modernizer/discovery/layers/ui/request-0001.md").read_text()
     assert "UI-001" in ui_request
+    assert "## Endpoint traces from the API pass" in ui_request
+    assert "`GET /api/orders/{id}/status` → `OrderApiController.status`: trace EV-api-0001; also EV-api-0002" \
+        in ui_request
+    assert "**no trace** from the API pass" in ui_request          # endpoints the stand-in API pack left out
     pack = ("### Flow Traces\n- UI-002 cancel → POST /api/orders/{id}/cancel → OrderApiController.cancel "
             "(src/main/java/com/acme/orders/api/OrderApiController.java:18)\n\n"
             "### Business Behaviour\n- An open order can be cancelled "
