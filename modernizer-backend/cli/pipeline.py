@@ -116,7 +116,14 @@ def summary(run: Run) -> str:
         lines.append(f"- **Bundle:** {', '.join(s['bundle'])}")
     lines.append(f"- **Phase:** {s.get('phase')}")
     if s.get("current_step"):
-        lines.append(f"- **Waiting on:** `{s['current_step']['id']}` ({s['current_step']['kind']})")
+        current = s["current_step"]
+        if current["kind"] == "parallel":
+            from .discovery import pending_ids
+            open_ids = pending_ids(current)
+            lines.append(f"- **Waiting on:** {len(open_ids)} of {len(current['members'])} parallel batches — "
+                         + ", ".join(f"`{i}`" for i in open_ids))
+        else:
+            lines.append(f"- **Waiting on:** `{current['id']}` ({current['kind']})")
     return "\n".join(lines)
 
 

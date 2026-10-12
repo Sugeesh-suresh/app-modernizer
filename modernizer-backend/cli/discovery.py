@@ -99,16 +99,30 @@ def init(run: Run) -> None:
     })
 
 
+#: Job kinds whose agent runs are independent of each other: consecutive ones at the front of the
+#: queue are handed out together (config.DISCOVERY_CONCURRENCY at a time). "layer" and "evidence"
+#: expand into their batches first. Anything that depends on them (a pass's merge, the rules
+#: finalize, the writers) is a different kind, so it never joins a group and waits for it.
+PARALLEL_KINDS = frozenset({"layer", "layer_batch", "evidence", "evidence_unit", "rules_batch", "ui_batch"})
+#: A job function's answer: "I put my batches at the front of the queue — look again."
+_REQUEUE = {"requeue": True}
+
+
 def next_step(run: Run) -> tuple[dict, list[str]]:
     log: list[str] = []
     current = run.state.get("current_step")
-    if current and current["kind"] == "subagent":
+    if current and current["kind"] in ("subagent", "parallel"):
         return current, log
     for _ in range(10_000):
         jobs = run.state.get("jobs") or []
         if not jobs:
             return _step(run, "done", "done", title="Discovery complete", text=_done_text(run)), log
         job = jobs[0]
+        if job["kind"] in PARALLEL_KINDS:
+            group = _take_group(run, log)
+            if group is None:
+                continue                                   # jobs that needed no agent: look again
+            return group, log
         step = _JOBS[job["kind"]](run, job, log)
         if step is not None:
             return step, log
@@ -117,19 +131,70 @@ def next_step(run: Run) -> tuple[dict, list[str]]:
     raise RunError("Discovery did not reach a step — report this as a bug with .modernizer/run.json.")
 
 
+def _take_group(run: Run, log: list[str]) -> dict | None:
+    """Up to DISCOVERY_CONCURRENCY independent jobs from the front of the queue, as one step: a plain
+    subagent step when there is one, a `parallel` step when there are several. Each job leaves the
+    queue and travels with its step, so completing one never depends on the others."""
+    members: list[dict] = []
+    while len(members) < config.DISCOVERY_CONCURRENCY:
+        jobs = run.state.get("jobs") or []
+        if not jobs or jobs[0]["kind"] not in PARALLEL_KINDS:
+            break
+        job = jobs[0]
+        run.state["jobs"] = jobs[1:]
+        step = _JOBS[job["kind"]](run, job, log)
+        if step is _REQUEUE or step is None:               # expanded into batches, or nothing to ask
+            continue
+        members.append(dict(step, job=job))
+    if not members:
+        run.save()
+        return None
+    if len(members) == 1:
+        run.state["current_step"] = members[0]
+        run.save()
+        return members[0]
+    group = {"id": "parallel-" + members[0]["id"], "kind": "parallel",
+             "title": f"{len(members)} independent batches at once — {members[0]['title']} …",
+             "members": members, "done": []}
+    run.state["current_step"] = group
+    run.save()
+    return group
+
+
+def pending_ids(current: dict) -> list[str]:
+    """The step ids the run is waiting on: one, or the open members of a parallel group."""
+    if current.get("kind") == "parallel":
+        return [m["id"] for m in current["members"] if m["id"] not in current["done"]]
+    return [current["id"]] if current.get("id") else []
+
+
 def complete_step(run: Run, step_id: str) -> str:
     current = run.state.get("current_step") or {}
-    if current.get("id") != step_id:
-        raise RunError(f"The run is waiting on `{current.get('id', 'nothing')}`, not `{step_id}`.")
-    if current["kind"] != "subagent":
-        raise RunError(f"`{step_id}` is a {current['kind']} step — answer it with the command it names.")
+    waiting = pending_ids(current)
+    if step_id not in waiting:
+        raise RunError(f"The run is waiting on {', '.join(f'`{w}`' for w in waiting) or 'nothing'}, not `{step_id}`.")
+    member = next((m for m in current["members"] if m["id"] == step_id), None) \
+        if current["kind"] == "parallel" else current
+    if member["kind"] != "subagent":
+        raise RunError(f"`{step_id}` is a {member['kind']} step — answer it with the command it names.")
     output = run.read_out(step_id)
     if not output.strip():
         raise RunError(f"Nothing was saved for `{step_id}` — the subagent must call save_output first.")
-    job = run.state["jobs"][0]
-    run.state["jobs"] = run.state["jobs"][1:]
+    if "job" in member:                                     # taken off the queue when it was handed out
+        job = member["job"]
+    else:
+        job = run.state["jobs"][0]
+        run.state["jobs"] = run.state["jobs"][1:]
     message = _DONE[job["kind"]](run, job, output)
-    run.state["current_step"] = None
+    if current["kind"] == "parallel":
+        current["done"].append(step_id)
+        left = len(pending_ids(current))
+        if left:
+            message += f" ({left} more in this group to complete.)"
+        else:
+            run.state["current_step"] = None
+    else:
+        run.state["current_step"] = None
     run.save()
     return message
 
@@ -344,19 +409,27 @@ def _layer_batches(run: Run, pass_id: str) -> list[dict]:
 
 
 def _job_layer(run: Run, job: dict, log: list[str]) -> dict | None:
+    """Computes the pass's batches and puts one job per batch at the front of the queue, followed by
+    the merge that numbers the pass's evidence once every batch is in."""
     pass_id = job["pass"]
     spec = re_strategy.PASSES[pass_id]
-    if "batches" not in job:
-        batches = _layer_batches(run, pass_id)
-        for i, b in enumerate(batches, 1):
-            _write(_d(run, "layers", pass_id, f"request-{i:04d}.md"), f"# {spec.label}: {b['title']}\n\n{b['request']}")
-        job.update({"batches": [b["title"] for b in batches], "done": 0})
-        log.append(f"{spec.label}: {len(batches)} batch(es) to trace.")
-        run.save()
-        if not batches:
-            _write(_d(run, "evidence", f"{pass_id}.md"), re_strategy.empty_pass_pack(pass_id))
-            return None
-    i = job["done"]
+    batches = _layer_batches(run, pass_id)
+    for i, b in enumerate(batches, 1):
+        _write(_d(run, "layers", pass_id, f"request-{i:04d}.md"), f"# {spec.label}: {b['title']}\n\n{b['request']}")
+    log.append(f"{spec.label}: {len(batches)} batch(es) to trace.")
+    if not batches:
+        _write(_d(run, "evidence", f"{pass_id}.md"), re_strategy.empty_pass_pack(pass_id))
+        return None
+    _push_front(run, *({"kind": "layer_batch", "pass": pass_id, "i": i, "total": len(batches), "title": b["title"]}
+                       for i, b in enumerate(batches)),
+                {"kind": "layer_merge", "pass": pass_id, "total": len(batches)})
+    run.save()
+    return _REQUEUE
+
+
+def _job_layer_batch(run: Run, job: dict, log: list[str]) -> dict:
+    pass_id, i = job["pass"], job["i"]
+    spec = re_strategy.PASSES[pass_id]
     request = _d(run, "layers", pass_id, f"request-{i + 1:04d}.md")
     sid = f"layer-{pass_id}-{i + 1}"
     q = (f"Activate the `{spec.skill}` skill and execute it on the request in `{run.rel(request)}` (read the whole "
@@ -367,24 +440,26 @@ def _job_layer(run: Run, job: dict, log: list[str]) -> dict | None:
             "(search it for an evidence id) — not the backend code behind those endpoints."
             if pass_id == "ui" and _d(run, "evidence", "api.md").is_file() else "")
          + _output_rule(sid, "Evidence Pack, in the thirteen sections the skill specifies"))
-    return _sub(run, sid, ANALYST, q, f"{spec.label}: {job['batches'][i]}", "layer")
+    return _sub(run, sid, ANALYST, q, f"{spec.label}: {job['title']}", "layer")
 
 
-def _done_layer(run: Run, job: dict, output: str) -> str:
-    pass_id = job["pass"]
+def _done_layer_batch(run: Run, job: dict, output: str) -> str:
+    pass_id, i = job["pass"], job["i"]
     spec = re_strategy.PASSES[pass_id]
-    i = job["done"]
     per_unit = min(config.RE_FINDINGS_MAX_CHARS * 2, max(config.RE_SYNTHESIS_MAX_CHARS, 2) // 2)
     _write(_d(run, "layers", pass_id, f"pack-{i + 1:04d}.md"),
            clip_findings(output, per_unit, f"{spec.label}, batch {i + 1}"))
-    job["done"] = i + 1
-    if job["done"] < len(job["batches"]):
-        _push_front(run, job)
-        return f"{spec.label}: batch {i + 1}/{len(job['batches'])} recorded."
-    text = "\n\n".join(_read(_d(run, "layers", pass_id, f"pack-{n + 1:04d}.md")) for n in range(len(job["batches"])))
+    return f"{spec.label}: batch {i + 1}/{job['total']} recorded."
+
+
+def _job_layer_merge(run: Run, job: dict, log: list[str]) -> None:
+    """Once every batch of the pass is in: the packs in batch order, numbered once."""
+    pass_id = job["pass"]
+    spec = re_strategy.PASSES[pass_id]
+    text = "\n\n".join(_read(_d(run, "layers", pass_id, f"pack-{n + 1:04d}.md")) for n in range(job["total"]))
     text = evidence_pack.assign_ids(text, pass_id)
     _write(_d(run, "evidence", f"{pass_id}.md"), text)
-    return f"{spec.label}: {len(evidence_pack.ids(text))} numbered evidence item(s)."
+    log.append(f"{spec.label}: {len(evidence_pack.ids(text))} numbered evidence item(s).")
 
 
 # ── tech debt and dead code ──────────────────────────────────────────────────
@@ -402,32 +477,27 @@ def _job_health(run: Run, job: dict, log: list[str]) -> None:
 
 # ── evidence ─────────────────────────────────────────────────────────────────
 
+_NO_ADVICE = ("Describe only what the repository contains — no migration, upgrade, modernisation, "
+              "target-version or other change suggestions of any kind.")
+
+
 def _job_evidence(run: Run, job: dict, log: list[str]) -> dict | None:
     stack_id = job["stack"]
     info = next(s for s in run.state["recommendations"] if s["pattern"] == stack_id)
     label = _label(run, stack_id)
     reference = info.get("reference") or stack_detector.reference_for(stack_id, info.get("kind", ""))
-    if "units" not in job:
-        files = None if stack_id in stack_detector.DEDICATED_RUNNERS else stack_files(str(run.workspace), info)
-        job["units"] = file_units(files, config.DISCOVERY_UNIT_MAX_FILES) \
-            if files and len(files) > config.DISCOVERY_CHUNK_MIN_FILES else []
-        job["done"] = 0
-        if job["units"]:
-            log.append(f"{label}: {len(files):,} files, gathered in {len(job['units'])} units of at most "
-                       f"{config.DISCOVERY_UNIT_MAX_FILES} files.")
+    files = None if stack_id in stack_detector.DEDICATED_RUNNERS else stack_files(str(run.workspace), info)
+    units = file_units(files, config.DISCOVERY_UNIT_MAX_FILES) \
+        if files and len(files) > config.DISCOVERY_CHUNK_MIN_FILES else []
+    if units:
+        # One job per unit, then the merge that numbers the stack's evidence once every unit is in.
+        log.append(f"{label}: {len(files):,} files, gathered in {len(units)} units of at most "
+                   f"{config.DISCOVERY_UNIT_MAX_FILES} files.")
+        _push_front(run, *({"kind": "evidence_unit", "stack": stack_id, "i": i, "total": len(units), "unit": unit}
+                           for i, unit in enumerate(units)),
+                    {"kind": "evidence_merge", "stack": stack_id, "total": len(units)})
         run.save()
-    no_advice = ("Describe only what the repository contains — no migration, upgrade, modernisation, "
-                 "target-version or other change suggestions of any kind.")
-    if job["units"]:
-        i = job["done"]
-        unit = job["units"][i]
-        sid = f"evidence-{evidence_pack.slug(stack_id)}-unit-{i + 1}"
-        q = (f"Activate the `stack-discovery-unit` skill (and `stack-discovery-re` for its checklist "
-             f"`references/{reference}`) and execute it for the unit below. Read every listed file with read_file.\n\n"
-             f"## Stack\n{label} (id `{stack_id}`, kind {info.get('kind') or 'unspecified'})\n\n"
-             f"## Unit {i + 1}/{len(job['units'])}: {unit_label(unit)}\nRead every one of these {len(unit)} files:\n"
-             + "\n".join(f"- `{f}`" for f in unit) + f"\n\n{no_advice}" + _output_rule(sid, "Evidence Pack for this unit"))
-        return _sub(run, sid, ANALYST, q, f"Evidence: {label}, unit {i + 1}/{len(job['units'])}", "evidence")
+        return _REQUEUE
     sid = f"evidence-{evidence_pack.slug(stack_id)}"
     cited = "\n".join(f"- {e}" for e in info.get("evidence", [])) or "- (none recorded)"
     if stack_id in stack_detector.DEDICATED_RUNNERS:
@@ -441,28 +511,49 @@ def _job_evidence(run: Run, job: dict, log: list[str]) -> dict | None:
          "evidence paths below. Do not assume any file contents you have not read.\n\n"
          f"## Stack\n{label} (id `{stack_id}`, kind {info.get('kind') or 'unspecified'})\n\n"
          f"## Evidence that identified it\n{cited}\n\nConfine yourself to this stack — other stacks in this repository "
-         f"are covered separately — but record where it connects to them. {no_advice}"
+         f"are covered separately — but record where it connects to them. {_NO_ADVICE}"
          + _output_rule(sid, "Evidence Pack"))
     return _sub(run, sid, ANALYST, q, f"Evidence: {label}", "evidence")
 
 
 def _done_evidence(run: Run, job: dict, output: str) -> str:
     stack_id = job["stack"]
-    label = _label(run, stack_id)
-    if job["units"]:
-        i = job["done"]
-        per_unit = min(config.RE_FINDINGS_MAX_CHARS, max(config.RE_SYNTHESIS_MAX_CHARS, 2) // 2)
-        _write(_d(run, "evidence", "units", f"{evidence_pack.slug(stack_id)}-{i + 1:04d}.md"),
-               clip_findings(output, per_unit, f"{label} unit {i + 1} ({unit_label(job['units'][i])})"))
-        job["done"] = i + 1
-        if job["done"] < len(job["units"]):
-            _push_front(run, job)          # more units of this stack
-            return f"Unit {i + 1}/{len(job['units'])} of {label} recorded."
-        output = "\n\n".join(_read(_d(run, "evidence", "units", f"{evidence_pack.slug(stack_id)}-{n + 1:04d}.md"))
-                             for n in range(len(job["units"])))
     text = evidence_pack.assign_ids(output, stack_id)
     _write(_d(run, "evidence", f"{evidence_pack.slug(stack_id)}.md"), text)
-    return f"Evidence Pack for {label}: {len(evidence_pack.ids(text))} numbered item(s)."
+    return f"Evidence Pack for {_label(run, stack_id)}: {len(evidence_pack.ids(text))} numbered item(s)."
+
+
+def _job_evidence_unit(run: Run, job: dict, log: list[str]) -> dict:
+    stack_id, i, unit = job["stack"], job["i"], job["unit"]
+    info = next(s for s in run.state["recommendations"] if s["pattern"] == stack_id)
+    label = _label(run, stack_id)
+    reference = info.get("reference") or stack_detector.reference_for(stack_id, info.get("kind", ""))
+    sid = f"evidence-{evidence_pack.slug(stack_id)}-unit-{i + 1}"
+    q = (f"Activate the `stack-discovery-unit` skill (and `stack-discovery-re` for its checklist "
+         f"`references/{reference}`) and execute it for the unit below. Read every listed file with read_file.\n\n"
+         f"## Stack\n{label} (id `{stack_id}`, kind {info.get('kind') or 'unspecified'})\n\n"
+         f"## Unit {i + 1}/{job['total']}: {unit_label(unit)}\nRead every one of these {len(unit)} files:\n"
+         + "\n".join(f"- `{f}`" for f in unit) + f"\n\n{_NO_ADVICE}" + _output_rule(sid, "Evidence Pack for this unit"))
+    return _sub(run, sid, ANALYST, q, f"Evidence: {label}, unit {i + 1}/{job['total']}", "evidence")
+
+
+def _done_evidence_unit(run: Run, job: dict, output: str) -> str:
+    stack_id, i = job["stack"], job["i"]
+    label = _label(run, stack_id)
+    per_unit = min(config.RE_FINDINGS_MAX_CHARS, max(config.RE_SYNTHESIS_MAX_CHARS, 2) // 2)
+    _write(_d(run, "evidence", "units", f"{evidence_pack.slug(stack_id)}-{i + 1:04d}.md"),
+           clip_findings(output, per_unit, f"{label} unit {i + 1} ({unit_label(job['unit'])})"))
+    return f"Unit {i + 1}/{job['total']} of {label} recorded."
+
+
+def _job_evidence_merge(run: Run, job: dict, log: list[str]) -> None:
+    """Once every unit of the stack is in: the units in order, numbered once."""
+    stack_id = job["stack"]
+    output = "\n\n".join(_read(_d(run, "evidence", "units", f"{evidence_pack.slug(stack_id)}-{n + 1:04d}.md"))
+                         for n in range(job["total"]))
+    text = evidence_pack.assign_ids(output, stack_id)
+    _write(_d(run, "evidence", f"{evidence_pack.slug(stack_id)}.md"), text)
+    log.append(f"Evidence Pack for {_label(run, stack_id)}: {len(evidence_pack.ids(text))} numbered item(s).")
 
 
 def _pack_ids(run: Run) -> list[tuple[str, str]]:
@@ -1037,8 +1128,8 @@ _JOBS = {
     "rules_prepare": _job_rules_prepare, "rules_batch": _job_rules_batch, "rules_finalize": _job_rules_finalize,
     "screens": _job_screens, "computed": _job_computed, "writer": _job_writer, "ui_prepare": _job_ui_prepare,
     "ui_batch": _job_ui_batch, "assemble": _job_assemble, "review": _job_review, "strategy": _job_strategy,
-    "layer": _job_layer, "health": _job_health,
+    "layer": _job_layer, "layer_batch": _job_layer_batch, "layer_merge": _job_layer_merge,
+    "evidence_unit": _job_evidence_unit, "evidence_merge": _job_evidence_merge, "health": _job_health,
 }
-_DONE = {"mapper": _done_mapper, "evidence": _done_evidence, "layer": _done_layer, "rules_batch": _done_rules,
-         "writer": _done_writer,
-         "ui_batch": _done_ui}
+_DONE = {"mapper": _done_mapper, "evidence": _done_evidence, "evidence_unit": _done_evidence_unit,
+         "layer_batch": _done_layer_batch, "rules_batch": _done_rules, "writer": _done_writer, "ui_batch": _done_ui}

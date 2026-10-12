@@ -24,6 +24,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+import threading
 from pathlib import Path
 
 _BACKEND = Path(__file__).resolve().parent.parent
@@ -70,9 +71,21 @@ def _safe(fn, *args, **kwargs) -> str:
             return f"ERROR: {exc.args[0] if exc.args else exc}"
 
 
-async def _run(fn, *args, **kwargs) -> str:
+# Gemini CLI runs the tool calls of one turn at the same time — a parallel group's subagents save
+# and complete their steps concurrently. Every tool that reads or writes the run state
+# (.modernizer/run.json) holds this lock, so no update is lost; builds (ws_run_command,
+# ws_validate) do not, since they can run for many minutes and only read the run.
+_STATE_LOCK = threading.Lock()
+
+
+def _locked(fn, *args, **kwargs) -> str:
+    with _STATE_LOCK:
+        return _safe(fn, *args, **kwargs)
+
+
+async def _run(fn, *args, locked: bool = True, **kwargs) -> str:
     """Tools can run builds for many minutes: off the event loop, so the server stays responsive."""
-    return await anyio.to_thread.run_sync(lambda: _safe(fn, *args, **kwargs))
+    return await anyio.to_thread.run_sync(lambda: (_locked if locked else _safe)(fn, *args, **kwargs))
 
 
 def _load(workspace: str = "") -> Run:
@@ -90,6 +103,18 @@ def _format_step(step: dict, log: list[str]) -> str:
         lines += [f"- subagent: `{step['subagent']}`", "",
                   f"Call the `{step['subagent']}` subagent with exactly this query, then call `complete_step` "
                   f"with step_id `{step['id']}`:", "", "<query>", step["query"], "</query>"]
+    elif step["kind"] == "parallel":
+        from cli.discovery import pending_ids
+        open_ids = set(pending_ids(step))
+        members = [m for m in step["members"] if m["id"] in open_ids]
+        lines += ["", f"These {len(members)} batches are independent of each other. Call all {len(members)} "
+                  "subagents **in one turn** — one tool call each, in the same response, so Gemini CLI runs them at "
+                  "the same time — each with exactly its query. When they have all returned, call `complete_step` "
+                  "once for each step_id below (any order), then `next_step`. If one fails, run that one again on "
+                  "its own; the others stay done.", ""]
+        for n, m in enumerate(members, 1):
+            lines += [f"### {n}. step_id `{m['id']}` — subagent `{m['subagent']}` — {m['title']}", "",
+                      "<query>", m["query"], "</query>", ""]
     else:
         lines += ["", step.get("text", "")]
     return "\n".join(lines)
@@ -172,9 +197,11 @@ async def save_output(step_id: str, content: str, workspace: str = "") -> str:
     """
     def body():
         run = _load(workspace)
-        current = run.state.get("current_step") or {}
-        if current.get("id") != step_id:
-            raise RunError(f"The run is waiting on `{current.get('id', 'nothing')}`, not `{step_id}`.")
+        from cli.discovery import pending_ids
+        waiting = pending_ids(run.state.get("current_step") or {})
+        if step_id not in waiting:
+            raise RunError(f"The run is waiting on {', '.join(f'`{w}`' for w in waiting) or 'nothing'}, "
+                           f"not `{step_id}`.")
         path = run.out_path(step_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
@@ -332,7 +359,7 @@ async def ws_run_command(command: str, subdir: str = ".", workspace: str = "") -
         if not hasattr(tools, "run_command"):
             return "ERROR: this pattern has no build toolchain — call ws_validate for its static check."
         return tools.run_command(run.tool_context(), command, subdir)
-    return await _run(body)
+    return await _run(body, locked=False)
 
 
 @server.tool()
@@ -352,7 +379,7 @@ async def ws_validate(workspace: str = "") -> str:
         report = getattr(tools, name)(ctx)
         run.absorb(ctx, "java11_build_passed")
         return report
-    return await _run(body)
+    return await _run(body, locked=False)
 
 
 @server.tool()

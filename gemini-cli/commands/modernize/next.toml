@@ -8,6 +8,11 @@ Stella Modernizer context exactly:
   <query> and </query>, verbatim and complete. When it returns, call `mcp_modernizer_complete_step` with the
   step_id. If complete_step says nothing was saved, invoke the subagent once more with the same query plus
   "You did not call mcp_modernizer_save_output — do the work and save it." Then call next_step again.
+- kind `parallel`: the step lists several independent batches (each with a step_id, a subagent and a
+  <query>). Make one `invoke_agent` call per batch, all in the same response, so they run at the same time —
+  each with its query verbatim and complete. When all have returned, call `mcp_modernizer_complete_step` once
+  per step_id (any order); for one whose output was not saved, invoke that subagent again on its own with
+  the reminder above. Then call next_step again.
 - kind `ask_user` or `review_gate`: stop and present the step's text to the user in plain words, with the
   file paths to review and the commands that answer it. Do not answer a gate yourself.
 - kind `blocked`: stop and explain what must be fixed.

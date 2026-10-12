@@ -816,6 +816,7 @@ app-modernizer/
 | `MIGRATION_JAVA_HOME` | No | PATH | Java 8 → 11: JDK the builds run on (Maven's `JAVA_HOME`); the preflight requires it to be 11 |
 | `BASELINE_JAVA_HOME` | No | — | Java 8 → 11: a JDK 8 to run the uploaded tests on once, so pre-existing failures are excluded |
 | `MAVEN_SETTINGS` | No | — | settings.xml (mirrors, repository credentials) passed to every Maven call |
+| `DISCOVERY_CONCURRENCY` | No | `4` | Gemini CLI reverse engineering: independent batches (layer-pass batches, evidence units, business-rules batches, UI-contract batches) handed to Gemini as one group, so its subagents run them at the same time. Same requests and checks as one at a time; `1` = one at a time. Lower it if Gemini reports rate limits (429) |
 | `MIGRATION_JAVA_HOMES` | No | — | Java 8 → 25: one JDK per release, `8=/opt/jdk8,17=/opt/jdk17,25=/opt/jdk25`; a release without one builds on the nearest newer JDK found |
 | `PREFLIGHT` | No | `on` | Java 8 → 11 / 8 → 25 environment check and baseline build: `warn` reports problems without stopping, `off` skips it |
 | `VALIDATE_RUN_TESTS` | No | `true` | Java 8 → 11 validation runs the test suite |

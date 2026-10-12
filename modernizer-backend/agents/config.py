@@ -126,6 +126,10 @@ RE_SYNTHESIS_MAX_CHARS: int = _int("RE_SYNTHESIS_MAX_CHARS", 400_000)
 # Independent agent runs (units, rule batches) in flight at once. The LLM pacer
 # (LLM_MAX_TPM / LLM_MAX_RPM) still applies across all of them.
 RE_CONCURRENCY: int = max(1, _int("RE_CONCURRENCY", 4))
+# Gemini CLI path: independent discovery batches (layer-pass batches, evidence units, business-rules
+# batches, UI-contract batches) handed to Gemini as one group, so its subagents run them at the same
+# time. Each batch gets the same request and the same checks as when run alone; 1 = one at a time.
+DISCOVERY_CONCURRENCY: int = max(1, _int("DISCOVERY_CONCURRENCY", 4))
 
 # A stack whose own source files exceed this is documented in units instead of
 # one agent run: each unit is read in full, then the findings are combined.

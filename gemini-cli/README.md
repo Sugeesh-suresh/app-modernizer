@@ -132,6 +132,16 @@ preflight assigned to the running stage's Java release. The validator can only b
 recorded only through `ws_signal_build_success`, which refuses while an approved-versions or fence check fails.
 The reviewer gets the change audit and plan conformance; the curator can write only its pattern's skills.
 
+
+### Parallel batches
+
+Reverse engineering cuts its work into independent batches: the batches of a layer pass, the units of a large
+stack, the business-rules batches and the UI-contract batches. `next_step` hands out up to
+`DISCOVERY_CONCURRENCY` (default 4) of them as one `parallel` step; Gemini calls one subagent per batch in the
+same response, and Gemini CLI runs those calls at the same time. Each batch gets exactly the request and the
+checks it gets when run alone, its result is recorded when it completes (in any order), and whatever depends
+on a group — a pass's merge, the rules finalisation, the writers — waits until every batch of it is in. Set
+`DISCOVERY_CONCURRENCY=1` to run one at a time, or lower it if Gemini reports rate limits (429).
 ## Without Gemini CLI
 
 The pipeline is plain Python; `python -m cli` (in `modernizer-backend/`, with the `.venv-cli` Python) drives it

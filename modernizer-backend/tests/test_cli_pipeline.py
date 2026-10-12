@@ -259,9 +259,8 @@ def test_stack_discovery_end_to_end(tmp_path, monkeypatch):
                            "migrating to Java 25.\n")
     pipeline.complete_step(Run.load(repo), "ea_spec")
     step = _next(repo)
-    while step["kind"] == "subagent" and step["id"].startswith("ea-ui"):
-        _save(repo, step["id"], "No controls.")
-        pipeline.complete_step(Run.load(repo), step["id"])
+    while step["kind"] in ("subagent", "parallel") and _members(step)[0]["id"].startswith("ea-ui"):
+        _answer(repo, step, lambda sid: "No controls.")
         step = _next(repo)
     assert step["id"] in ("ea_diagrams",)
     _save(repo, "ea_diagrams", '{"diagrams": []}')
@@ -280,13 +279,26 @@ def test_stack_discovery_end_to_end(tmp_path, monkeypatch):
     assert _next(repo)["kind"] == "done"
 
 
+def _members(step: dict) -> list[dict]:
+    """The subagent steps a step stands for: itself, or the members of a parallel group."""
+    return step["members"] if step["kind"] == "parallel" else [step]
+
+
+def _answer(repo: Path, step: dict, text_for) -> None:
+    """Save and complete every subagent step `step` stands for, as Gemini CLI does for a group: all saved,
+    then each completed."""
+    members = _members(step)
+    for m in members:
+        _save(repo, m["id"], text_for(m["id"]))
+    for m in members:
+        pipeline.complete_step(Run.load(repo), m["id"])
+
+
 def _drive_writers(repo: Path, outputs: dict[str, str]) -> dict:
     """Answer every subagent step until a non-subagent step, with `outputs` by step-id prefix."""
     step = _next(repo)
-    while step["kind"] == "subagent":
-        text = next((v for k, v in outputs.items() if step["id"].startswith(k)), "None found.")
-        _save(repo, step["id"], text)
-        pipeline.complete_step(Run.load(repo), step["id"])
+    while step["kind"] in ("subagent", "parallel"):
+        _answer(repo, step, lambda sid: next((v for k, v in outputs.items() if sid.startswith(k)), "None found."))
         step = _next(repo)
     return step
 
@@ -318,13 +330,15 @@ def test_layered_trace_strategy_produces_every_deliverable(tmp_path):
                 "(src/main/java/com/acme/orders/api/OrderApiController.java:18) → reads ORDERS.status\n\n"
                 "### Business Behaviour\n- OrderApiController.status answers 404 for an unknown order "
                 "(src/main/java/com/acme/orders/api/OrderApiController.java:18)\n\n### Limitations\nNone found.\n")
-    while api_step["id"].startswith("layer-api-"):
-        _save(repo, api_step["id"], api_pack)
-        pipeline.complete_step(Run.load(repo), api_step["id"])
+    while _members(api_step)[0]["id"].startswith("layer-api-"):
+        _answer(repo, api_step, lambda sid: api_pack)
         api_step = _next(repo)
-    # The UI pass gets the index of its endpoints' traces and reads only the UI side.
-    ui_step = api_step
-    assert ui_step["id"] == "layer-ui-1" and "`layer-ui-trace`" in ui_step["query"]
+    # The UI pass gets the index of its endpoints' traces and reads only the UI side. Its batches are
+    # independent, so they are handed out together (DISCOVERY_CONCURRENCY at a time).
+    ui_members = _members(api_step)
+    assert [m["id"] for m in ui_members][:1] == ["layer-ui-1"]
+    ui_step = ui_members[0]
+    assert "`layer-ui-trace`" in ui_step["query"]
     assert ".modernizer/discovery/evidence/api.md" in ui_step["query"]
     ui_request = (repo / ".modernizer/discovery/layers/ui/request-0001.md").read_text()
     assert "UI-001" in ui_request

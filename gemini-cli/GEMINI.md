@@ -46,6 +46,11 @@ When continuing a run, loop:
    `prompt` = the text between `<query>` and `</query>`, **verbatim and complete** — it is the exact brief the
    pipeline wrote (skill, inputs, rules, step_id). Do not summarise or extend it. Then call
    `mcp_modernizer_complete_step` with the `step_id`, and go back to 1.
+   If the step's kind is `parallel`: it lists several independent batches, each with its own `step_id`,
+   subagent and `<query>`. Make **one `invoke_agent` call per batch, all in the same response** (parallel tool
+   calls — Gemini CLI runs them at the same time), each with its query verbatim and complete. When they have
+   all returned, call `mcp_modernizer_complete_step` once per `step_id` (any order), then go back to 1. If one
+   subagent failed, invoke that one again on its own; the others stay done.
 3. If it is `ask_user` or `review_gate`: stop. Tell the user what to decide or review (with the file paths)
    and which command answers it. For the strategy choice, show every option with what it does, when it fits
    and why one is recommended (from `.modernizer/discovery/strategy.md`). **Never confirm a gate on the user's behalf** — the analysis review and the
