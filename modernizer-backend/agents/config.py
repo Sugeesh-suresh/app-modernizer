@@ -137,6 +137,17 @@ DISCOVERY_CONCURRENCY: int = max(1, _int("DISCOVERY_CONCURRENCY", 4))
 # knowledge files (agents/shared/knowledge_slice.py). off = the whole files.
 KNOWLEDGE_SLICING: bool = os.getenv("KNOWLEDGE_SLICING", "on").strip().lower() not in {"0", "false", "no", "off"}
 
+# A migration needs a JDK per Java release it builds on, and Maven. When the machine lacks one, the preflight
+# installs it — for this user only, under TOOLS_DIR (default ~/.modernizer/tools), nothing system-wide, no admin
+# rights: Eclipse Temurin JDKs from the Adoptium API, Apache Maven from Maven Central, each checked against its
+# published checksum. AUTO_INSTALL_TOOLS=off: report what is missing instead.
+AUTO_INSTALL_TOOLS: bool = os.getenv("AUTO_INSTALL_TOOLS", "on").strip().lower() not in {"0", "false", "no", "off"}
+TOOLS_DIR: str = os.getenv("MODERNIZER_TOOLS_DIR", "").strip()
+ADOPTIUM_API: str = (os.getenv("ADOPTIUM_API", "https://api.adoptium.net") or "https://api.adoptium.net").rstrip("/")
+MAVEN_INSTALL_VERSION: str = (os.getenv("MAVEN_INSTALL_VERSION", "3.9.11") or "3.9.11").strip()
+MAVEN_DOWNLOAD_BASE: str = (os.getenv("MAVEN_DOWNLOAD_BASE", "https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven")
+                            or "").rstrip("/")
+
 # Gemini CLI path: `next_step` runs the deterministic work (the Java preflight's Maven builds, the
 # inventories, discovery's computed sections) in the background. While it runs, the tool answers with
 # what it is doing now instead of leaving Gemini on "Thinking…": after PROGRESS_FIRST_REPORT_SECONDS

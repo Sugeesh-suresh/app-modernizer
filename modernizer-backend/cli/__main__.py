@@ -63,7 +63,27 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("export", help="write Word copies of the documents")
     sub.add_parser("patterns", help="list the patterns")
     sub.add_parser("serve", help="run the MCP server on stdio")
+    tl = sub.add_parser("tools", help="list the JDKs and Maven this tool installed; install some ahead of a run")
+    tl.add_argument("--install-jdk", type=int, action="append", default=[], metavar="MAJOR",
+                    help="install Eclipse Temurin JDK MAJOR for this user (8, 11, 17, 21, 25 ...); repeatable")
+    tl.add_argument("--install-maven", action="store_true", help="install Apache Maven for this user")
     args = parser.parse_args(argv)
+
+    if args.cmd == "tools":
+        from agents.shared import toolchain
+        try:
+            for major in args.install_jdk:
+                print(f"JDK {major}: {toolchain.install_jdk(major)}")
+            if args.install_maven:
+                print(f"Maven: {toolchain.install_maven()}")
+        except toolchain.ToolchainError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        print(f"Tools folder: {toolchain.tools_dir()}  (AUTO_INSTALL_TOOLS={'on' if toolchain.enabled() else 'off'})")
+        jdks = toolchain.managed_jdks()
+        print("Installed JDKs: " + (", ".join(f"{m} → {h}" for m, h in sorted(jdks.items())) or "none"))
+        print("Installed Maven: " + (toolchain.managed_maven() or "none"))
+        return 0
 
     if args.cmd == "serve":
         from cli.mcp_server import main as serve

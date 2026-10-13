@@ -40,7 +40,7 @@ from pathlib import Path
 
 from .. import config
 from ..java_8_to_11.preflight import check_approved, maven_roots
-from ..shared import approved_versions, java_env, progress
+from ..shared import approved_versions, java_env, progress, toolchain
 from .stages import INCREMENTAL_STAGES, incremental_stages
 
 TARGET = 25
@@ -65,6 +65,8 @@ def configured_homes() -> list[tuple[str, str]]:
     if os.environ.get("JAVA_HOME", "").strip():
         homes.append(("JAVA_HOME", os.environ["JAVA_HOME"].strip()))
     homes.append(("PATH", ""))
+    # The JDKs this tool installed because the machine lacked them: after everything the user configured.
+    homes += [(f"installed JDK {major}", home) for major, home in sorted(toolchain.managed_jdks().items())]
     return homes
 
 
@@ -92,6 +94,54 @@ def available_jdks() -> list[dict]:
     """Every JDK this machine can run, by major version."""
     return [{"major": m, "home": h, "source": s}
             for m, h, s in _probe_homes(tuple(configured_homes()), os.environ.get("PATH", ""))]
+
+
+def provision_jdks(releases: list[int], pf: "Preflight") -> None:
+    """Install, for this user, a JDK for every release the run builds on that the machine has no JDK of. A newer
+    JDK would only build it approximately (a Java 8 baseline on a JDK 17 is not the uploaded code's own build),
+    so the exact major is wanted; what cannot be installed is reported and the old behaviour (nearest newer JDK,
+    or a stop) applies."""
+    if not toolchain.enabled():
+        return
+    have = {j["major"] for j in available_jdks()}
+    for release in releases:
+        if release in have:
+            continue
+        try:
+            home = toolchain.install_jdk(release)
+        except toolchain.ToolchainError as exc:
+            pf.notes.append(f"JDK {release} is not on this machine and could not be installed: {exc}")
+            continue
+        pf.notes.append(f"Installed JDK {release} (Eclipse Temurin) into `{home}` — it was not on this machine "
+                        "(AUTO_INSTALL_TOOLS; remove it by deleting the folder).")
+        have.add(release)
+
+
+def provision_maven(mvn: str | None, root: Path, pf: "Preflight") -> str | None:
+    """An installed Apache Maven when there is none, or the one on PATH is older than 3.6.3 (the oldest the current
+    plugins run on); None when nothing was installed. A project's own wrapper is never replaced."""
+    if not toolchain.enabled():
+        return None
+    reason = ""
+    if not mvn:
+        reason = "Maven is not on this machine"
+    elif Path(mvn).name not in ("mvnw", "mvnw.cmd") and not str(mvn).startswith(str(toolchain.tools_dir())):
+        code, out = java_env._run([mvn, "-v"], root, java_env.build_env(""), 120)
+        m = re.search(r"Apache Maven (\S+)", out)
+        if code == 0 and m and java_env._version_tuple(m.group(1)) < (3, 6, 3):
+            reason = f"Maven {m.group(1)} on PATH is older than 3.6.3"
+    if not reason:
+        return None
+    try:
+        installed = toolchain.install_maven()
+    except toolchain.ToolchainError as exc:
+        pf.notes.append(f"{reason} and Apache Maven could not be installed: {exc}")
+        return None
+    if mvn:
+        toolchain.prefer_managed_maven()
+    pf.notes.append(f"Installed Apache Maven {config.MAVEN_INSTALL_VERSION} into `{Path(installed).parent.parent}` — "
+                    f"{reason} (AUTO_INSTALL_TOOLS; remove it by deleting the folder).")
+    return installed
 
 
 def assign(releases: list[int], jdks: list[dict]) -> dict[int, dict]:
@@ -175,8 +225,9 @@ def run(workspace_dir: str, strategy: str = "bigbang", springboot_upgrade: bool 
     pf = Preflight(os=f"{platform.system()} {platform.release()}", settings=config.MAVEN_SETTINGS)
     progress.stage("Environment check: finding the JDKs (MIGRATION_JAVA_HOMES, MIGRATION_JAVA_HOME, "
                    "BASELINE_JAVA_HOME, JAVA_HOME, PATH)")
-    pf.jdks = available_jdks()
     releases = releases_for(strategy, springboot_upgrade)
+    provision_jdks(releases, pf)
+    pf.jdks = available_jdks()
     chosen = assign(releases, pf.jdks)
     pf.assignment = {str(r): j for r, j in chosen.items()}
     have = ", ".join(f"{j['major']} ({j['source']})" for j in pf.jdks) or "none"
@@ -201,11 +252,13 @@ def run(workspace_dir: str, strategy: str = "bigbang", springboot_upgrade: bool 
         return _stop(pf, *problems)
 
     mvn = java_env.maven_executable(roots[0])
+    mvn = provision_maven(mvn, roots[0], pf) or mvn
     if not mvn:
-        problems.append("Maven is not installed (no `mvn` on PATH and no `mvnw` in the project).")
+        problems.append("Maven is not installed (no `mvn` on PATH and no `mvnw` in the project)"
+                        + ("" if toolchain.enabled() else " and AUTO_INSTALL_TOOLS is off") + ".")
     else:
         progress.stage(f"Environment check: `{Path(mvn).name} -v`")
-        code, out = java_env._run([mvn, "-v"], roots[0], java_env.build_env(None), 120)
+        code, out = java_env._run([mvn, "-v"], roots[0], java_env.build_env(""), 120)
         first = next((l for l in out.splitlines() if l.startswith("Apache Maven")), "")
         pf.maven = first.strip()
         m = re.search(r"Apache Maven (\S+)", first)
@@ -313,6 +366,9 @@ def summary(pf: Preflight) -> str:
     parts = ["JDKs: " + (", ".join(f"Java {r} on JDK {j['major']}{'' if j['exact'] else ' (approx.)'}"
                                    for r, j in sorted(pf.assignment.items(), key=lambda kv: int(kv[0])))
                          or "none usable")]
+    installed = [n.split(" into ")[0].removeprefix("Installed ") for n in pf.notes if n.startswith("Installed ")]
+    if installed:
+        parts.append("installed for this run: " + ", ".join(installed))
     if pf.maven_version:
         parts.append(f"Maven {pf.maven_version}")
     if pf.baseline_build_ok:

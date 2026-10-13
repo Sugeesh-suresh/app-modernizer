@@ -244,7 +244,7 @@ def run_java11_build(tool_context: ToolContext) -> str:
     if not config.VALIDATE_RUN_TESTS:
         lines.append("NOTE: tests compiled but not run (VALIDATE_RUN_TESTS=false).")
     elif not before_pf.get("baseline_tests_run"):
-        lines.append("NOTE: no baseline test run (BASELINE_JAVA_HOME not set) — a failing test may predate the "
+        lines.append("NOTE: no baseline test run (no JDK 8: BASELINE_JAVA_HOME is not set and none could be installed) — a failing test may predate the "
                      "migration; say so in the summary rather than changing a test to make it pass.")
     passed = errors == 0
     tool_context.state["java11_build_passed"] = passed

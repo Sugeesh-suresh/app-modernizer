@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .. import config
-from ..shared import approved_versions, java_env, progress
+from ..shared import approved_versions, fswalk, java_env, progress, toolchain
 from ..shared.dependency_graph import EXCLUDED_DIRS
 
 TARGET = 11
@@ -99,6 +99,39 @@ def check_approved(entries, java_home: str | None = None, workers: int = 4) -> l
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+def provision(tc, probe_dir: Path, pf: "Preflight"):
+    """Install what the probe found missing — a JDK 11 (unless the user pinned a JDK in MIGRATION_JAVA_HOME: that
+    is their choice, reported not overridden), Apache Maven when it is absent or older than 3.6.3 — and probe
+    again. Returns the (possibly new) probe."""
+    if not toolchain.enabled() or not tc.problems:
+        return tc
+    changed = False
+    if tc.java_major != TARGET and not config.MIGRATION_JAVA_HOME:
+        try:
+            home = toolchain.install_jdk(TARGET)
+            pf.notes.append(f"Installed JDK {TARGET} (Eclipse Temurin) into `{home}` — it was not on this machine "
+                            "(AUTO_INSTALL_TOOLS; remove it by deleting the folder).")
+            changed = True
+        except toolchain.ToolchainError as exc:
+            pf.notes.append(f"JDK {TARGET} is not on this machine and could not be installed: {exc}")
+    missing_maven = not tc.maven_version and not java_env.maven_executable(probe_dir)
+    old_maven = bool(tc.maven_version) and java_env._version_tuple(tc.maven_version) < (3, 6, 3)
+    wrapper = (java_env.maven_executable(probe_dir) or "").endswith(("mvnw", "mvnw.cmd"))
+    if (missing_maven or old_maven) and not wrapper:
+        try:
+            installed = toolchain.install_maven()
+            if old_maven:
+                toolchain.prefer_managed_maven()
+            pf.notes.append(f"Installed Apache Maven {config.MAVEN_INSTALL_VERSION} into "
+                            f"`{Path(installed).parent.parent}` — Maven was "
+                            f"{'older than 3.6.3 (' + tc.maven_version + ')' if old_maven else 'not on this machine'} "
+                            "(AUTO_INSTALL_TOOLS; remove it by deleting the folder).")
+            changed = True
+        except toolchain.ToolchainError as exc:
+            pf.notes.append(f"Apache Maven could not be installed: {exc}")
+    return java_env.probe(probe_dir, target=TARGET) if changed else tc
+
+
 def run(workspace_dir: str) -> Preflight:
     workspace = Path(workspace_dir)
     pf = Preflight()
@@ -111,6 +144,7 @@ def run(workspace_dir: str) -> Preflight:
 
     progress.stage("Environment check: the JDK and Maven (`java -version`, `mvn -v`)")
     tc = java_env.probe(roots[0] if roots else workspace, target=TARGET)
+    tc = provision(tc, roots[0] if roots else workspace, pf)
     pf.toolchain = asdict(tc)
     if not roots:
         pf.notes.append("No Maven build in the repository — only the toolchain was checked"
@@ -138,11 +172,21 @@ def run(workspace_dir: str) -> Preflight:
         pf.approved_unavailable = check_approved(entries)
 
     coords: list[str] = []
-    if config.BASELINE_JAVA_HOME:
-        base_tc = java_env.probe(roots[0], java_home=config.BASELINE_JAVA_HOME, target=8)
+    baseline = java_env.baseline_home()
+    if not baseline and toolchain.enabled() and next(fswalk.files(workspace, "*Test*.java"), None):
+        # The code has tests: they are run once on JDK 8, so failures that predate the migration are not blamed on it.
+        try:
+            baseline = toolchain.install_jdk(8)
+            pf.notes.append(f"Installed JDK 8 (Eclipse Temurin) into `{baseline}` for the baseline test run — it was "
+                            "not on this machine (AUTO_INSTALL_TOOLS; remove it by deleting the folder).")
+        except toolchain.ToolchainError as exc:
+            pf.notes.append(f"No baseline test run: JDK 8 is not configured (BASELINE_JAVA_HOME) and could not be "
+                            f"installed: {exc}")
+    if baseline:
+        base_tc = java_env.probe(roots[0], java_home=baseline, target=8)
         pf.baseline_test_jdk = base_tc.java_major
         if base_tc.java_major is None:
-            pf.notes.append(f"BASELINE_JAVA_HOME (`{config.BASELINE_JAVA_HOME}`) could not run Java — "
+            pf.notes.append(f"The baseline JDK (`{baseline}`) could not run Java — "
                             "baseline tests skipped.")
         else:
             for n, root in enumerate(roots, 1):
@@ -150,7 +194,7 @@ def run(workspace_dir: str) -> Preflight:
                                f"({n} of {len(roots)}) on JDK {base_tc.java_major} — `mvn -fae clean test`")
                 java_env.clear_reports(root)
                 code, out = java_env.run_maven(root, ["-fae", "clean", "test", "-Dmaven.test.failure.ignore=true"],
-                                               java_home=config.BASELINE_JAVA_HOME)
+                                               java_home=baseline)
                 res = java_env.classify(out, code, root)
                 if res.environment:
                     pf.environment_errors += [e for e in res.environment if e not in pf.environment_errors]
@@ -225,6 +269,9 @@ def summary(pf: Preflight) -> str:
     """Short form for the report and the screen."""
     tc = pf.toolchain or {}
     parts = [f"Maven {tc.get('maven_version') or '—'} on Java {tc.get('maven_java_major') or '—'} ({tc.get('os', '?')})"]
+    installed = [n.split(" into ")[0].removeprefix("Installed ") for n in pf.notes if n.startswith("Installed ")]
+    if installed:
+        parts.append("installed for this run: " + ", ".join(installed))
     if pf.baseline_build_ok:
         parts.append("uploaded code already builds on JDK 11")
     elif pf.baseline_build_ok is False:

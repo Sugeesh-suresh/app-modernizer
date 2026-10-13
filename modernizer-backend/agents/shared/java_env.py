@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import config
-from . import progress
+from . import progress, toolchain
 
 _IS_WINDOWS = os.name == "nt"
 
@@ -38,11 +38,22 @@ _IS_WINDOWS = os.name == "nt"
 # Environment
 # ---------------------------------------------------------------------------
 
+def migration_home() -> str:
+    """The JDK a Java 8 -> 11 build runs on: MIGRATION_JAVA_HOME, else the JDK 11 this tool installed because
+    the machine had none (agents/shared/toolchain.py), else "" (the server's own)."""
+    return config.MIGRATION_JAVA_HOME or toolchain.managed_home(11)
+
+
+def baseline_home() -> str:
+    """The JDK 8 the uploaded code's tests run on: BASELINE_JAVA_HOME, else the one this tool installed."""
+    return config.BASELINE_JAVA_HOME or toolchain.managed_home(8)
+
+
 def build_env(java_home: str | None = None) -> dict[str, str]:
     """The process environment for a build: JAVA_HOME set and its bin first
-    on PATH when a JDK is configured, otherwise the server's own."""
+    on PATH when a JDK is configured, otherwise the server's own. `java_home=""` means the server's own JDK."""
     env = dict(os.environ)
-    home = java_home if java_home is not None else config.MIGRATION_JAVA_HOME
+    home = java_home if java_home is not None else migration_home()
     if home:
         env["JAVA_HOME"] = home
         env["PATH"] = str(Path(home) / "bin") + os.pathsep + env.get("PATH", "")
@@ -50,17 +61,20 @@ def build_env(java_home: str | None = None) -> dict[str, str]:
 
 
 def maven_executable(cwd: Path | None = None) -> str | None:
-    """The Maven launcher: the project's wrapper if present, else `mvn` on PATH."""
+    """The Maven launcher: the project's wrapper if present, else the Maven this tool installed when the one on
+    PATH was too old, else `mvn` on PATH, else the installed one."""
     if cwd is not None:
         for name in (("mvnw.cmd",) if _IS_WINDOWS else ()) + ("mvnw",):
             wrapper = cwd / name
             if wrapper.is_file() and (_IS_WINDOWS or os.access(wrapper, os.X_OK)):
                 return str(wrapper)
+    if preferred := toolchain.maven_preferred():
+        return preferred
     for name in (("mvn.cmd", "mvn.bat") if _IS_WINDOWS else ()) + ("mvn",):
         found = shutil.which(name)
         if found:
             return found
-    return None
+    return toolchain.managed_maven() or None
 
 
 def maven_settings_args(args: list[str]) -> list[str]:
@@ -152,7 +166,7 @@ def probe(cwd: Path, java_home: str | None = None, target: int = 11) -> Toolchai
     verified migration impossible."""
     import platform
     tc = Toolchain(os=f"{platform.system()} {platform.release()}",
-                   java_home=java_home if java_home is not None else config.MIGRATION_JAVA_HOME,
+                   java_home=java_home if java_home is not None else migration_home(),
                    settings=config.MAVEN_SETTINGS)
     env = build_env(java_home)
     java = str(Path(tc.java_home) / "bin" / ("java.exe" if _IS_WINDOWS else "java")) if tc.java_home else "java"

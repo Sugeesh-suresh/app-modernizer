@@ -48,7 +48,15 @@ updates the skills in place. Settings come from `modernizer-backend/.env` (then 
 does not set). Use `link` for a checkout — `gemini extensions install <path>` would copy it and leave the skills
 link behind.
 
-Settings (either option): `MIGRATION_JAVA_HOME`, `MIGRATION_JAVA_HOMES`, `BASELINE_JAVA_HOME`, `MAVEN_SETTINGS`,
+**Missing JDKs and Maven are installed for you.** If a run needs a JDK (11, or 8/17/25 for Java 8 → 25) or Maven that
+the machine lacks, the environment check downloads it (Eclipse Temurin from Adoptium; Apache Maven from Maven
+Central) into `~/.modernizer/tools`, for your user only: no administrator rights, nothing added to PATH, checksums
+verified. Progress shows in `next_step`'s live report and each install is listed in the check's summary. Gradle,
+Node and Maven plugins are not installed (Maven fetches its plugins from your repositories; a failure there is
+reported, not worked around). Turn it off with `AUTO_INSTALL_TOOLS=off`; remove everything by deleting
+`~/.modernizer/tools`. To fetch ahead of time: `python -m cli tools --install-jdk 17 --install-maven`.
+
+Settings (either option): `AUTO_INSTALL_TOOLS`, `MODERNIZER_TOOLS_DIR`, `MIGRATION_JAVA_HOME`, `MIGRATION_JAVA_HOMES`, `BASELINE_JAVA_HOME`, `MAVEN_SETTINGS`,
 `PREFLIGHT`, `APPROVED_VERSIONS_FILE`, `BUILD_LOOP_MAX_ITERATIONS`, `JAVA11_ANALYSIS`, `MIGRATION_ANALYSIS`,
 `RULES_EXTRACTION`, and the rest of `.env.example`. Model settings (`GEMINI_MODEL`, `MODEL_PLAN`, ...) do not
 apply: the models are Gemini CLI's. To give a role its own model, add `model: gemini-2.5-flash` (for example) to
