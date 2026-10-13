@@ -233,23 +233,30 @@ def _start_worker(key: str, workspace: str) -> _Worker:
     return worker
 
 
-def _still_working(worker: _Worker) -> str:
+def _still_working(worker: _Worker, poll: int = 0) -> str:
+    # Each wait call carries a new `poll` number: Gemini CLI halts a request that repeats an identical tool
+    # call many times ("potential loop"), and a build can outlast many waits.
+    again = f"`next_step` again with `poll={poll + 1}`"
     return "\n".join([
         "## Still working — no step for you yet", "",
         worker.tracker.report(), "",
         "The run is doing this itself: nothing is needed from you or the user. Tell the user in one line what it "
-        "is doing now (the **Now:** line), then call `next_step` again straight away — it waits up to "
+        "is doing now (the **Now:** line), then call " + again + " straight away (same workspace; only `poll` changes) — it waits up to "
         f"{config.PROGRESS_REPORT_SECONDS}s and returns the next step or a newer progress report. Calling it again "
         "never restarts the work. Do not call other modernizer tools meanwhile.",
     ])
 
 
 @server.tool()
-async def next_step(workspace: str = "") -> str:
+async def next_step(workspace: str = "", poll: int = 0) -> str:
     """Advance the run: performs every deterministic step it reaches (inventories, preflight, plan
     checks, mechanical rewrites, computed sections, the final diff) and returns the next step that
     needs a subagent (with the exact query to give it) or a person (what to ask). Long work runs in the
-    background: until it finishes, this answers every PROGRESS_REPORT_SECONDS with what it is doing."""
+    background: until it finishes, this answers every PROGRESS_REPORT_SECONDS with what it is doing.
+
+    Args:
+        poll: Leave 0, except when the previous answer said "Still working": pass the `poll` number it names
+            (it counts up), so repeated waits are not mistaken for a loop. Calling again never restarts the work."""
     try:
         key = str(resolve_workspace(workspace or None))
     except RunError as exc:
@@ -267,7 +274,7 @@ async def next_step(workspace: str = "") -> str:
             if _WORKERS.get(key) is worker:
                 del _WORKERS[key]
         return worker.result
-    return _still_working(worker)
+    return _still_working(worker, max(0, int(poll or 0)))
 
 
 @server.tool()

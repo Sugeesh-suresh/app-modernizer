@@ -99,6 +99,7 @@ class TestClassify:
 
     def test_maven_settings_are_added_once(self, monkeypatch):
         monkeypatch.setattr(config, "MAVEN_SETTINGS", "/etc/m2/settings.xml")
+        monkeypatch.setattr(config, "MAVEN_NO_SNAPSHOT_UPDATES", False)
         assert java_env.maven_settings_args(["package"]) == ["-s", "/etc/m2/settings.xml"]
         assert java_env.maven_settings_args(["-s", "x.xml", "package"]) == []
 

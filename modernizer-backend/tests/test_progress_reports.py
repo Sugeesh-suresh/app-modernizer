@@ -154,3 +154,30 @@ def test_the_command_line_echoes_each_stage(tmp_path, monkeypatch, capsys):
     cli_main.main(["--workspace", str(repo), "next"])
     assert "[modernizer] Analysis: the inventory" in capsys.readouterr().err
     assert progress.active() is None
+
+
+def test_each_wait_names_a_new_poll_number_so_the_calls_are_never_identical(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    release = threading.Event()
+    monkeypatch.setattr(mcp_server.pipeline, "next_step",
+                        lambda run: (release.wait(30), ({"id": "x", "kind": "ask_user", "title": "X", "text": ""}, []))[1])
+    first = anyio.run(lambda: mcp_server.next_step(workspace=str(repo)))
+    assert "call `next_step` again with `poll=1`" in first
+    second = anyio.run(lambda: mcp_server.next_step(workspace=str(repo), poll=1))
+    assert "`poll=2`" in second
+    release.set()
+    assert "## Next: X" in anyio.run(lambda: mcp_server.next_step(workspace=str(repo), poll=2))
+
+
+def test_maven_builds_skip_snapshot_update_checks_and_can_use_their_own_repository(monkeypatch):
+    monkeypatch.setattr(config, "MAVEN_SETTINGS", "")
+    monkeypatch.setattr(config, "MAVEN_NO_SNAPSHOT_UPDATES", True)
+    monkeypatch.setattr(config, "MAVEN_REPO_LOCAL", "")
+    assert java_env.maven_settings_args(["clean", "package"]) == ["-nsu"]
+    assert java_env.maven_settings_args(["-U", "clean"]) == []                     # the call asked for updates
+    assert java_env.maven_settings_args(["-nsu", "clean"]) == []
+    monkeypatch.setattr(config, "MAVEN_REPO_LOCAL", "/cache/m2")
+    assert java_env.maven_settings_args(["clean"]) == ["-nsu", "-Dmaven.repo.local=/cache/m2"]
+    assert java_env.maven_settings_args(["-Dmaven.repo.local=/x", "clean"]) == ["-nsu"]
+    monkeypatch.setattr(config, "MAVEN_NO_SNAPSHOT_UPDATES", False)
+    assert java_env.maven_settings_args(["clean"]) == ["-Dmaven.repo.local=/cache/m2"]

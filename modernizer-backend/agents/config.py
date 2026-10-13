@@ -233,6 +233,13 @@ BASELINE_JAVA_HOME: str = os.getenv("BASELINE_JAVA_HOME", "").strip()
 MIGRATION_JAVA_HOMES: str = os.getenv("MIGRATION_JAVA_HOMES", "").strip()
 # Optional settings.xml (mirrors, repository credentials) for every Maven call.
 MAVEN_SETTINGS: str = os.getenv("MAVEN_SETTINGS", "").strip()
+# Every migration build passes -nsu (no snapshot update checks): Maven does not re-fetch maven-metadata.xml of
+# SNAPSHOT dependencies on each build — on a slow repository that is most of a first build. A call that
+# passes -U itself still updates. "off" = Maven's own default.
+MAVEN_NO_SNAPSHOT_UPDATES: bool = os.getenv("MAVEN_NO_SNAPSHOT_UPDATES", "on").strip().lower() not in {"0", "false", "no", "off"}
+# Optional local repository for the migration's builds (-Dmaven.repo.local): a persistent cache that is
+# filled once and reused by every build of the run, and keeps its snapshot churn out of ~/.m2.
+MAVEN_REPO_LOCAL: str = os.getenv("MAVEN_REPO_LOCAL", "").strip()
 # Before planning: check the JDK and Maven, and build the uploaded code on the
 # target JDK. `warn` reports its problems without stopping the run; `off` skips
 # it (no verification is then possible).

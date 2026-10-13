@@ -78,10 +78,16 @@ def maven_executable(cwd: Path | None = None) -> str | None:
 
 
 def maven_settings_args(args: list[str]) -> list[str]:
-    """`-s <settings>` when MAVEN_SETTINGS is configured and the call has none."""
+    """What every migration build adds unless the call sets it itself: `-s <settings>` (MAVEN_SETTINGS),
+    `-nsu` (no snapshot update checks; MAVEN_NO_SNAPSHOT_UPDATES) and `-Dmaven.repo.local=` (MAVEN_REPO_LOCAL)."""
+    extra: list[str] = []
     if config.MAVEN_SETTINGS and "-s" not in args and "--settings" not in args:
-        return ["-s", config.MAVEN_SETTINGS]
-    return []
+        extra += ["-s", config.MAVEN_SETTINGS]
+    if config.MAVEN_NO_SNAPSHOT_UPDATES and not {"-nsu", "--no-snapshot-updates", "-U", "--update-snapshots"} & set(args):
+        extra.append("-nsu")
+    if config.MAVEN_REPO_LOCAL and not any(a.startswith("-Dmaven.repo.local") for a in args):
+        extra.append(f"-Dmaven.repo.local={config.MAVEN_REPO_LOCAL}")
+    return extra
 
 
 def _run(cmd: list[str], cwd: Path, env: dict, timeout: int) -> tuple[int, str]:
