@@ -181,3 +181,36 @@ def test_maven_builds_skip_snapshot_update_checks_and_can_use_their_own_reposito
     assert java_env.maven_settings_args(["-Dmaven.repo.local=/x", "clean"]) == ["-nsu"]
     monkeypatch.setattr(config, "MAVEN_NO_SNAPSHOT_UPDATES", False)
     assert java_env.maven_settings_args(["clean"]) == ["-Dmaven.repo.local=/cache/m2"]
+
+
+def test_a_finished_build_is_summarised_in_the_report_and_the_next_step_answer(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    failing = "[INFO] web ... FAILURE [ 1.0 s]\n[INFO] BUILD FAILURE\n[INFO] Total time:  2.0 s\n" \
+              "[ERROR] /w/A.java:[4,2] cannot find symbol\n"
+
+    def build_step(run):
+        progress.stage("Environment check: baseline build")
+        monkeypatch.setattr(java_env, "_run", lambda *a, **k: (1, failing))
+        monkeypatch.setattr(java_env, "maven_executable", lambda cwd=None: "mvn")
+        java_env.run_maven(repo, ["-fae", "clean", "package", "-Dx=1"])
+        return {"id": "x", "kind": "ask_user", "title": "X", "text": ""}, []
+
+    monkeypatch.setattr(mcp_server.pipeline, "next_step", build_step)
+    answer = anyio.run(lambda: mcp_server.next_step(workspace=str(repo)))
+    assert "### Build summary" in answer and "maven build FAILED" in answer and "A.java:4 cannot find symbol" in answer
+    assert "`mvn -fae clean package`" in answer and "-Dx=1" not in answer
+
+
+def test_run_command_appends_the_build_summary_for_maven_only(tmp_path, monkeypatch):
+    from agents.shared import workspace_tools as wt
+    import subprocess
+    monkeypatch.setattr(wt, "workspace_root", lambda ctx: tmp_path)
+    monkeypatch.setattr(wt, "resolve_within_workspace", lambda ctx, sub: tmp_path)
+    monkeypatch.setattr(wt, "_resolve_executable", lambda exe, cwd: exe)
+
+    class R:
+        returncode, stdout, stderr = 0, "[INFO] BUILD SUCCESS\n[INFO] Total time:  1.0 s\n", ""
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: R())
+    run = wt.make_run_command({"mvn", "javac"})
+    assert run(None, "mvn -q test").endswith("Build summary: maven build PASSED (1.0 s)")
+    assert "Build summary" not in run(None, "javac A.java")

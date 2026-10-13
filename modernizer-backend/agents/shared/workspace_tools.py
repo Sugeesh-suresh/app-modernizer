@@ -623,8 +623,15 @@ def make_run_command(allowed_commands: set[str], env_factory=None, extra_args=No
                 "COMMAND_TIMEOUT_SECONDS to be raised."
             )
 
-        output = _clip_command_output((result.stdout or "") + (result.stderr or ""))
-        return f"exit_code={result.returncode}\n{output}"
+        full = (result.stdout or "") + (result.stderr or "")
+        output = _clip_command_output(full)
+        text = f"exit_code={result.returncode}\n{output}"
+        if executable in ("mvn", "mvnw", "./mvnw", "gradle", "gradlew", "./gradlew"):
+            from . import build_summary, progress
+            summary = build_summary.redact(build_summary.summarize(full, result.returncode, executable).text())
+            progress.build(f"`{executable} {' '.join(a for a in args[1:] if not a.startswith('-D'))}`", summary)
+            text += f"\n\n{summary}"
+        return text
 
     run_command.__doc__ = (
         "Run one build/compile command inside the repository workspace (or one "

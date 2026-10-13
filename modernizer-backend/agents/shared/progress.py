@@ -72,6 +72,7 @@ class Tracker:
     note: str = ""
     history: list[tuple[str, float]] = field(default_factory=list)   # finished stages and their duration
     command: _Command | None = None
+    builds: list[str] = field(default_factory=list)      # one summary per finished build
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     # ── updates ────────────────────────────────────────────────────────────
@@ -88,6 +89,15 @@ class Tracker:
     def detail(self, text: str) -> None:
         with self._lock:
             self.note = text
+
+    def build(self, label: str, summary: str) -> None:
+        """A build finished: keep its summary for the report and the step's answer, echo it on the command line."""
+        text = f"{label}\n{summary}" if label else summary
+        with self._lock:
+            self.builds.append(text)
+            del self.builds[:-_HISTORY]
+        if self.echo:
+            print(f"[modernizer] {text}", file=sys.stderr, flush=True)
 
     def output(self, line: str) -> None:
         line = _redact(line.rstrip())
@@ -135,6 +145,8 @@ class Tracker:
                         lines.append("  - Maven: " + "; ".join(facts))
                     lines.append(f"  - Last output ({_clock(now - cmd.started)} in, {cmd.lines} lines): "
                                  f"`{cmd.last_line.replace('`', chr(39))}`")
+            if self.builds:
+                lines += ["", "Builds so far:"] + [f"- {b.replace(chr(10), chr(10) + '  ')}" for b in self.builds[-3:]]
             if self.history:
                 lines += ["", "Finished so far:"]
                 lines += [f"- {text} ({_clock(took)})" for text, took in self.history]
@@ -167,6 +179,11 @@ def stage(text: str) -> None:
 def detail(text: str) -> None:
     if (t := _active) is not None:
         t.detail(text)
+
+
+def build(label: str, summary: str) -> None:
+    if (t := _active) is not None:
+        t.build(label, summary)
 
 
 def wants_output() -> bool:

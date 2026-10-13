@@ -227,6 +227,8 @@ def _start_worker(key: str, workspace: str) -> _Worker:
         finally:
             progress.activate(previous)
             worker.finished_state_mtime = _state_mtime(key)
+            if worker.tracker.builds and isinstance(worker.result, str) and not worker.result.startswith('ERROR'):
+                worker.result += "\n\n### Build summary\n" + "\n\n".join(worker.tracker.builds)
             worker.done.set()
 
     threading.Thread(target=work, name=f"next_step {key}", daemon=True).start()

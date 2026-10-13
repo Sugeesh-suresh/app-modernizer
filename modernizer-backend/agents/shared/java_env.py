@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import config
-from . import progress, toolchain
+from . import build_summary, progress, toolchain
 
 _IS_WINDOWS = os.name == "nt"
 
@@ -138,7 +138,11 @@ def run_maven(cwd: Path, args: list[str], java_home: str | None = None,
     if not mvn:
         return 127, "mvn: not found on PATH (and no Maven wrapper in the project)"
     cmd = [mvn, "-B", *maven_settings_args(args), *args]
-    return _run(cmd, cwd, build_env(java_home), timeout or config.VALIDATE_TIMEOUT_SECONDS)
+    code, out = _run(cmd, cwd, build_env(java_home), timeout or config.VALIDATE_TIMEOUT_SECONDS)
+    if any(a in out for a in ("[INFO] BUILD", "[ERROR] Failed to execute")) or code == 124:
+        progress.build(f"`mvn {' '.join(a for a in args if not a.startswith('-D'))}` in `{cwd.name or '.'}`",
+                       build_summary.redact(build_summary.summarize(out, code).text()))
+    return code, out
 
 
 # ---------------------------------------------------------------------------
