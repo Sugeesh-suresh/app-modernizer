@@ -254,6 +254,16 @@ _JAVA_FORBIDDEN = [
 # removed JDK APIs and the Java 8 compiler level -- NOT the EOL libraries the
 # 8 -> 25 set lists, which run on Java 11 and are deliberately out of scope here.
 _JAVA11_LEGACY = [
+    # Spring 5 dropped orm.hibernate3/4 (hibernate5 is the Spring 5 module); Hibernate 5.3+ rejects JDBC-style `?`
+    # in HQL. Present in a file that still has them = work the Spring/Hibernate move leaves to do.
+    _m("Spring ORM hibernate3/4 support", r"org\.springframework\.orm\.hibernate[34]\b",
+       "Removed in Spring 5 — org.springframework.orm.hibernate5 (same class names)."),
+    _m("HQL positional parameter", r"\"(?:from|select|update|delete)\b[^\"\n]*\?(?!\d)[^\"\n]*\"",
+       "JDBC-style `?` parameters in HQL were removed in Hibernate 5.3 — use `?0` ordinals (0-based in the "
+       "setParameter(0, …) / HibernateTemplate.find(…) calls) or `:named` parameters.",
+       re.IGNORECASE,
+       requires=r"\b(?:createQuery|createFilter|HibernateTemplate|getHibernateTemplate|org\.hibernate\.(?:Session|Query)\b|"
+                r"@(?:Named)?Query\s*\((?![^)]*nativeQuery\s*=\s*true))"),
     _m("removed JDK internal API", r"\bsun\.misc\.BASE64(?:En|De)coder\b|\bsun\.reflect\.Reflection\b|\bsun\.misc\.Cleaner\b",
        "Removed/encapsulated since Java 9 — java.util.Base64, StackWalker, java.lang.ref.Cleaner."),
     _m("method removed in Java 11", r"\.runFinalizersOnExit\s*\(|\bThread\.currentThread\(\)\.destroy\s*\(|\bcheckAwtEventQueueAccess\b|\bcheckTopLevelWindow\b|\bcheckSystemClipboardAccess\b|\bcheckMemberAccess\b|\bjavax\.security\.auth\.Policy\b",

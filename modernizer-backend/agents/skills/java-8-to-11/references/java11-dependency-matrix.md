@@ -89,8 +89,8 @@ failing test. "Old" or "EOL" is never a trigger.
 
 | Library | Move when (trigger) | Target | Note |
 |---|---|---|---|
-| Spring Framework | 3.x (cannot read Java 11 class files: `ASM ClassReader failed to parse class file`), or a test/startup failure in Spring 4.x on JDK 11. Spring 4.3 that builds and passes its tests stays | newest 5.3.x | 3.x cannot read Java 11 class files. 4.3 is EOL and not documented for 11. 4 → 5 is not a pure bump: `orm.hibernate3` support, Velocity, and some deprecated APIs are gone — size the call sites. Still `javax`. Spring Security moves with it (5.x). |
-| Hibernate ORM | bundled, and a JDK 11 failure (javassist/bytecode enhancement errors, test failures) names it | 5.4.33.Final or 5.6.15.Final (javax) | if WildFly provides Hibernate (JPA with a container persistence unit), it is the container's — do not touch |
+| Spring Framework | 3.x (cannot read Java 11 class files: `ASM ClassReader failed to parse class file`), or a test/startup failure in Spring 4.x on JDK 11, or the requirements ask for it. Spring 4.3 that builds and passes its tests otherwise stays | **5.3.39** (the last 5.3 release; use the approved-versions list's version when it names one) | 3.x cannot read Java 11 class files. 4.3 is EOL and not documented for 11. 4 → 5 is not a pure bump: `orm.hibernate3` support, Velocity, and some deprecated APIs are gone — size the call sites. Still `javax`. Spring Security moves with it (5.x). |
+| Hibernate ORM | bundled, and a JDK 11 failure (javassist/bytecode enhancement errors, test failures) names it | **5.6.15.Final** (javax; 5.4.33.Final if 5.6 is not served) | if WildFly provides Hibernate (JPA with a container persistence unit), it is the container's — do not touch |
 | ASM | `Unsupported class file major version 55` from it | newest 9.x | |
 | cglib | proxy-generation failures on JDK 11 | 3.3.0, or remove if Spring's repackaged copy is what is used | |
 | javassist | `IllegalAccessError` / class-file errors from it on JDK 11 | newest 3.x | |

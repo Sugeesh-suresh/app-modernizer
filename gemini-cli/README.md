@@ -81,10 +81,19 @@ once you approve the plan) and start Gemini CLI there:
 /modernize:start java-8-to-11
 /modernize:start java-8-to-25 incremental springboot
 /modernize:start solr-4-to-9 context=docs/search-api.yaml
+/modernize:start java-8-to-11 migrate the backend to Java 11, keep the JSP WARs, move Spring and Hibernate to compatible versions
 /reverse-engineer                         # reverse engineering: documents only, changes nothing
 /reverse-engineer layered-trace docs=brd,technical_spec,openapi,ui_pages   # strategy and documents up front
 /modernize:discover                       # the same run, without arguments
 ```
+
+Anything you write after the pattern and its options is your **requirement**. It is recorded with the run (shown
+by `/modernize:status`) and given, in your words, to the planner, the reviewer and the reporter as binding text:
+the planner plans what you asked for even where the pattern's default would leave it alone (Java 8 → 11 otherwise
+moves only what JDK 11 breaks), says in its Open Questions which requirement a rule such as the scope fence
+blocks, the reviewer counts an unmet requirement as a finding, and the report states for each requirement whether
+it is met. Without it, the pattern's defaults decide. From the command line: `python -m cli start java-8-to-11
+--requirements "…"`.
 
 The run goes as far as it can and stops at each human gate:
 

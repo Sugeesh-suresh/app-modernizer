@@ -140,7 +140,8 @@ async def list_patterns() -> str:
 @server.tool()
 async def start_run(pattern: str, workspace: str = "", migration_strategy: str = "bigbang",
                     springboot_upgrade: bool = False, junit_upgrade: bool = False,
-                    context_files: list[str] | None = None, restart: bool = False) -> str:
+                    context_files: list[str] | None = None, restart: bool = False,
+                    requirements: str = "") -> str:
     """Start a modernization run on the repository: snapshot it as the baseline, build the
     dependency graph, detect companion migrations (or, for stack-discovery, the stacks).
 
@@ -153,10 +154,14 @@ async def start_run(pattern: str, workspace: str = "", migration_strategy: str =
         junit_upgrade: java-8-to-25 only — also upgrade JUnit.
         context_files: Swagger / OpenAPI / design documents (paths) for the planner.
         restart: Discard an existing run in this repository and start over.
+        requirements: What the person asked for, in their own words and complete (e.g. "Migrate the backend
+            to Java 11, keep the JSP WARs as they are; Spring and Hibernate move to compatible versions").
+            The planner, reviewer and reporter get it as binding text. Empty when they asked for nothing
+            beyond the pattern.
     """
     def body():
         run = pipeline.start(resolve_workspace(workspace or None), pattern, migration_strategy,
-                             springboot_upgrade, junit_upgrade, context_files, restart)
+                             springboot_upgrade, junit_upgrade, context_files, restart, requirements)
         return pipeline.summary(run) + "\n\nRun started. Call `next_step` to continue."
     return await _run(body)
 

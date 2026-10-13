@@ -6,6 +6,9 @@ Every migration is a pipeline over the repository open in this session:
 analyse → (analysis review) → plan → **plan approval** → modify → build/validate/fix loop → independent review
 → report → skill curation → scope-fence restore → diff
 
+When the user says what they want beyond the pattern (a library to move, a version, what to keep), pass it to
+`mcp_modernizer_start_run` as `requirements`, in their own words — it reaches the plan, the review and the report.
+
 Patterns: `java-8-to-25` (bigbang or incremental, optional Spring Boot 4 / JUnit), `java-8-to-11` (JDK only;
 JSP and WildFly frozen), `solr-4-to-9`, `oracle-19c-to-23ai`, `tibco-ems-to-pubsub`, `jsp-to-react-bff`, and
 `stack-discovery` (reverse engineering: documents the repository as it is; changes nothing).

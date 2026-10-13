@@ -4,7 +4,7 @@ _Creates the migration plan for upgrading a Java 8 JSP + WildFly monolith to Jav
 
 Part of the `java-8-to-11` skill: read its SKILL.md for the migration's workflow and the rules every step follows.
 
-**Knowledge for this step** (load each with `load_skill_resource`): `references/java11-dependency-matrix.md`, `references/java11-blockers.md` — some are not mentioned in the instructions below: they hold migration knowledge this step relies on as well.
+**Knowledge for this step** (load each with `load_skill_resource`): `references/java11-dependency-matrix.md`, `references/java11-blockers.md`, `references/java11-code-patterns.md` (its Spring 4 → 5 / Hibernate 4 → 5 section, when the Requirements ask for that move) — some are not mentioned in the instructions below: they hold migration knowledge this step relies on as well.
 
 You are a Java migration expert planning a **Java 8 → Java 11** upgrade of a
 large monolith deployed as a WAR on WildFly. You work only from the confirmed
@@ -37,7 +37,11 @@ plan. That is your primary evidence, and the plan is built from it:
    API replacement, a plugin version that the error names).
 3. **Every Java 11 Blockers row** of the inventory (removed APIs that may only
    fail at run time, which a compile cannot show).
-4. **Nothing else.** No library or plugin moves unless an error above — or the
+4. **Nothing else** — except what the person's **Requirements** section asks for (when your query has
+   one): a library, framework or version they name is in scope even though it builds on JDK 11. It gets
+   its own task, its manifest rows (every file whose code the move changes — e.g. an ORM move changes
+   its imports, query syntax and configuration), and its row in the Dependency & Version Delta, with the
+   matrix's concrete target. Everything the requirements do not name follows this rule. No library or plugin moves unless an error above — or the
    matrix row's trigger — names it. An old Spring, Hibernate, Mockito,
    PowerMock or plugin that builds on JDK 11 stays exactly as it is; list it
    under Deprecated Libraries / Out of Scope ("runs on 11; not moved"). If

@@ -93,6 +93,29 @@ CATEGORIES: list[Category] = [
        r"\bnew\s+(?:[\w$]+\.)*SimpleDateFormat\s*\(|\b(?:DateFormat|NumberFormat)\.get\w*Instance\s*\(", False,
        "output can change; -Djava.locale.providers=COMPAT,CLDR is a JVM (ops) option"),
 ]
+# Spring / Hibernate API usage a framework move touches. NOT blockers: on JDK 11 these builds; they become
+# manifest rows only when the person's requirements ask for the Spring / Hibernate move. (name, line regex,
+# file-context regex or None, what the move does to it)
+_HQL_CONTEXT = re.compile(r"\b(?:createQuery|createFilter|HibernateTemplate|getHibernateTemplate|"
+                          r"org\.hibernate\.(?:Session|Query)\b|@(?:Named)?Query\s*\((?![^)]*nativeQuery\s*=\s*true))")
+FRAMEWORK_USAGE: list[tuple[str, re.Pattern, re.Pattern | None, str]] = [
+    ("Spring orm.hibernate3/4", re.compile(r"org\.springframework\.orm\.hibernate[34]\b"), None,
+     "Spring 5: orm.hibernate5 (hibernate3 has no Spring 5 module: a rewrite)"),
+    ("HQL with JDBC-style `?`", re.compile(r"\"(?:from|select|update|delete)\b[^\"\n]*\?(?!\d)[^\"\n]*\"", re.IGNORECASE),
+     _HQL_CONTEXT, "Hibernate 5.3+: `?0` ordinals or named parameters"),
+    ("Hibernate typed setters", re.compile(r"\.set(?:String|Integer|Long|Double|Boolean|Date|Timestamp|BigDecimal)\s*\(\s*\d+\s*,"),
+     _HQL_CONTEXT, "Hibernate 5: deprecated — setParameter(i, v)"),
+    ("Hibernate Criteria (legacy)", re.compile(r"\bcreateCriteria\s*\(|\bDetachedCriteria\b"), None,
+     "deprecated in 5.x but still present in 5.6 — keeps working"),
+    ("Hibernate bootstrap / config", re.compile(r"\b(?:LocalSessionFactoryBean|LocalSessionFactoryBuilder|AnnotationSessionFactoryBean|"
+                                              r"HibernateTransactionManager|hibernate\.dialect|hibernate\.hbm2ddl)\b"), None,
+     "check the package (orm.hibernate5) and the dialect/properties against 5.6"),
+    ("Spring 4 API removed in Spring 5", re.compile(r"\b(?:org\.springframework\.web\.servlet\.view\.velocity|org\.springframework\.mock\.staticmock|"
+                                                  r"org\.springframework\.web\.bind\.annotation\.support|org\.springframework\.web\.servlet\.view\.tiles2)\b"), None,
+     "removed in Spring 5 — replace (Velocity / Tiles 2 views, AspectJ static mocks)"),
+]
+_ANY_FRAMEWORK = re.compile("|".join(f"(?:{rx.pattern})" for _, rx, _, _ in FRAMEWORK_USAGE), re.IGNORECASE)
+
 _ANY_CATEGORY = re.compile("|".join(f"(?:{c.regex.pattern})" for c in CATEGORIES))
 
 ENDPOINTS = [
@@ -170,6 +193,7 @@ class Inventory:
     dependency_rows: list = field(default_factory=list)  # (pom, g:a, version, scope, status)
     blockers: dict = field(default_factory=lambda: defaultdict(list))   # category -> [(file, [lines], sample)]
     jsp_risks: dict = field(default_factory=lambda: defaultdict(list))
+    framework: dict = field(default_factory=lambda: defaultdict(list))   # usage name -> [(file, [lines], sample)]
     endpoints: list = field(default_factory=list)        # (type, value, file:line)
     tests: dict = field(default_factory=lambda: defaultdict(set))  # framework -> {files}
     test_files: dict = field(default_factory=lambda: defaultdict(int))  # module -> count
@@ -283,6 +307,15 @@ def build(workspace_dir: str) -> Inventory:
         inv.files_scanned += 1
         inv.lines_scanned += text.count("\n") + 1
         module = _module_of(rel, module_dirs)
+
+        if suffix in (".xml", ".java") and _ANY_FRAMEWORK.search(text):
+            flines = text.splitlines()
+            for name, rx, context, _note in FRAMEWORK_USAGE:
+                if context is not None and not context.search(text):
+                    continue
+                hit_lines = [i for i, line in enumerate(flines, 1) if rx.search(line)]
+                if hit_lines:
+                    inv.framework[name].append((rel, hit_lines, _sample(flines[hit_lines[0] - 1])))
 
         if suffix == ".xml":
             for m in re.finditer(r"urn:jboss:domain:[\w.:-]+", text):
@@ -421,6 +454,14 @@ def to_document(inv: Inventory, max_rows: int = 400) -> str:
             "| POM | Coordinate | Version | Scope | Finding |", "|---|---|---|---|---|"]
     out += _clip([f"| `{p}` | {c} | {v} | {s} | {f} |" for p, c, v, s, f in inv.dependency_rows], max_rows, "dependency rows") \
         or ["| — | — | — | — | none |"]
+    out += ["", "## Spring / Hibernate API Usage (not work items — files a Spring or Hibernate move would touch)", "",
+            "_These build and run on JDK 11 as they are. They are manifest rows ONLY when the Requirements "
+            "section of your query asks for a Spring or Hibernate move; then every file listed for the "
+            "framework being moved is planned. Otherwise leave them._", "",
+            "| File | Lines | Usage | First match | A framework move does |", "|---|---|---|---|---|"]
+    out += _clip([f"| `{f}` | {', '.join(map(str, l[:8]))}{' …' if len(l) > 8 else ''} | {name} | `{s.replace('|', '/')}` | {note} |"
+                  for name, _rx, _ctx, note in FRAMEWORK_USAGE for f, l, s in inv.framework.get(name, [])],
+                 max_rows, "framework usage rows") or ["| — | — | none found | — | — |"]
     out += _blocker_tables(inv, change, risk, max_rows)
     out += ["", "## Removed-JDK-Module Usage", "", "| Category | Files | Fix |", "|---|---|---|"]
     out += [f"| {c.name} | {len(inv.blockers[c.name])} | {c.fix} |" for c in change if inv.blockers.get(c.name)] \

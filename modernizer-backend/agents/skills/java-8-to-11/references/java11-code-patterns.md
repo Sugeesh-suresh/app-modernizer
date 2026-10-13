@@ -271,3 +271,24 @@ do not spend a task on it, and do not count it as a failure if you see it.
 `MockitoJUnitRunner` in 2.x is strict by default and reports unused stubs as
 failures — `MockitoJUnitRunner.Silent` keeps 1.x behaviour when a task says
 the test's meaning must not change.
+
+## Spring 4 → 5 and Hibernate 4 → 5 (when the requirements ask for them)
+
+Move `spring.version` to 5.3.39 and `hibernate.version` to 5.6.15.Final in the parent POM's properties (the modules
+inherit them) — both stay on `javax`, never `jakarta`. The code changes that follow:
+
+- **`org.springframework.orm.hibernate4.*` → `org.springframework.orm.hibernate5.*`** (`LocalSessionFactoryBean`,
+  `LocalSessionFactoryBuilder`, `HibernateTransactionManager`, `HibernateTemplate`): same class names, new package, in
+  configuration, DAOs and tests. (`orm.hibernate3` has no Spring 5 module at all — that is a Hibernate rewrite.)
+- **JDBC-style `?` in HQL is rejected since Hibernate 5.3.** `from X where a = ?` → `from X where a = ?0`; the
+  index is 0-based in `query.setParameter(0, v)` and in `HibernateTemplate.find("… ?0 …", v)`. Or use named
+  parameters. A native SQL `createSQLQuery` keeps its plain `?`. `JdbcTemplate` SQL is not HQL: leave it.
+- **`query.setString(i, v)` / `setInteger` / `setLong` …** are deprecated: `setParameter(i, v)`.
+- **`Session.createCriteria` (the legacy Criteria API)** is deprecated but still present in 5.6 — it keeps working;
+  do not rewrite it unless the plan says so.
+- **Dialect:** `Oracle10gDialect` still exists in 5.6 (deprecated); leave it unless a baseline error names it.
+- **`HibernateTemplate`** is deprecated in Spring 5.3 but present — keep it.
+- Oracle `NUMBER(1)` booleans mapped with `@Type(type = "org.hibernate.type.NumericBooleanType")` keep working.
+- Verify with the module's own tests on JDK 11 (a Hibernate test on an in-memory H2 proves the HQL really runs):
+  an HQL error is a runtime failure, not a compile error.
+

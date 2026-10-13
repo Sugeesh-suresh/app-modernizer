@@ -182,3 +182,88 @@ def test_run_command_gives_the_tool_context_only_to_a_factory_that_names_it(tmp_
     seen.clear()
     assert j11.run_command(ctx, "mvn -v").startswith("exit_code=0")
     assert seen["env"]["JAVA_HOME"] == "/opt/jdk-11"          # the configured JDK, not a repr of the context
+
+
+# ── the person's requirements reach the planner, the reviewer and the reporter ───────────────────────────
+
+def _started(tmp_path, monkeypatch, pattern, **kw):
+    monkeypatch.setenv("MODERNIZER_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "repo"
+    shutil.copytree(FIXTURES / "orders-jsp-hibernate-monorepo", repo)
+    return repo, pipeline.start(repo, pattern, **kw)
+
+
+REQUEST = "Migrate the backend services to Java 11, keep the JSP WAR deployments, Spring and Hibernate to compatible versions."
+
+
+def test_requirements_are_stored_shown_and_sent_to_the_planner(tmp_path, monkeypatch):
+    repo, run = _started(tmp_path, monkeypatch, "java-8-to-11", requirements=REQUEST)
+    assert run.state["requirements"] == REQUEST and REQUEST[:40] in pipeline.summary(run)
+    pipeline.confirm(Run.load(repo), "analysis") if Run.load(repo).state.get("phase") == "analysis_review" else None
+    run = Run.load(repo)
+    for _ in range(20):
+        step, _log = pipeline.next_step(run)
+        if step["kind"] == "subagent":
+            break
+        run = Run.load(repo)
+    assert step["id"] == "plan-java-8-to-11"
+    q = step["query"]
+    assert "## Requirements from the person who asked for this migration" in q and REQUEST in q
+    assert "These are binding" in q and "Open Questions" in q
+    assert q.index("## Requirements") < q.index("## Scope Fence")      # before the rules it may collide with
+
+
+def test_without_requirements_the_query_is_unchanged(tmp_path, monkeypatch):
+    repo, run = _started(tmp_path, monkeypatch, "java-8-to-11")
+    assert pipeline.requirements_block(run, "plan") == ""
+
+
+def test_review_and_report_check_each_requirement(tmp_path, monkeypatch):
+    _repo, run = _started(tmp_path, monkeypatch, "java-8-to-11", requirements=REQUEST)
+    assert "a requirement the migrated code does not meet is a finding" in pipeline.requirements_block(run, "review")
+    assert 'section "Requirements"' in pipeline.requirements_block(run, "report")
+
+
+def test_requirements_are_rejected_where_they_cannot_apply_or_are_too_long(tmp_path, monkeypatch):
+    import pytest
+    from cli.runstate import RunError
+    monkeypatch.setenv("MODERNIZER_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "repo"
+    shutil.copytree(FIXTURES / "orders-jsp-hibernate-monorepo", repo)
+    with pytest.raises(RunError, match="do not apply"):
+        pipeline.start(repo, "stack-discovery", requirements="x")
+    with pytest.raises(RunError, match="keep them under"):
+        pipeline.start(repo, "java-8-to-11", requirements="x" * (pipeline.MAX_REQUIREMENTS_CHARS + 1))
+
+
+def test_the_mcp_start_run_takes_requirements(tmp_path, monkeypatch):
+    import anyio
+    from cli import mcp_server
+    monkeypatch.setenv("MODERNIZER_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "repo"
+    shutil.copytree(FIXTURES / "orders-jsp-hibernate-monorepo", repo)
+    out = anyio.run(lambda: mcp_server.start_run(pattern="java-8-to-11", workspace=str(repo), requirements=REQUEST))
+    assert "**Requirements:** Migrate the backend services to Java 11" in out
+
+
+def test_the_java11_inventory_lists_the_files_a_spring_hibernate_move_touches():
+    from agents.java_8_to_11 import inventory
+    doc = inventory.to_document(inventory.build(str(FIXTURES / "orders-jsp-hibernate-monorepo")))
+    part = doc[doc.index("## Spring / Hibernate API Usage"):doc.index("## Java 11 Blockers")]
+    for token in ("Spring orm.hibernate3/4", "HQL with JDBC-style `?`", "Hibernate typed setters",
+                  "order-services/src/main/java/com/acme/orders/dao/CustomerDao.java",
+                  "order-services/src/test/java/com/acme/orders/dao/CustomerDaoTest.java"):
+        assert token in part, token
+    assert "WebMvcConfigurerAdapter" not in part                       # deprecated in 5.3, removed only in 6
+    # the Java 11 plan's File Change Manifest is not built from this table unless the requirements ask
+    assert "not work items" in part and "ONLY when the Requirements" in part
+
+
+def test_the_java11_audit_knows_the_hibernate_5_changes():
+    java11 = change_audit.LEGACY_MARKERS["java-8-to-11"]
+    names = {m.name for m in java11}
+    assert {"Spring ORM hibernate3/4 support", "HQL positional parameter"} <= names
+    hql = next(m for m in java11 if m.name == "HQL positional parameter")
+    line = 'session.createQuery("from C c where c.a = ?")'
+    assert change_audit._scan([line], [hql], context=line)
+    assert not change_audit._scan(['jdbc.query("select * from t where a = ?")'], [hql], context="JdbcTemplate")

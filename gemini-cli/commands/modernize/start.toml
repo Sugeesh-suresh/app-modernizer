@@ -1,4 +1,4 @@
-description = "Start a modernization run on this repository: /modernize:start <pattern> [incremental] [springboot] [junit] [context=<file>,...]"
+description = "Start a modernization run on this repository: /modernize:start <pattern> [incremental] [springboot] [junit] [context=<file>,...] [what you want, in your words]"
 prompt = """
 Start a Stella Modernizer run on the current repository. The user's arguments: `{{args}}`
 
@@ -8,6 +8,10 @@ Start a Stella Modernizer run on the current repository. The user's arguments: `
    For `java-8-to-25` only: "incremental" means migration_strategy=incremental (default bigbang), "springboot"
    means springboot_upgrade=true, "junit" means junit_upgrade=true. `context=` lists Swagger / OpenAPI / design
    files for the planner.
+   **Everything else the user wrote is their requirement — pass it as `requirements`, complete and in their
+   own words** (e.g. "migrate the backend to Java 11, keep the JSP WARs, Spring and Hibernate to compatible
+   versions"). Do not summarise it and do not add to it. The planner, the reviewer and the reporter receive it as
+   binding text; without it the pattern's defaults decide (for java-8-to-11: only what JDK 11 breaks moves).
 2. Remind the user, in one line, that the run changes this repository in place after they approve the plan
    (a baseline copy is kept), so a clean git working tree is recommended.
 3. Call `mcp_modernizer_start_run` with those arguments. If it says a run already exists, show its status

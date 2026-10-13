@@ -48,6 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--junit-upgrade", action="store_true")
     s.add_argument("--context-file", action="append", default=[])
     s.add_argument("--restart", action="store_true")
+    s.add_argument("--requirements", default="", help="what you asked for, in your words (binding for the plan)")
     sub.add_parser("status", help="show the run")
     sub.add_parser("next", help="advance to the next step that needs an agent or a person")
     c = sub.add_parser("complete", help="process the output saved for a step")
@@ -78,7 +79,8 @@ def main(argv: list[str] | None = None) -> int:
             print("\n".join([*P.PATTERNS, P.STACK_DISCOVERY]))
         elif args.cmd == "start":
             run = pipeline.start(resolve_workspace(args.workspace or None), args.pattern, args.strategy,
-                                 args.springboot_upgrade, args.junit_upgrade, args.context_file, args.restart)
+                                 args.springboot_upgrade, args.junit_upgrade, args.context_file, args.restart,
+                                 args.requirements)
             print(pipeline.summary(run))
         else:
             run = Run.load(args.workspace or None)

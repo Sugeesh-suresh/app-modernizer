@@ -45,5 +45,5 @@ Two more steps run in every migration and belong to shared skills: `code-review`
 |---|---|
 | `references/java11-blockers.md` | `re-module`, `re`, `plan` |
 | `references/java11-build-fixes.md` | `fix` |
-| `references/java11-code-patterns.md` | `modify`, `fix` |
+| `references/java11-code-patterns.md` | `plan` (framework moves only), `modify`, `fix` |
 | `references/java11-dependency-matrix.md` | `plan`, `modify`, `fix` |

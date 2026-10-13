@@ -60,10 +60,39 @@ ANALYST, PLANNER, CODER, VALIDATOR, REVIEWER, WRITER, CURATOR = (
 # Starting a run
 # ═════════════════════════════════════════════════════════════════════════════
 
+MAX_REQUIREMENTS_CHARS = 4000
+
+
+def requirements_block(run: Run, role: str) -> str:
+    """The person's requirements as a section of a step's query ("" when none were given). `role` says what
+    the step does with them: plan | review | report."""
+    text = (run.state.get("requirements") or "").strip()
+    if not text:
+        return ""
+    use = {
+        "plan": ("These are binding. Where they ask for something the skill's defaults would leave alone (a "
+                 "library to move, a version, a target), plan it: it is in scope, with a task and a manifest row "
+                 "for every file it touches, and the plan's Open Questions cover only what you cannot decide. "
+                 "Where they conflict with the scope fence, the approved-versions list or a rule the skill calls "
+                 "absolute, keep the rule and say in the plan's Open Questions exactly which requirement it blocks "
+                 "and why. Do not widen the work beyond them and the skill's own scope."),
+        "review": ("Check the result against each requirement as well as the plan: a requirement the migrated "
+                   "code does not meet is a finding, however well the plan was followed."),
+        "report": ("Add a section \"Requirements\" that states, for each requirement, whether the result meets it "
+                   "and the evidence (the file, the version, the build or test result) — or what is not met and why."),
+    }[role]
+    return f"## Requirements from the person who asked for this migration\n{text}\n\n{use}"
+
+
 def start(workspace: Path, pattern: str, migration_strategy: str = "bigbang", springboot_upgrade: bool = False,
-          junit_upgrade: bool = False, context_files: list[str] | None = None, restart: bool = False) -> Run:
+          junit_upgrade: bool = False, context_files: list[str] | None = None, restart: bool = False,
+          requirements: str = "") -> Run:
     """Snapshot the repository and set up the run — main.py's upload handler,
-    minus the upload: the repository is the one Gemini CLI has open."""
+    minus the upload: the repository is the one Gemini CLI has open.
+
+    `requirements` is what the person asked for, in their words ("move Spring and Hibernate to compatible
+    versions"). It goes to the planner, the reviewer and the reporter as binding text: the pattern's
+    skill decides how to migrate by default, the requirements decide what this person needs."""
     if pattern not in P.ALL_PATTERNS:
         raise RunError(f"Unknown pattern '{pattern}'. Choose one of: {', '.join(P.ALL_PATTERNS)}.")
     if Run.exists(workspace) and not restart:
@@ -74,6 +103,12 @@ def start(workspace: Path, pattern: str, migration_strategy: str = "bigbang", sp
     if pattern != P.JAVA_8_TO_25 and (migration_strategy != "bigbang" or junit_upgrade or springboot_upgrade):
         raise RunError("The incremental strategy and the JUnit / Spring Boot upgrade options apply to "
                        "java-8-to-25 only.")
+    requirements = "\n".join(line.rstrip() for line in (requirements or "").strip().splitlines())
+    if len(requirements) > MAX_REQUIREMENTS_CHARS:
+        raise RunError(f"The requirements are {len(requirements):,} characters; keep them under "
+                       f"{MAX_REQUIREMENTS_CHARS:,} (put long documents in context_files).")
+    if requirements and pattern == P.STACK_DISCOVERY:
+        raise RunError("Stack discovery documents what the repository contains, so requirements do not apply.")
     context = ""
     for name in context_files or []:
         path = (workspace / name).resolve() if not Path(name).is_absolute() else Path(name)
@@ -88,7 +123,7 @@ def start(workspace: Path, pattern: str, migration_strategy: str = "bigbang", sp
 
     run = Run.create(workspace, pattern, migration_strategy=migration_strategy,
                      springboot_upgrade=bool(springboot_upgrade), junit_upgrade=bool(junit_upgrade),
-                     additional_context=context)
+                     additional_context=context, requirements=requirements)
     ws = str(workspace)
     if pattern == P.STACK_DISCOVERY:
         from . import discovery
@@ -112,6 +147,8 @@ def summary(run: Run) -> str:
     if s["pattern"] == P.JAVA_8_TO_25:
         lines.append(f"- **Strategy:** {s.get('migration_strategy')} (Spring Boot upgrade: "
                      f"{s.get('springboot_upgrade')}, JUnit upgrade: {s.get('junit_upgrade')})")
+    if s.get("requirements"):
+        lines.append(f"- **Requirements:** {s['requirements'][:300]}" + (" …" if len(s["requirements"]) > 300 else ""))
     if s.get("bundle") and len(s["bundle"]) > 1:
         lines.append(f"- **Bundle:** {', '.join(s['bundle'])}")
     lines.append(f"- **Phase:** {s.get('phase')}")
@@ -439,6 +476,8 @@ def _phase_plan(run: Run, log: list[str]) -> dict | None:
     feedback = run.state.get("plan_feedback")
     parts = [skill_steps.cli_instruction(spec.plan_skill) + " to create the migration plan.",
              skill_manifest.planner_block(spec.roster)]
+    if requirements_block(run, "plan"):
+        parts.append(requirements_block(run, "plan"))
     if pattern == P.JAVA_8_TO_25:
         parts.append(f"## Migration Strategy\n{run.state.get('migration_strategy')}\n\n"
                      f"## JUnit Upgrade Requested\n{str(run.state.get('junit_upgrade')).lower()}\n\n"
@@ -934,6 +973,8 @@ def _review_step(run: Run, code: dict, spec: P.Pattern) -> dict:
     if len(_all_stages(code)) > 1:
         body += ("\n\nThis is the FULL final codebase after every incremental stage completed — review it as one "
                  "whole, not stage by stage.")
+    if requirements_block(run, "review"):
+        body += "\n\n" + requirements_block(run, "review")
     q = body + _files_block(run, [("Confirmed Migration Plan", run.doc_path("plan", pattern))]
                             + _stage_results_block(run, code)) + _output_rule(sid, "code review")
     return _sub(run, sid, REVIEWER, q, f"Independent code review ({spec.label})", "review", pattern=pattern)
@@ -951,6 +992,8 @@ def _report_step(run: Run, code: dict, spec: P.Pattern) -> dict:
     sid = f"report-{pattern}"
     body = (skill_steps.cli_instruction(spec.report_skill) + " to produce the final migration report. Fold the "
             "Independent Code Review's findings into a dedicated report section rather than ignoring them.")
+    if requirements_block(run, "report"):
+        body += "\n\n" + requirements_block(run, "report")
     if len(_all_stages(code)) > 1:
         body += " Cover every stage of this phased incremental migration."
     if java_preflight.module_for(pattern) and run.state.get("preflight_summary"):
