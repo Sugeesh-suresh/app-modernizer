@@ -560,13 +560,16 @@ def make_run_command(allowed_commands: set[str], env_factory=None, extra_args=No
     and relies solely on its deterministic `validate_*` tool instead).
 
     env_factory() returns the process environment (e.g. JAVA_HOME for a
-    specific JDK) — env_factory(tool_context) when it takes an argument, so
-    the environment can follow the session (a stage's JDK); extra_args(args) returns arguments to add to a Maven call
+    specific JDK) — env_factory(tool_context) when its first parameter is NAMED
+    `tool_context`, so the environment can follow the session (a stage's JDK). Any other
+    signature (java_env.build_env(java_home=None) has a parameter too) is called with
+    no argument. extra_args(args) returns arguments to add to a Maven call
     (e.g. `-s settings.xml`). Both default to the server's own environment.
     """
     allowed = set(allowed_commands)
     allowed_list = ", ".join(sorted(allowed))
-    env_takes_context = env_factory is not None and bool(inspect.signature(env_factory).parameters)
+    env_takes_context = env_factory is not None and \
+        next(iter(inspect.signature(env_factory).parameters), None) == "tool_context"
 
     def run_command(tool_context: ToolContext, command: str, subdir: str = ".") -> str:
         try:

@@ -155,3 +155,30 @@ def test_a_big_bang_boot_run_validates_the_packaged_jar(tmp_path, monkeypatch):
 
 def test_macos_archive_metadata_is_never_scanned():
     assert "__MACOSX" in EXCLUDED_DIRS
+
+
+def test_run_command_gives_the_tool_context_only_to_a_factory_that_names_it(tmp_path, monkeypatch):
+    """java_env.build_env(java_home=None) has a parameter too: the tool context must never become JAVA_HOME
+    (it crashed every Java 8 -> 11 ws_run_command call), while stage_env(tool_context) still gets it."""
+    import sys
+    from agents.shared import java_env
+    from agents.java_8_to_11 import tools as j11
+    from agents.java_8_to_25 import tools as j25
+    (tmp_path / "pom.xml").write_text("<project/>")
+    seen = {}
+
+    def spy(*args, **kwargs):
+        seen["env"] = kwargs.get("env")
+        return type("R", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(workspace_tools.subprocess, "run", spy)
+    monkeypatch.setattr(java_env.config, "MIGRATION_JAVA_HOME", "/opt/jdk-11")
+    monkeypatch.setattr(workspace_tools, "_resolve_executable", lambda exe, cwd: exe)
+    ctx = _Ctx(tmp_path)
+    for tools in (j11, j25):
+        seen.clear()
+        out = tools.run_command(ctx, "mvn -v")
+        assert out.startswith("exit_code=0"), (tools.__name__, out)
+    seen.clear()
+    assert j11.run_command(ctx, "mvn -v").startswith("exit_code=0")
+    assert seen["env"]["JAVA_HOME"] == "/opt/jdk-11"          # the configured JDK, not a repr of the context
