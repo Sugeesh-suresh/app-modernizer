@@ -16,6 +16,7 @@ v1 scope: only `java-8-to-25` has companion candidates wired up (see
 COMPANION_CANDIDATES). The dict shape is deliberately generic so more primaries can
 be added later without restructuring.
 """
+from . import fswalk
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -80,7 +81,7 @@ def scannable_files(root: Path, suffixes: set[str] | None = None) -> Iterator[Pa
     build-output directories.
     """
     allowed = _SCAN_SUFFIXES if suffixes is None else suffixes
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if not path.is_file():
             continue
         if EXCLUDED_DIRS & set(path.relative_to(root).parts):

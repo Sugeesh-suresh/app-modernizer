@@ -13,6 +13,7 @@ The rewrite runs only once every Mockito declared in the build is 2.1 or
 newer: `org.mockito.junit.MockitoJUnitRunner` does not exist in 1.x, so on a
 build still on Mockito 1 it would break every test class it touched.
 """
+from ..shared import fswalk
 import re
 from pathlib import Path, PurePosixPath
 
@@ -65,7 +66,7 @@ def rewrite_mockito_runner(workspace_dir: str) -> tuple[list[str], str]:
         return [], reason
     root = Path(workspace_dir)
     changed: list[str] = []
-    for path in sorted(root.rglob("*.java")):
+    for path in sorted(fswalk.files(root, "*.java")):
         rel = path.relative_to(root)
         if EXCLUDED_DIRS & set(rel.parts):
             continue

@@ -8,6 +8,7 @@ structure, statement terminators, and a scan for deprecated packages/
 syntax. The validator agent still does the judgment (reading the report
 and deciding pass/fail as JSON) — only the fact-gathering is deterministic.
 """
+from ..shared import fswalk
 import re
 
 from ..shared.adk_compat import ToolContext
@@ -59,7 +60,7 @@ def validate_sql_syntax(tool_context: ToolContext) -> str:
     lines: list[str] = []
     any_issue = False
 
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if not path.is_file() or path.suffix.lower() not in _SQL_SUFFIXES:
             continue
         rel_parts = path.relative_to(root).parts

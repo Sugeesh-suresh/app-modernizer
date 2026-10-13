@@ -1,4 +1,5 @@
 # Thymeleaf 2 → 3 (existing Thymeleaf templates)
+<!-- applies-to: thymeleaf, th:, layout:decorator, templates/ -->
 
 _For applications that already render with Thymeleaf. JSP views are converted with `jsp-to-thymeleaf.md`; this
 file covers templates written for Thymeleaf 2.1 (Spring Boot 1.5) that must run on Thymeleaf 3.0 (Spring Boot

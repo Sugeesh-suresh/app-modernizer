@@ -46,6 +46,7 @@ entry applies in the single pass.
 ---
 
 ## Readiness — the test stack is the safety net, so it goes first
+<!-- applies-to: junit, mockito, surefire, test stack, safety net, readiness, build modernis, build moderniz, openrewrite -->
 
 The regression suite is what proves the later stages did not change behaviour.
 Modernise it **before** touching production code, and keep the compiler release
@@ -64,6 +65,7 @@ and the test plugins.
 - Removing `cglib` from the test path is part of the Java 17 stage, not this one; here you only stop *Mockito* from pulling it in.
 
 ### JUnit 3 and JUnit 4 are deprecated — call them out every time
+<!-- applies-to: junit, testcase, mockito, jupiter, test stack -->
 
 JUnit 4 has been maintenance-only since 4.13.2 and gets no further feature
 releases; JUnit 3 (`junit.framework.TestCase`, `extends TestCase`, `test*`-named
@@ -81,6 +83,7 @@ So:
 - **When it was not requested:** do not rewrite test code. Keep `junit:junit` 4.13.2 (plus `junit-vintage-engine` wherever the JUnit Platform runs the suite) and record the remaining JUnit 3/4 classes as deprecated tech debt. If you must add a test, write it in JUnit Jupiter when `junit-jupiter` is already on the test classpath (it is with `spring-boot-starter-test`); otherwise follow the existing style and flag it.
 
 ### Dead build cruft to delete in the same stage
+<!-- applies-to: cruft, svn, cargo, dead build, maven-svn, plugin -->
 
 - `maven-svn-revision-number-plugin` and any `<scm>` pointing at an SVN URL: the repository is on Git, so the plugin either no-ops or fails against the checkout. If the pom already has `maven-gitlog-plugin` or `git-commit-id-maven-plugin`, the SVN plugin is redundant; delete both it and the stale `<scm>` block (or correct `<scm>` to the Git remote).
 - `cargo-maven2-plugin`: it embeds Jetty 6, which will not start on a modern JDK. Replace it with the current `jetty-maven-plugin` for local runs, or drop it entirely if the plan's Spring Boot stages will introduce `spring-boot:run`.
@@ -91,6 +94,7 @@ So:
 ## Java 8 → Java 17 LTS — the stage where the old stacks actually die
 
 ### Spring Framework 3.x / 4.x → 5.3.x (still `javax`)
+<!-- applies-to: spring, org.springframework -->
 
 **This is not optional and it is not deferrable to a Spring Boot stage.** Spring
 3.x/4.x bundle an ASM version that cannot read Java 9+ class files; on Java 17
@@ -122,6 +126,7 @@ the intermediate stage has to compile and run.
 - If the app has **no Spring Boot upgrade requested**, note in the summary that Spring 5.3 does not support Java 25 either: the Java 17 → 25 stage has to take the framework to Spring 6.x, which forces the Jakarta rename. Say so explicitly rather than leaving a Spring 5.3 app on a Java 25 release.
 
 ### Hibernate 3.x/4.x → 5.6.x
+<!-- applies-to: hibernate, orm.hibernate, sessionfactory -->
 
 - Bump `org.hibernate:hibernate-core` (the groupId only changes to `org.hibernate.orm` at 6.x — that is a later stage).
 - **`org.hibernate.Interceptor` implementations must be rewritten.** The SPI signatures changed across 4 → 5 → 6 (`onSave`/`onFlushDirty`/`preFlush` argument types, and `org.hibernate.type.Type` moved), so an audit interceptor written against 3.5 will not compile. Prefer replacing it with an event listener rather than chasing the SPI:
@@ -149,6 +154,7 @@ cancelled the write.
 - Replace `org.hibernate.connection.C3P0ConnectionProvider` / `hibernate.c3p0.*` settings with a container- or Spring-managed `DataSource` backed by **HikariCP**. Carry the pool settings over by meaning, not by name: `c3p0.max_size` → `maximumPoolSize`, `c3p0.min_size` → `minimumIdle`, `c3p0.timeout` (seconds) → `idleTimeout` (**milliseconds**), `c3p0.acquire_increment` has no equivalent and is dropped.
 
 ### Jackson 1 (`org.codehaus.jackson`) → Jackson 2 (`com.fasterxml.jackson`)
+<!-- applies-to: jackson, codehaus, objectmapper -->
 
 Jackson 1 has been unmaintained for a decade and its `ObjectMapper` configuration
 API was replaced wholesale in 2. Both the imports and the configuration calls
@@ -173,6 +179,7 @@ mixed annotations silently stop being honoured. Remove the Jackson 1 dependency
 once the last import is gone.
 
 ### Jackson 2 — the deprecated corners to clear on Java 17
+<!-- applies-to: jackson, afterburner, objectmapper -->
 
 Jackson 2 itself is maintained, but an 8-era Jackson 2 setup usually is not. Call
 each of these out and fix it in this stage:
@@ -189,12 +196,14 @@ and is covered in the springboot-boot4 step's (`references/steps/springboot-boot
 `references/boot4-dependency-cleanup.md`. Do not pull it forward.
 
 ### cglib, javassist and AspectJ
+<!-- applies-to: cglib, javassist, aspectj, asm -->
 
 - **Delete** explicit `cglib`, `cglib-nodep` and `javassist` dependencies. Spring 5+ ships a repackaged cglib inside `spring-core`, and Hibernate 5.3+ proxies with ByteBuddy — the external artifacts are stale duplicates that cannot parse Java 17+ class files and blow up at runtime with `IllegalArgumentException: Unsupported class file major version` or, once JDK 17 enforces strong encapsulation, `InaccessibleObjectException`.
 - Bump `org.aspectj:aspectjweaver` / `aspectjrt` to the newest 1.9.x (1.9.20 is the floor for Java 21; Java 25 needs the newest available). An old weaver fails the same way, usually at context startup rather than at compile time.
 - After removing them, grep for direct `net.sf.cglib.*` / `javassist.*` imports in application code. Direct use is rare; if it exists, it is a genuine rewrite and must be called out in the summary, not silently deleted.
 
 ### Ehcache 2.x → 3.x (an API rewrite, not a version bump)
+<!-- applies-to: ehcache, net.sf.ehcache, jcache, cache -->
 
 Ehcache 2.x is **end-of-life** — unmaintained and not Jakarta-ready. Call it out
 as deprecated even where the code still appears to work. Ehcache 3 is a
@@ -230,6 +239,7 @@ the local cache working.
 - **Ehcache 3 parses `ehcache.xml` with JAXB.** Before the Spring Boot 3.x stage that needs the `javax.xml.bind` dependencies above; from that stage on use the `jakarta` classifier (`org.ehcache:ehcache:3.10.x:jakarta`).
 
 ### log4j 1.2.x → SLF4J + Logback
+<!-- applies-to: log4j, slf4j, logback, logging -->
 
 log4j 1.2 is end-of-life and unmaintained. Route logging through the SLF4J API
 so the backend stays swappable (and so a later Spring Boot stage's
@@ -259,6 +269,7 @@ private static final Logger LOG = LoggerFactory.getLogger(ETagContentFilter.clas
 - **`javax.xml.bind` and friends.** JAXB, JAX-WS, JAF and CORBA left the JDK in 11. Grep the whole codebase, not just the files the task lists — a single `javax.xml.bind.DatatypeConverter` call is enough to break the build. Add `javax.xml.bind:jaxb-api` + `org.glassfish.jaxb:jaxb-runtime` 2.3.x here (the `jakarta.xml.bind` rename belongs to the Spring Boot 3.x stage).
 
 ### google-collections and old Guava → the newest Guava
+<!-- applies-to: guava, google-collections, google collections, com.google.common, com.google.collect -->
 
 `com.google.collections:google-collections` is Guava's abandoned predecessor
 (last release 1.0, 2009). It ships the *same* `com.google.common.*` packages as
@@ -300,6 +311,7 @@ release, which is the point of the upgrade:
 ---
 
 ## Java 17 → Java 25 LTS — mostly verification
+<!-- applies-to: java 25, release 25, jdk 25, → java 25, -> java 25, to 25, java 17 → java 25, verification -->
 
 If the Java 17 stage was done properly this stage has little library work left.
 What it must actively verify:

@@ -20,6 +20,7 @@ Pass 1 of stack discovery. Three kinds of fact, each with the file it came from:
 Nothing here decides what a stack is; stack_detector maps these facts to
 stacks, and the dependency mapper agent reviews and extends that mapping.
 """
+from . import fswalk
 import ast
 import json
 import re
@@ -77,7 +78,7 @@ _GEM = re.compile(r"""^\s*gem\s+['"]([^'"]+)['"](?:\s*,\s*['"]([^'"]+)['"])?""",
 
 def _files(root: Path):
     count = 0
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if count >= _MAX_FILES:
             return
         if not path.is_file():

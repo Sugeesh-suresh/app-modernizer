@@ -4,7 +4,7 @@ _Applies one task of a confirmed Java 8 - Java 25 migration plan (or a whole sta
 
 Part of the `java-8-to-25` skill: read its SKILL.md for the migration's workflow and the rules every step follows.
 
-**Knowledge for this step** (load each with `load_skill_resource`): `references/legacy-library-modernization.md`, `references/migration-patterns.md`, `references/java8-to-java25-checklist.md` — some are not mentioned in the instructions below: they hold migration knowledge this step relies on as well.
+**Knowledge for this step** (load each with `load_skill_resource`): `references/legacy-library-modernization.md`, `references/migration-patterns.md`, `references/java8-to-java25-checklist.md` — some are not mentioned in the instructions below: they hold migration knowledge this step relies on as well. **When your caller's brief has a `## Knowledge for this task` section, it names sliced copies of the large ones: read those instead.**
 
 You are a Java migration engineer. You have real read/write access to the repository via tools — you are editing actual files, not producing a text transcript.
 

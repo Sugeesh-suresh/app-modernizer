@@ -160,6 +160,32 @@ skills improve, and every later run on this machine reads them. Set `MODERNIZER_
 `~/.modernizer/.env` for trial runs, or where several people share one installation. An extension update
 replaces the files (and what they learned).
 
+### Tokens and time
+
+What a run spends is mostly input tokens: every modify, fix and review subagent starts with an empty context and
+reads its skill. The pipeline keeps that small without taking knowledge away:
+
+- **Sliced knowledge.** The big knowledge files of the Java 8 → 25 and Java 8 → 11 skills (library guides, the
+  checklist, the code patterns) are tagged section by section with the terms they apply to. A modify or fix brief
+  names a per-task copy holding only the sections whose subject appears in the task's text (or, when the text names
+  nothing, in its files) — a Jackson task reads the Jackson section, not Ehcache, log4j and Guava too. Each copy lists
+  what it left out, and the subagent reads an omitted section from the full file when its task needs it. Measured on
+  a 22-step Java 8 → 25 incremental run: a modify subagent reads 27–42k characters of skill instead of 58k, a fix
+  subagent 37k instead of 74k.
+- **A fix reads its stage.** An incremental run's fix step gets that stage's part of the plan, not the whole plan.
+- **Scans skip build output.** `node_modules`, `target`, `build`, `.git` and the like are never walked (a repository
+  with 50,000 such files used to cost about 2 s per scan; now about 0.1 s), so starting a run, the companion
+  detection, the audit and the change list follow the size of your sources.
+- **Batches run together** (`DISCOVERY_CONCURRENCY`) and **long deterministic work reports progress** (below).
+
+Set `KNOWLEDGE_SLICING=off` to give every subagent the full files, as before.
+
+**Tagging a knowledge file** (skill authors): put `<!-- applies-to: term, term -->` on the line under a `##` / `###`
+heading. A section without a tag always stays; a tagged one stays when any term (case-insensitive substring) is in the
+task's text; a tag on a `##` covers the `###` below it unless they have their own; a tag before the first heading
+covers the whole file (it is skipped, with a pointer, when its subject is absent). Use specific terms
+(`org.codehaus.jackson`, `ehcache`) — a term like `version` matches every task and keeps the section for all.
+
 ### Progress while the pipeline works
 
 Some steps need no model and can still take minutes: the Java preflight builds the code as uploaded with

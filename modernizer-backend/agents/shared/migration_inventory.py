@@ -22,6 +22,7 @@ What an inventory does not do: infer business intent, or decide whether a
 match is live code or a comment. The document says so; the planner and the
 modifier (which reads every file before changing it) make those calls.
 """
+from . import fswalk
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -400,7 +401,7 @@ INVENTORY_ONLY = frozenset({"java-8-to-25", "solr-4-to-9", "oracle-19c-to-23ai"}
 def scan(workspace_dir: str, suffixes: frozenset) -> Scan:
     root = Path(workspace_dir)
     files, texts, skipped = [], {}, []
-    for path in root.rglob("*"):
+    for path in fswalk.files(root):
         if not path.is_file():
             continue
         rel = path.relative_to(root)

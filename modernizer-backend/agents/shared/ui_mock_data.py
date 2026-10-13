@@ -24,6 +24,7 @@ Values follow fixed rules from the name and type: `email` → user1@example.com,
 dates → 2026-01-15, prices → 49.99, `is…`/`has…` → true, other text →
 "Sample Field Name 1".
 """
+from . import fswalk
 import html.parser
 import re
 from dataclasses import dataclass, field
@@ -102,7 +103,7 @@ def _decap(name: str) -> str:
 def java_files(workspace_dir: str) -> list[Path]:
     root = Path(workspace_dir)
     out = []
-    for path in sorted(root.rglob("*.java")):
+    for path in sorted(fswalk.files(root, "*.java")):
         rel = path.relative_to(root).as_posix()
         if EXCLUDED_DIRS & set(Path(rel).parts) or _TEST_PATH.search(rel):
             continue

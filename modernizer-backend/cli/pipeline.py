@@ -34,7 +34,7 @@ from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11.fence_rules import FENCE_RULES, STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.java_8_to_25.stages import COMPANIONS_AFTER_STAGE, INCREMENTAL_STAGES, incremental_stages
 from agents.shared import (
-    approved_versions, progress, callbacks, change_audit, companion_detector, dependency_graph, diffing, java_preflight,
+    approved_versions, knowledge_slice, progress, callbacks, change_audit, companion_detector, dependency_graph, diffing, java_preflight,
     learned_fixes, migration_inventory, plan_contract, plan_paths, plan_tasks, re_units, scope_fence, skill_manifest,
     skill_steps,
 )
@@ -693,6 +693,60 @@ def _stage_label(code: dict, stage: dict) -> str:
     return ""
 
 
+def sliced_knowledge(run: Run, pattern: str, step_name: str, sid: str, match_text: str,
+                     files: list[str] | None = None, stage_title: str = "") -> str:
+    """The brief's paragraph pointing a subagent at per-task slices of the step's large knowledge files
+    (agents/shared/knowledge_slice.py), "" when the step has none worth slicing or there is nothing to match
+    against. Matched against: the stage title, `match_text` (the task's text, or a failing build's output) and
+    the ORIGINAL contents of `files` — what the task has to change is what the repository had."""
+    if not config.KNOWLEDGE_SLICING:
+        return ""
+    skill, step = skill_steps.parse(step_name)
+    step_file = skill_steps.file(step_name)
+    if not step_file.is_file():
+        return ""
+    line = next((l for l in step_file.read_text(encoding="utf-8").splitlines()
+                 if l.startswith("**Knowledge for this step**")), "")
+    base = Path(run.state.get("baseline_dir") or "")
+    text_haystack = "\n".join([stage_title, match_text or ""])
+    # What the task SAYS it does decides first; the original contents of its files only when its text names
+    # nothing the knowledge file is tagged with (a file that mentions Spring is not a Spring task).
+    file_text = []
+    for rel in (files or [])[:40]:
+        for root in (base, run.workspace):
+            path = root / rel
+            if path.is_file():
+                try:
+                    file_text.append(path.read_text(encoding="utf-8", errors="replace")[:60_000])
+                except OSError:
+                    pass
+                break
+    if not text_haystack.strip() or (not files and len(match_text or "") < 40):
+        return ""
+    joined = text_haystack
+    made = []
+    for rel in re.findall(r"`(references/[\w./-]+\.md)`", line):
+        src = skill_steps.SKILLS_DIR / skill / rel
+        if not src.is_file() or not knowledge_slice.tagged(text := src.read_text(encoding="utf-8")):
+            continue
+        sliced, kept, omitted = knowledge_slice.slice_text(text, joined, f"references/{Path(rel).name}")
+        if kept <= knowledge_slice.core_count(text) and file_text:        # the text named nothing: use the files
+            sliced, kept, omitted = knowledge_slice.slice_text(text, joined + "\n" + "\n".join(file_text),
+                                                               f"references/{Path(rel).name}")
+        if not omitted:
+            continue
+        out = run.result_path(f"{pattern}/knowledge/{sid}--{Path(rel).name}")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(sliced, encoding="utf-8")
+        made.append((rel, run.rel(out), len(text), len(sliced)))
+    if not made:
+        return ""
+    names = "; ".join(f"read `{o}` INSTEAD of loading `{r}`" for r, o, _, _ in made)
+    return ("## Knowledge for this task\nThe step file lists large knowledge files. For this task they were cut down to "
+            f"the sections that apply to it: {names}. Each copy lists what it left out; if your task needs an omitted "
+            "section, read it from the full file. Load the step's other knowledge files as usual.")
+
+
 def _modify_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
     pattern = code["pattern"]
     unit = stage["units"][code["ui"]]
@@ -768,6 +822,11 @@ def _modify_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
     elif unit.get("files") and pattern == P.JAVA_8_TO_11:
         paths = task_paths(unit["files"], workspace_paths(str(run.workspace)))
         code["digests"] = file_digests(str(run.workspace), paths)
+    if pattern in (P.JAVA_8_TO_25, P.JAVA_8_TO_11):
+        knowledge = sliced_knowledge(run, pattern, spec.modify_skills[0], sid, unit["body"], unit.get("files"),
+                                     stage.get("title", ""))
+        if knowledge:
+            body += "\n\n" + knowledge
     q = body + _files_block(run, plan_file) + _output_rule(
         sid, "modify result (what you changed, file by file; a `Files skipped` list with the reason for each "
              "listed file you did not change; anything refused)")
@@ -912,10 +971,28 @@ def _fix_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
     if pattern == P.JAVA_8_TO_11:
         body += "\n\n" + FENCE_RULES
     st_idx = stage["idx"] if suffix else None
+    if pattern in (P.JAVA_8_TO_25, P.JAVA_8_TO_11):
+        report = _read(_results(run, pattern, _build_result_name(code, stage)))
+        knowledge = sliced_knowledge(run, pattern, spec.fix_skill, sid, report,
+                                     re.findall(r"[\w./-]+\.(?:java|xml|properties|gradle|jsp)\b", report),
+                                     stage.get("title", "") if suffix else "")
+        if knowledge:
+            body += "\n\n" + knowledge
     body += "\n\n## Approved Versions (your organisation's list — use exactly these)\n" + _approved(run, pattern, st_idx)
+    plan_item = ("Confirmed Migration Plan", run.doc_path("plan", pattern))
+    if suffix and pattern == P.JAVA_8_TO_25:
+        # An incremental fix repairs ONE stage: that stage's section is what it needs (the whole plan, every
+        # stage's tasks, is the biggest thing it would otherwise re-read on each pass).
+        section = plan_tasks.stage_section(run.read_doc("plan", pattern), stage.get("title", ""))
+        if section.strip():
+            part = _results(run, pattern, f"plan_{suffix}.md")
+            part.write_text(f"# Plan — the '{stage['title']}' stage (an extract of the confirmed plan)\n\n{section}\n\n"
+                            f"---\nThe full plan is `{run.rel(run.doc_path('plan', pattern))}`; read it only if the "
+                            "errors point at work another stage owns.\n", encoding="utf-8")
+            plan_item = (f"Confirmed Migration Plan — this stage's section", part)
     q = body + _files_block(run, [("Validation Report (errors to fix)",
                                    _results(run, pattern, _build_result_name(code, stage))),
-                                  ("Confirmed Migration Plan", run.doc_path("plan", pattern))]) \
+                                  plan_item]) \
         + _output_rule(sid, "fix result, ending with the skill's `## Lessons` block")
     return _sub(run, sid, CODER, q, f"Fix ({spec.label}) — pass {code['iter']}", "fix", pattern=pattern)
 

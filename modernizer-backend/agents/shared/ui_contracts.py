@@ -31,6 +31,7 @@ from one place:
 URLs built at run time keep their unknown parts as `{}`. A call the scan
 cannot tie to a handler is listed with the reason — nothing is guessed.
 """
+from . import fswalk
 import html.parser
 import json
 import re
@@ -1242,7 +1243,7 @@ class _Java:
         self.exception_status: dict[str, str] = {}
         if "java" not in _PARSERS:
             return
-        for path in sorted(self.root.rglob("*.java")):
+        for path in sorted(fswalk.files(self.root, "*.java")):
             rel = path.relative_to(self.root).as_posix()
             if EXCLUDED_DIRS & set(Path(rel).parts) or _TEST_PATH.search(rel):
                 continue
@@ -1751,7 +1752,7 @@ def _framework_paths(root: Path) -> dict[str, str]:
     """Paths the server framework handles, not application code: the servlet container's
     form login and the Spring Security login / logout the configuration switches on."""
     paths = {"/j_security_check": "the servlet container's form login (j_security_check) — no application handler"}
-    for path in sorted(root.rglob("*.java")):
+    for path in sorted(fswalk.files(root, "*.java")):
         rel = path.relative_to(root).as_posix()
         if EXCLUDED_DIRS & set(Path(rel).parts) or _TEST_PATH.search(rel):
             continue

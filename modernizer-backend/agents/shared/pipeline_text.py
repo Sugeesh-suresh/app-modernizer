@@ -8,6 +8,7 @@ They used to live in main.py, which imports FastAPI and Google ADK. Here they
 are shared by the web pipeline (main.py imports them under their old names) and
 the Gemini CLI path (cli/), which runs without either.
 """
+from . import fswalk
 import json
 import os
 import re
@@ -26,7 +27,7 @@ def workspace_paths(workspace_dir: str) -> list[str]:
     root = Path(workspace_dir)
     if not workspace_dir or not root.exists():
         return []
-    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*")
+    return sorted(p.relative_to(root).as_posix() for p in fswalk.files(root)
                   if p.is_file() and not (dependency_graph.EXCLUDED_DIRS & set(p.relative_to(root).parts)))
 
 
@@ -516,7 +517,7 @@ def stack_files(workspace_dir: str, stack: dict) -> list[str] | None:
     if not root.is_dir():
         return None
     files = []
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if not path.is_file() or path.suffix.lower() not in suffixes:
             continue
         rel = path.relative_to(root).as_posix()

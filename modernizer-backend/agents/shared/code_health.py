@@ -25,6 +25,7 @@ deliverable, with an empty review column for the decision.
 """
 from __future__ import annotations
 
+from . import fswalk
 import re
 from pathlib import Path
 
@@ -60,7 +61,7 @@ _REPO_METHOD = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:public\s+|default\s
 
 def _files(root: Path) -> list[tuple[str, str]]:
     out = []
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if not path.is_file() or path.suffix.lower() not in _TEXT:
             continue
         rel = path.relative_to(root).as_posix()

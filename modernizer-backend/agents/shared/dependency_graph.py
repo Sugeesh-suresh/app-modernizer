@@ -15,6 +15,7 @@ which the frontend shows verbatim (see `BRDReview.tsx`'s `MarkdownWithDiagrams`)
 This is intentionally simple, static analysis — a best-effort first pass
 for sequencing the migration, not a full build-system dependency resolver.
 """
+from . import fswalk
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -46,7 +47,7 @@ class DependencyGraph(TypedDict):
 
 def _iter_files(root: Path, suffixes: set[str]) -> list[Path]:
     out: list[Path] = []
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if not path.is_file():
             continue
         if EXCLUDED_DIRS & set(path.relative_to(root).parts):

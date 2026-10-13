@@ -15,6 +15,7 @@ key, credential, passphrase) or a value that is encrypted or a secret reference
 (`ENC(...)`, `sm://`, `${vault:...}`) is shown as `[REDACTED]` / `[encrypted]`
 / `[secret reference]`.
 """
+from . import fswalk
 import hashlib
 import re
 from pathlib import Path, PurePosixPath
@@ -93,7 +94,7 @@ def scan(workspace_dir: str) -> list[dict]:
     if not root.is_dir():
         return []
     folders: dict[str, dict] = {}
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         m = _FILE.match(path.name)
         if not m or not path.is_file():
             continue

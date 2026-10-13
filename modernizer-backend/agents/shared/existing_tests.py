@@ -16,6 +16,7 @@ test it declares, by name:
 The table goes into the Existing Test Inventory as it is, so the inventory is
 complete by construction rather than by how much an agent wrote.
 """
+from . import fswalk
 import re
 from pathlib import Path
 
@@ -70,7 +71,7 @@ _FRAMEWORKS = [
 
 
 def _files(root: Path):
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()

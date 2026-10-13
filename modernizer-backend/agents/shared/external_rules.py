@@ -25,6 +25,7 @@ repository does not contain, so the gap is visible instead of assumed away:
 Every row cites where the code refers to it. The patterns are heuristics over
 the source text; the section says so.
 """
+from . import fswalk
 import re
 from pathlib import Path
 
@@ -93,7 +94,7 @@ _KEYWORDS = {"select", "where", "set", "values", "dual", "the", "a", "an", "as",
 
 
 def _files(root: Path):
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if not path.is_file() or path.suffix.lower() not in _TEXT_SUFFIXES:
             continue
         rel = path.relative_to(root).as_posix()

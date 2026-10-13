@@ -49,6 +49,7 @@ JavaScript.
 Methods whose only decisions are null checks, and accessors/equals/hashCode/
 toString, are classified `auto-technical` here and never sent to the model.
 """
+from . import fswalk
 import ast
 import re
 from dataclasses import dataclass, field
@@ -980,7 +981,7 @@ def scan(workspace_dir: str, max_lines: int = 250) -> Scan:
         return Scan([], {}, {}, [], [], TREE_SITTER_ERROR)
     # Constraint annotations the repository declares itself count as validation everywhere.
     _CUSTOM_CONSTRAINTS.clear()
-    for path in sorted(root.rglob("*.java")):
+    for path in sorted(fswalk.files(root, "*.java")):
         if EXCLUDED_DIRS & set(path.relative_to(root).parts):
             continue
         try:
@@ -990,7 +991,7 @@ def scan(workspace_dir: str, max_lines: int = 250) -> Scan:
         if "@interface" in text and "Constraint" in text:
             _CUSTOM_CONSTRAINTS.update(_CONSTRAINT_DECL.findall(text))
     templates: dict[str, str] = {}                  # Thymeleaf template -> its text, for fragment links
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()

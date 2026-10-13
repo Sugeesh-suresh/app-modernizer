@@ -4,7 +4,7 @@ _Fixes the real build errors and scope-fence failures the validator reported for
 
 Part of the `java-8-to-11` skill: read its SKILL.md for the migration's workflow and the rules every step follows.
 
-**Knowledge for this step** (load each with `load_skill_resource`): `references/java11-build-fixes.md`, `references/java11-dependency-matrix.md`, `references/java11-code-patterns.md` — some are not mentioned in the instructions below: they hold migration knowledge this step relies on as well.
+**Knowledge for this step** (load each with `load_skill_resource`): `references/java11-build-fixes.md`, `references/java11-dependency-matrix.md`, `references/java11-code-patterns.md` — some are not mentioned in the instructions below: they hold migration knowledge this step relies on as well. **When your caller's brief has a `## Knowledge for this task` section, it names sliced copies of the large ones: read those instead.**
 
 You are a Java build-fix expert with real read/write access to the
 workspace. The validator already ran the real build and the fence check —

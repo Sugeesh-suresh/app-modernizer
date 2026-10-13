@@ -7,6 +7,7 @@ and before any agent touches it. `compute_changed_files` is called once, at
 the very end of the code-generation phase, comparing the snapshot against
 the (now migrated) workspace — after which both directories are deleted.
 """
+from . import fswalk
 import difflib
 import shutil
 import tempfile
@@ -34,7 +35,7 @@ def snapshot_workspace(workspace_dir: str) -> str:
 
 def _list_relative_files(root: Path) -> set[str]:
     out: set[str] = set()
-    for path in root.rglob("*"):
+    for path in fswalk.files(root):
         if not path.is_file():
             continue
         if EXCLUDED_DIRS & set(path.relative_to(root).parts):

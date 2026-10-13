@@ -28,6 +28,7 @@ in full. The agents' instructions are the `layer-*` skills.
 """
 from __future__ import annotations
 
+from . import fswalk
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -131,7 +132,7 @@ def signals_for(workspace_dir: str, inventory: dict | None = None, ui_result: di
     root = Path(workspace_dir)
     if root.is_dir():
         ui_suffixes = {".jsp", ".jspf", ".html", ".htm", ".vue", ".jsx", ".tsx", ".hbs"}
-        out["ui_files"] = sum(1 for p in root.rglob("*") if p.is_file() and p.suffix.lower() in ui_suffixes
+        out["ui_files"] = sum(1 for p in fswalk.files(root) if p.is_file() and p.suffix.lower() in ui_suffixes
                               and not EXCLUDED_DIRS & set(p.relative_to(root).parts))
     return out
 
@@ -400,7 +401,7 @@ def db_batches(database: dict, workspace_dir: str, max_objects: int = 15) -> lis
     # A file or bean name (`xsd/accounts.xsd`, `/accounts/`) is not a use of the table.
     pattern = re.compile(r"(?<![/\w.-])(" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
                          + r")(?![\w-]|\.[a-z]{2,4}\b|/)", re.I)
-    for path in sorted(root.rglob("*")) if root.is_dir() else []:
+    for path in sorted(fswalk.files(root)) if root.is_dir() else []:
         if not path.is_file() or path.suffix.lower() not in {".java", ".kt", ".groovy", ".xml", ".sql", ".pls",
                                                              ".pks", ".pkb", ".js", ".ts", ".py", ".cs"}:
             continue

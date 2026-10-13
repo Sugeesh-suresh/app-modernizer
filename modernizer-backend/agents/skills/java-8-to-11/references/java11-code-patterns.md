@@ -47,6 +47,7 @@ A property such as `<java.version>1.8</java.version>` that the compiler reads
 through `${java.version}` is changed at the property: `<java.version>11</java.version>`.
 
 ## maven-war-plugin — version only
+<!-- applies-to: maven-war-plugin, war plugin, packaging, war -->
 
 ```xml
 <!-- before -->
@@ -71,6 +72,7 @@ through `${java.version}` is changed at the property: `<java.version>11</java.ve
 ```
 
 ## Removed Java EE module, WAR on WildFly
+<!-- applies-to: javax.xml.bind, jaxb, jax-ws, jaxws, javax.activation, javax.annotation, javax.transaction, corba, java ee, soap, wildfly, provided -->
 
 ```xml
 <dependency>
@@ -99,6 +101,7 @@ Tests that marshal outside the container additionally need:
 ```
 
 ## Enforcer rule
+<!-- applies-to: enforcer -->
 
 ```xml
 <!-- before --> <requireJavaVersion><version>[1.8,1.9)</version></requireJavaVersion>
@@ -106,6 +109,7 @@ Tests that marshal outside the container additionally need:
 ```
 
 ## Gradle
+<!-- applies-to: gradle -->
 
 ```groovy
 // before
@@ -123,6 +127,7 @@ or, where toolchains are not used, `sourceCompatibility = 11` /
 `distributionUrl` to a Gradle that runs on JDK 11 (5.0+).
 
 ## sun.misc.BASE64Encoder / BASE64Decoder
+<!-- applies-to: base64, sun.misc -->
 
 `BASE64Encoder.encode` wraps lines at 76 characters using the platform line
 separator (`\n` on Linux); the MIME encoder wraps at 76 with `\r\n`. When the exact bytes matter (stored values,
@@ -150,6 +155,7 @@ unreachable — narrow that `try` rather than deleting handling other calls
 still need.
 
 ## sun.reflect.Reflection.getCallerClass
+<!-- applies-to: sun.reflect, getcallerclass, reflection -->
 
 ```java
 // before
@@ -164,6 +170,7 @@ Check the depth: `getCallerClass(2)` and `StackWalker.getCallerClass()` both
 mean "the caller of the method that is asking" — verify against the call site.
 
 ## System class loader is no longer a URLClassLoader
+<!-- applies-to: classloader, urlclassloader, addurl, system class loader -->
 
 ```java
 // before — ClassCastException on Java 9+
@@ -223,6 +230,7 @@ callers, so a human decides (a `-cp` entry, or a `Class-Path` manifest
 entry, keeps it working without code).
 
 ## Java version parsing
+<!-- applies-to: java.version, version parsing, java.specification, 1.8 -->
 
 ```java
 // before — "11.0.2".substring(2, 3) is "0"
@@ -233,6 +241,7 @@ int major = Runtime.version().feature();
 ```
 
 ## `_` as an identifier
+<!-- applies-to: identifier, underscore -->
 
 ```java
 // before
@@ -242,6 +251,7 @@ catch (Exception ignored) { }
 ```
 
 ## Mockito 1 → 2 in test sources
+<!-- applies-to: mockito, powermock -->
 
 ```java
 // before
@@ -273,6 +283,7 @@ failures — `MockitoJUnitRunner.Silent` keeps 1.x behaviour when a task says
 the test's meaning must not change.
 
 ## Spring 4 → 5 and Hibernate 4 → 5 (when the requirements ask for them)
+<!-- applies-to: spring, hibernate, orm.hibernate, hql, requirements -->
 
 Move `spring.version` to 5.3.39 and `hibernate.version` to 5.6.15.Final in the parent POM's properties (the modules
 inherit them) — both stay on `javax`, never `jakarta`. The code changes that follow:

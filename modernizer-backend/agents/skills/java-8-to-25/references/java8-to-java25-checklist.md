@@ -6,6 +6,7 @@ two JDK stages (8→17, 17→25) line up with the JDK's own LTS boundaries; the
 "Hop" column below says which JDK stage each item belongs to.
 
 ## Language Features Introduced Along the Way
+<!-- applies-to: record, sealed, text block, pattern matching, virtual thread, switch expression, language feature -->
 
 | Feature | Introduced | Hop | Notes |
 |---|---|---|---|
@@ -27,6 +28,7 @@ two JDK stages (8→17, 17→25) line up with the JDK's own LTS boundaries; the
 | Structured concurrency, scoped values | 21+ (preview) | 17→25 | Optional — only adopt if the codebase already leans on `ExecutorService` fan-out/fan-in patterns |
 
 ## Deprecated / Removed Since Java 8
+<!-- applies-to: removed api, security manager, nashorn, finalize, sun., javax.xml.bind, thread.stop, unsafe, applet, add-opens, illegal-access, strong encapsulation -->
 
 | API | Status | Hop | Replacement |
 |---|---|---|---|
@@ -41,6 +43,7 @@ two JDK stages (8→17, 17→25) line up with the JDK's own LTS boundaries; the
 | `javax.*` Jakarta EE namespaces | Renamed at Jakarta EE 9 | gated by `{springboot_upgrade}` | `jakarta.*` |
 
 ## Third-Party Library Compatibility (target: Java 25)
+<!-- applies-to: lombok, mockito, guava, jackson, spring, hibernate, ehcache, log4j, third-party, compatib -->
 
 | Library | Java 8-era version | Java 25-compatible version |
 |---|---|---|
@@ -85,6 +88,7 @@ the files or test-class count, even when a toggle keeps them out of scope:
 - **google-collections** (`com.google.collections:google-collections`, abandoned) and any Guava older than the newest release.
 
 ## JUnit 3/4 → JUnit Jupiter Migration (only when `{junit_upgrade}` is true)
+<!-- applies-to: junit, jupiter, testcase, mockito, test -->
 - JUnit 3: drop `extends TestCase`; annotate `test*` methods with `@Test`; `setUp()`/`tearDown()` → `@BeforeEach`/`@AfterEach`
 - `org.junit.Test` → `org.junit.jupiter.api.Test`; `@Before`/`@After` → `@BeforeEach`/`@AfterEach`; `@BeforeClass`/`@AfterClass` → `@BeforeAll`/`@AfterAll` (static)
 - `@RunWith(SpringRunner.class)` → `@ExtendWith(SpringExtension.class)` (or just `@SpringBootTest`, which already includes it)
@@ -94,6 +98,7 @@ the files or test-class count, even when a toggle keeps them out of scope:
 - Add `junit-jupiter` (and `junit-vintage-engine` only as a temporary bridge for tests not yet migrated — it is itself deprecated in JUnit 6) to the dependency set, and remove `junit:junit` and the Vintage engine once the last JUnit 3/4 test is converted
 
 ## Spring Boot Upgrade (only when `{springboot_upgrade}` is true)
+<!-- applies-to: spring boot, springboot, spring-boot, boot 2, boot 3, boot 4, executable jar, boot4 -->
 
 **One target for both strategies:** the newest Spring Boot 4.x (Spring Framework 7, Jakarta EE 11), deployed as an **executable JAR** on an embedded Tomcat — never a WAR. It is defined by the springboot-boot4 step (`references/steps/springboot-boot4.md`):
 - Spring Boot 4 parent/BOM and starters; every conflicting legacy library removed (explicit Spring versions, servlet API, JSTL, commons-dbcp/c3p0, Jackson 2 databind, old Hibernate / `javax` jars, extra logging bindings, `maven-war-plugin` / `jetty-maven-plugin`)
@@ -110,11 +115,13 @@ the files or test-class count, even when a toggle keeps them out of scope:
 Never rename Java SE `javax.*` packages (`javax.sql`, `javax.naming`, `javax.crypto`, JAXP `javax.xml.parsers`/`transform`, …) — they are part of the JDK and have no `jakarta.*` equivalent.
 
 ## Build Tooling
+<!-- applies-to: build system, build tool, build.gradle, plugin, compiler, toolchain, release level, modernize build, modernise build -->
 - Maven: bump `<maven.compiler.release>` to the current stage's target JDK (with `spring-boot-starter-parent`, set `<java.version>` instead); update `maven-compiler-plugin` to a version that supports it
 - Gradle: `options.release` / toolchain `languageVersion` = the current stage's target JDK; update the Gradle wrapper to a version with the target JDK's toolchain support (9.1+ for Java 25)
 - CI: update the pinned JDK distribution in pipeline config
 
 ## Plain Spring 6 (no Spring Boot) — the Jakarta artifacts of a WAR
+<!-- applies-to: jakarta, javax, spring 6, jstl, servlet, jsp, web.xml, webmvcconfigureradapter, namespace -->
 
 When `{springboot_upgrade}` is false, the Java 25 stage still moves Spring 5.3 → 6.x, which is Jakarta EE 9+ only.
 The `javax` → `jakarta` rename (see the stage guardrail) also changes these artifacts:

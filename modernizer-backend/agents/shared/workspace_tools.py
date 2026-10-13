@@ -18,6 +18,7 @@ agnostic and used as-is. `run_command` is pattern-specific (a Java pattern
 allows `mvn`/`gradle`, others allow nothing or a different toolchain) so
 it is built per pattern via `make_run_command`.
 """
+from . import fswalk
 import fnmatch
 import inspect
 import json
@@ -59,7 +60,12 @@ def resolve_within_workspace(tool_context: ToolContext, relative_path: str) -> P
     """Resolve *relative_path* against the workspace root, rejecting any path
     that would escape it (e.g. via '..' or an absolute path)."""
     root = workspace_root(tool_context)
-    candidate = (root / relative_path).resolve()
+    # A backslash separates folders on Windows and is an ordinary character elsewhere: read it as a separator
+    # everywhere, so `..\\x` escapes nowhere on any machine; drive letters and UNC paths are never inside a repo.
+    normalised = relative_path.replace("\\", "/")
+    if re.match(r"^(?:[A-Za-z]:|//)", normalised):
+        raise ValueError(f"path '{relative_path}' escapes the workspace root")
+    candidate = (root / normalised).resolve()
     if candidate != root and root not in candidate.parents:
         raise ValueError(f"path '{relative_path}' escapes the workspace root")
     return candidate
@@ -117,7 +123,7 @@ def list_files(tool_context: ToolContext, subdir: str = ".", offset: int = 0,
 
     root = workspace_root(tool_context)
     paths: list[str] = []
-    for path in sorted(start.rglob("*")):
+    for path in sorted(fswalk.files(start)):
         if not path.is_file():
             continue
         rel = path.relative_to(root)
@@ -262,7 +268,7 @@ def search_files(tool_context: ToolContext, pattern: str, glob: str = "*", subdi
     hits: list[str] = []
     per_file: list[tuple[str, int]] = []
     scanned = skipped_large = 0
-    for path in sorted(start.rglob("*")):
+    for path in sorted(fswalk.files(start)):
         if not path.is_file():
             continue
         rel = path.relative_to(root)

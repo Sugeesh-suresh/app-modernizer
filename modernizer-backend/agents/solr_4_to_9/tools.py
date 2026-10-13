@@ -9,6 +9,7 @@ classes that were removed or renamed between Solr 4 and Solr 9. The
 validator agent still does the judgment (reading the report and deciding
 pass/fail as JSON) — only the fact-gathering is deterministic.
 """
+from ..shared import fswalk
 import re
 import xml.etree.ElementTree as ET
 
@@ -66,7 +67,7 @@ def validate_solr_config(tool_context: ToolContext) -> str:
     lines: list[str] = []
     any_issue = False
 
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if not path.is_file() or path.name not in _CONFIG_FILENAMES:
             continue
         rel_parts = path.relative_to(root).parts

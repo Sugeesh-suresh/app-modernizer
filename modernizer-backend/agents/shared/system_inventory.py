@@ -30,6 +30,7 @@ framework does by default, and the section says so.
 """
 from __future__ import annotations
 
+from . import fswalk
 import re
 from pathlib import Path
 
@@ -59,7 +60,7 @@ _SQL = {".sql", ".pls", ".pks", ".pkb", ".plsql", ".trg", ".ddl"}
 
 def _files(root: Path) -> list[tuple[str, str]]:
     out = []
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if not path.is_file() or (path.suffix.lower() not in _SUFFIXES and path.name not in _NAMED):
             continue
         rel = path.relative_to(root).as_posix()
@@ -607,7 +608,7 @@ def scan_security(files: list[tuple[str, str]], root: Path) -> dict:
                     encrypted += 1
                 if _SECURITY_KEYS.match(key):
                     keys.append({"key": key, "value": _value(key, value), "where": f"{rel}:{n}"})
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if path.is_file() and path.suffix.lower() in (".jks", ".p12", ".pfx", ".keystore", ".truststore", ".pem",
                                                       ".crt", ".cer", ".key") \
                 and not EXCLUDED_DIRS & set(path.relative_to(root).parts):

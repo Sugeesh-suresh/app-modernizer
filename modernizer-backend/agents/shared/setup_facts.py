@@ -21,6 +21,7 @@ Each item names the file (and line) that states it.
 """
 from __future__ import annotations
 
+from . import fswalk
 import json
 import re
 from pathlib import Path
@@ -41,7 +42,7 @@ _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][\w.\-]*)(:[^}]*)?\}")
 
 
 def _files(root: Path):
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()

@@ -15,6 +15,7 @@ person approves the plan:
 - anything else is listed at the top of the plan, so the reviewer corrects it
   at plan review instead of discovering it after the run.
 """
+from . import fswalk
 import re
 from pathlib import Path, PurePosixPath
 
@@ -28,7 +29,7 @@ def _workspace_paths(workspace_dir: str) -> list[str]:
     root = Path(workspace_dir)
     if not workspace_dir or not root.is_dir():
         return []
-    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*")
+    return sorted(p.relative_to(root).as_posix() for p in fswalk.files(root)
                   if p.is_file() and not (EXCLUDED_DIRS & set(p.relative_to(root).parts)))
 
 

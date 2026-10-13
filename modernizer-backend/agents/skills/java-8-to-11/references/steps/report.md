@@ -55,8 +55,9 @@ EOL/deprecated libraries still present that run on Java 11 and were out of
 scope — so the debt stays visible. One line if none.
 
 ## Follow-up Recommendations
-The loop compiled and packaged; it did not run tests or deploy. Run the full
-test suite on JDK 11, deploy the WAR to a Java 11 WildFly and smoke-test the
-critical flows from the plan's Behaviour Inventory.
+The loop compiled, packaged and ran the test suite on JDK 11 (unless
+VALIDATE_RUN_TESTS was off — then say so); it did not deploy. State the test
+result from the Final Build Result, then: deploy the WAR to a Java 11 WildFly
+and smoke-test the critical flows from the plan's Behaviour Inventory.
 
 Never claim a pass the Final Build Result does not show.

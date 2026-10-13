@@ -50,5 +50,5 @@ def test_the_java11_inventory_sees_the_hibernate_variants_frameworks():
     HQL `?` parameters, Criteria), used for the Java 8 -> 11 run that keeps the JSP WARs as they are."""
     from agents.java_8_to_11 import inventory
     doc = inventory.to_document(inventory.build(str(HIBERNATE)))
-    assert "org.hibernate:hibernate-core | 4.3.11.Final" in doc and "must move" in doc
+    assert "org.hibernate:hibernate-core | 4.3.11.Final" in doc and "candidate" in doc
     assert maven_roots(HIBERNATE) == [HIBERNATE]

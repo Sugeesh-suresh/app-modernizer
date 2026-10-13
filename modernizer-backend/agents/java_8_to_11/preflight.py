@@ -16,6 +16,7 @@ Preflight for the Java 8 -> 11 run, before anything is planned.
      They go to the planner as the primary work list (compile-first), instead
      of a list predicted from versions.
 """
+from ..shared import fswalk
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -54,7 +55,7 @@ class Preflight:
 def maven_roots(workspace: Path) -> list[Path]:
     """Directories to build from: every pom.xml with no pom.xml in an ancestor
     directory (the aggregators — usually one, under the upload's top folder)."""
-    poms = sorted((p for p in workspace.rglob("pom.xml") if not (EXCLUDED_DIRS & set(p.relative_to(workspace).parts))),
+    poms = sorted((p for p in fswalk.files(workspace, "pom.xml") if not (EXCLUDED_DIRS & set(p.relative_to(workspace).parts))),
                   key=lambda p: len(p.parts))
     roots: list[Path] = []
     for pom in poms:

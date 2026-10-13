@@ -24,6 +24,7 @@ to the Enterprise Architect agent, and the evidence check lists any endpoint or
 job the Architect's specification does not mention — so the interface catalog
 is complete by construction, not by how much an agent happened to read.
 """
+from . import fswalk
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -85,7 +86,7 @@ def scan(workspace_dir: str) -> dict:
     if "java" not in _PARSERS or not root.is_dir():
         return {"endpoints": endpoints, "jobs": jobs, "listeners": listeners, "soap": soap}
     addresses = _soap_addresses(root)
-    for path in sorted(root.rglob("*.java")):
+    for path in sorted(fswalk.files(root, "*.java")):
         rel = path.relative_to(root).as_posix()
         if EXCLUDED_DIRS & set(Path(rel).parts) or _TEST_PATH.search(rel):
             continue
@@ -223,7 +224,7 @@ def _base_type(text: str) -> str:
 def _soap_addresses(root: Path) -> dict[str, str]:
     """Where the SOAP services listen: {"spring-ws": path, "wsdl": url, <JAX-WS class>: address}."""
     out: dict[str, str] = {}
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         rel = path.relative_to(root).as_posix()
         if EXCLUDED_DIRS & set(Path(rel).parts) or _TEST_PATH.search(rel) or not path.is_file() or path.is_symlink():
             continue
@@ -263,7 +264,7 @@ def _xsd_elements(root: Path) -> dict[str, list[tuple[str, str, str]]]:
     """{global element name: [(field, type, occurs)]} from the repository's XSD schemas."""
     out: dict[str, list] = {}
     ns = "{http://www.w3.org/2001/XMLSchema}"
-    for path in sorted(root.rglob("*.xsd")):
+    for path in sorted(fswalk.files(root, "*.xsd")):
         rel = path.relative_to(root).as_posix()
         if EXCLUDED_DIRS & set(Path(rel).parts) or path.is_symlink():
             continue

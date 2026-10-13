@@ -36,6 +36,7 @@ JavaLanguageVersion.of(11) } }` or `options.release = 11`.
 Exactly 11 — never 12+.
 
 ## Build plugins
+<!-- applies-to: plugin, maven-, surefire, compiler, war, enforcer -->
 
 | Plugin | Trigger (the build must show this) | Target |
 |---|---|---|
@@ -56,6 +57,7 @@ Exactly 11 — never 12+.
 | Gradle wrapper | the wrapper cannot start on JDK 11 | the lowest that runs on 11 and the build's plugins (5.6.4 / 6.9.4) |
 
 ## Java EE modules removed from the JDK
+<!-- applies-to: javax.xml.bind, jaxb, jax-ws, jaxws, javax.activation, javax.annotation, javax.transaction, corba, java ee, soap, provided -->
 
 Add only for APIs the code actually imports, and only when no existing
 dependency already supplies them. In a WAR deployed to WildFly these are
@@ -83,6 +85,7 @@ Exceptions:
 - CORBA (`org.omg.*`, `javax.rmi`) has no drop-in: escalate.
 
 ## Libraries (only when bundled in the WAR — never when container-provided)
+<!-- applies-to: spring, hibernate, mockito, powermock, cglib, asm, junit, jackson, library, libraries, dependency, lombok, guava, ehcache -->
 
 Every row needs its trigger in the baseline build, a validation error or a
 failing test. "Old" or "EOL" is never a trigger.

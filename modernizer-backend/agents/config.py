@@ -133,6 +133,10 @@ RE_CONCURRENCY: int = max(1, _int("RE_CONCURRENCY", 4))
 # time. Each batch gets the same request and the same checks as when run alone; 1 = one at a time.
 DISCOVERY_CONCURRENCY: int = max(1, _int("DISCOVERY_CONCURRENCY", 4))
 
+# Gemini CLI path: modify / fix subagents of the Java 8 -> 25 and 8 -> 11 skills read per-task slices of the big
+# knowledge files (agents/shared/knowledge_slice.py). off = the whole files.
+KNOWLEDGE_SLICING: bool = os.getenv("KNOWLEDGE_SLICING", "on").strip().lower() not in {"0", "false", "no", "off"}
+
 # Gemini CLI path: `next_step` runs the deterministic work (the Java preflight's Maven builds, the
 # inventories, discovery's computed sections) in the background. While it runs, the tool answers with
 # what it is doing now instead of leaving Gemini on "Thinking…": after PROGRESS_FIRST_REPORT_SECONDS

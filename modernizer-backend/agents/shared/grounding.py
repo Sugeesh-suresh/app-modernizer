@@ -33,6 +33,7 @@ Three levels, each run before anything reaches a document:
 What fails is never shown in the business documents; the audit file lists it
 with the reason.
 """
+from . import fswalk
 import re
 from pathlib import Path
 
@@ -227,7 +228,7 @@ def repo_text(workspace_dir: str, max_bytes: int = 4_000_000) -> str:
     parts, size = [], 0
     if not root.is_dir():
         return ""
-    for path in sorted(root.rglob("*.properties")):
+    for path in sorted(fswalk.files(root, "*.properties")):
         rel = path.relative_to(root).as_posix()
         if EXCLUDED_DIRS & set(Path(rel).parts) or path.is_symlink():
             continue
@@ -258,7 +259,7 @@ class _Files:
         self.by_name: dict[str, list[str]] = {}
         self.cache: dict[str, str | None] = {}
         if self.root.is_dir():
-            for p in self.root.rglob("*"):
+            for p in fswalk.files(self.root):
                 rel = p.relative_to(self.root).as_posix()
                 if p.is_file() and not p.is_symlink() and not (EXCLUDED_DIRS & set(Path(rel).parts)):
                     self.by_name.setdefault(p.name, []).append(rel)

@@ -28,7 +28,9 @@ adjudication, a false negative hides a missed file.
 `audit_migration_changes` is the ADK tool wrapper; every pattern's code
 reviewer gets it automatically via `make_code_reviewer_agent`.
 """
+from . import fswalk
 import difflib
+import functools
 import json
 import re
 from dataclasses import dataclass, field
@@ -450,10 +452,27 @@ def _clip(line: str) -> str:
     return line if len(line) <= _MAX_LINE_CHARS else line[:_MAX_LINE_CHARS] + " …"
 
 
+@functools.lru_cache(maxsize=None)
+def _anchored_source(pattern: str, flags: int) -> bool:
+    return bool(re.search(r"(?<!\\)(?:\^|\$)|\\[AZz]", pattern))
+
+
+def _anchored(compiled: re.Pattern) -> bool:
+    return _anchored_source(compiled.pattern, compiled.flags)
+
+
 def _scan(lines: list[str], markers: list[Marker], context: str | None = None) -> list[MarkerHit]:
     """First `_MAX_HITS_PER_FILE` distinct markers matched anywhere in *lines* (of a file whose text
     is `context`: a marker whose `requires` it does not meet is skipped)."""
     markers = [m for m in markers if m.applies_to(context)]
+    # A marker that matches no line cannot match the text as a whole: one search per marker over the joined
+    # lines drops the markers a file never triggers before any per-line work. Anchored patterns (`^`, `$`) mean
+    # something different per line than over the whole text, so they always go through the lines.
+    if len(lines) > 3:
+        joined = "\n".join(lines)
+        markers = [m for m in markers if _anchored(m.pattern) or m.pattern.search(joined)]
+        if not markers:
+            return []
     hits: list[MarkerHit] = []
     seen: set[str] = set()
     for line in lines:
@@ -472,7 +491,7 @@ def relevant_files(root: Path) -> dict[str, Path]:
     """`{relative path: absolute path}` for every file that is really part of the
     repository — build output, VCS metadata and IDE folders excluded."""
     out: dict[str, Path] = {}
-    for path in root.rglob("*"):
+    for path in fswalk.files(root):
         if not path.is_file():
             continue
         rel = path.relative_to(root)

@@ -30,6 +30,7 @@ reported as coverage gaps.
 Patterns with no fence registered get `None` from `fence_for()`, and every
 public function here is a no-op for them.
 """
+from . import fswalk
 import fnmatch
 import re
 import shutil
@@ -362,7 +363,7 @@ def _files(root: Path) -> dict[str, Path]:
     out: dict[str, Path] = {}
     if not root.exists():
         return out
-    for path in root.rglob("*"):
+    for path in fswalk.files(root):
         if not path.is_file():
             continue
         rel = path.relative_to(root)

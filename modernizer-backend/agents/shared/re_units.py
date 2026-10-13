@@ -14,6 +14,7 @@ split further along its directory tree. Every file belongs to exactly one unit,
 so nothing is left out and nothing is analysed twice. Deterministic: the same
 repository always yields the same units, in path order.
 """
+from . import fswalk
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -57,7 +58,7 @@ class Unit:
 
 def _relevant_files(root: Path) -> list[str]:
     out = []
-    for path in root.rglob("*"):
+    for path in fswalk.files(root):
         if not path.is_file():
             continue
         rel = path.relative_to(root)

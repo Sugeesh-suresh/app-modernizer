@@ -68,6 +68,12 @@ def snapshot(workspace: Path, run_id: str) -> Path:
     return target
 
 
+def _damaged(path: Path, why: str) -> str:
+    return (f"The run state `{path}` is damaged: {why}. Nothing was changed by this call. If you edited it by hand, "
+            "undo that; otherwise start over with /modernize:start (restart=true) — the repository itself is "
+            "untouched until a plan is approved, and the baseline copy of the original is in the run's folder.")
+
+
 class Run:
     """One run's state: `run.json` plus the documents and outputs beside it."""
 
@@ -92,7 +98,13 @@ class Run:
             raise RunError(
                 f"No modernizer run in {root}. Start one with /modernize:start <pattern> "
                 "(or the start_run tool).")
-        state = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+            raise RunError(_damaged(path, f"it cannot be read as JSON ({type(exc).__name__}: {exc})")) from None
+        if not isinstance(state, dict) or not all(isinstance(state.get(k), str) and state[k]
+                                                   for k in ("run_id", "pattern")):
+            raise RunError(_damaged(path, "it is not a run state (no run_id / pattern)"))
         if Path(state.get("workspace_dir", "")).resolve() != root:
             # The repository was moved or cloned: the run follows it.
             state["workspace_dir"] = str(root)

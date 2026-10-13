@@ -15,6 +15,7 @@ What it does not do: explain business intent, or judge whether a match is real
 use or a comment. The document says so, and the planner and modifier (which
 read the files they change) make those calls.
 """
+from ..shared import fswalk
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -231,7 +232,7 @@ def build(workspace_dir: str) -> Inventory:
     root = Path(workspace_dir)
     inv = Inventory()
     files = []
-    for path in root.rglob("*"):
+    for path in fswalk.files(root):
         if not path.is_file():
             continue
         rel = path.relative_to(root)
@@ -269,7 +270,7 @@ def build(workspace_dir: str) -> Inventory:
                 if re.search(grp, g or "") and re.search(art, a or ""):
                     below = _below(version, floor)
                     if below:
-                        status = f"must move: {note}"
+                        status = f"candidate (moves only if the build, a test or the requirements name it): {note}"
                     elif below is None:
                         status = f"verify version: {note}"
             for grp, art, note in LIBRARY_PRESENT:
@@ -411,7 +412,7 @@ def to_document(inv: Inventory, max_rows: int = 400) -> str:
            f"- Files scanned: **{inv.files_scanned:,}** ({inv.lines_scanned:,} lines)",
            f"- Maven modules: **{len(inv.modules)}**",
            f"- Files needing a Java 11 code change: **{len(blocker_files)}**",
-           f"- Build findings that must change: **{len(must_build)}**; libraries that must move: **{len(must_deps)}**",
+           f"- Build findings that must change: **{len(must_build)}**; library candidates: **{len(must_deps)}**",
            f"- JSP/tag files with Java 11 runtime risks (frozen — report only): "
            f"**{len({f for c in change for f, _, _ in inv.jsp_risks.get(c.name, [])})}**",
            "", "The file-by-file tables (Java 11 Blockers, Behavioural Risks, Frozen-Zone Runtime Risks) are in "
@@ -479,6 +480,7 @@ def to_document(inv: Inventory, max_rows: int = 400) -> str:
     out += [f"| {n} | {len(fs)} | {impact.get(n, '—')} |" for n, fs in sorted(inv.tests.items())] or ["| — | 0 | — |"]
     out += ["", "| Module | Test source files |", "|---|---|"]
     out += [f"| `{m}` | {n} |" for m, n in sorted(inv.test_files.items())] or ["| — | 0 |"]
-    out += ["", "No tests were executed. The build loop compiles and packages (test sources included) but does "
-            "not run them — running the suite on JDK 11 is a human step.", "", "<!-- SECTION: END -->", ""]
+    out += ["", "This analysis executed no tests. The build loop's validation (`clean package` on JDK 11) runs the "
+            "suite unless VALIDATE_RUN_TESTS is off; a test that fails there but not on the baseline JDK is reported "
+            "as a TEST failure.", "", "<!-- SECTION: END -->", ""]
     return "\n".join(out)

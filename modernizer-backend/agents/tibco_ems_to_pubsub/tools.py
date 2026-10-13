@@ -10,6 +10,7 @@ deterministic JSON/YAML well-formedness + topic-mapping completeness
 check instead. validator_agent decides which applies by listing the
 workspace first.
 """
+from ..shared import fswalk
 import json
 from pathlib import Path
 
@@ -60,7 +61,7 @@ def validate_pubsub_mapping(tool_context: ToolContext) -> str:
     lines: list[str] = []
     any_issue = False
 
-    for path in sorted(root.rglob("*")):
+    for path in sorted(fswalk.files(root)):
         if not path.is_file() or path.suffix.lower() not in (".json", ".yaml", ".yml"):
             continue
         rel_parts = path.relative_to(root).parts
