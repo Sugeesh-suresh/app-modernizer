@@ -577,3 +577,101 @@ def test_no_curator_tool_is_registered_on_the_mcp_server():
     names = {t.name for t in anyio.run(mcp_server.server.list_tools)}
     assert "next_step" in names and "ws_write_file" in names
     assert not [n for n in names if "curator" in n or n.endswith("_skill_file")]
+
+
+FAILED_BUILD = json.dumps({"passed": False, "errors": ["COMPILE: Svc.java:3 cannot find symbol"], "summary": "1 error"})
+STAGED_PLAN = ("## Stage 1: Modernize Build Systems (Maven/Gradle)\n\n### Task 1.1: Wrapper\n- Files: `pom.xml`\n\n"
+               "## Stage 3: Java 8 → Java 17 LTS\n\n### Task 3.1: Release\n- Files: `pom.xml`\n")
+
+
+def _stage1_out_of_iterations(tmp_path, monkeypatch):
+    from agents import config
+    monkeypatch.setattr(config, "BUILD_LOOP_MAX_ITERATIONS", 2)
+    repo = tmp_path / "j"
+    (repo / "src").mkdir(parents=True)
+    (repo / "pom.xml").write_text("<project/>")
+    run = pipeline.start(repo, "java-8-to-25", migration_strategy="incremental")
+    run.write_doc("plan", STAGED_PLAN)
+    run.state.update({"phase": "code", "plan_approved": True, "pi": 0, "code": None})
+    run.save()
+
+    def answer(text):
+        step = _next(repo)
+        _save(repo, step["id"], text)
+        pipeline.complete_step(Run.load(repo), step["id"])
+        return step["id"]
+    assert answer("done") == "modify-java-8-to-25-stage1-1.1"
+    assert answer(FAILED_BUILD) == "validate-java-8-to-25-stage1-1"
+    assert answer("fixed") == "fix-java-8-to-25-stage1-1"
+    assert answer(FAILED_BUILD) == "validate-java-8-to-25-stage1-2"
+    return repo, answer
+
+
+def _passes(repo: Path) -> str:
+    """Complete the validation the way a passing validator does: its JSON, and the build-success signal."""
+    step = _next(repo)
+    assert step["id"].startswith("validate-")
+    _save(repo, step["id"], json.dumps({"passed": True, "errors": [], "summary": "ok"}))
+    run = Run.load(repo)
+    run.state["build_signalled"] = True
+    run.save()
+    pipeline.complete_step(Run.load(repo), step["id"])
+    return step["id"]
+
+
+def test_an_incremental_stage_whose_build_loop_runs_out_pauses_the_run_for_the_user(tmp_path, monkeypatch):
+    repo, answer = _stage1_out_of_iterations(tmp_path, monkeypatch)
+    held = _next(repo)
+    assert held["id"] == "stage-build-failed" and held["kind"] == "ask_user"
+    assert "Modernize Build Systems" in held["title"] and "cannot find symbol" in held["text"]
+    assert "gate=`stage`" in held["text"] and str(repo) in held["text"]
+    assert _next(repo)["id"] == "stage-build-failed"                      # asked again; the next stage never starts
+    with pytest.raises(RunError):
+        pipeline.confirm(Run.load(repo), "stage", ["whatever"])
+    # the user fixed it by hand: validate again, with a fresh budget — and then the next stage follows
+    assert "validating again" in pipeline.confirm(Run.load(repo), "stage", ["retry"])
+    assert _passes(repo) == "validate-java-8-to-25-stage1-3"
+    assert _next(repo)["id"] == "modify-java-8-to-25-stage3-3.1"           # only now does the next stage start
+
+
+def test_retry_gets_a_fresh_budget_and_the_fixer_choice_runs_the_fixer(tmp_path, monkeypatch):
+    repo, answer = _stage1_out_of_iterations(tmp_path, monkeypatch)
+    assert _next(repo)["id"] == "stage-build-failed"
+    pipeline.confirm(Run.load(repo), "stage", ["fix"])
+    assert answer("fixed again") == "fix-java-8-to-25-stage1-2"
+    assert answer(FAILED_BUILD) == "validate-java-8-to-25-stage1-3"
+    assert _next(repo)["id"] == "fix-java-8-to-25-stage1-3"               # one validation of the new budget is not yet spent
+    assert answer("fixed") == "fix-java-8-to-25-stage1-3"
+    assert answer(FAILED_BUILD) == "validate-java-8-to-25-stage1-4"
+    assert _next(repo)["id"] == "stage-build-failed"                      # the new budget (2) ran out: asks again
+
+
+def test_skipping_continues_with_the_next_stage_and_the_report_says_so(tmp_path, monkeypatch):
+    repo, answer = _stage1_out_of_iterations(tmp_path, monkeypatch)
+    assert _next(repo)["id"] == "stage-build-failed"
+    assert "report will say so" in pipeline.confirm(Run.load(repo), "stage", ["skip"])
+    assert _next(repo)["id"] == "modify-java-8-to-25-stage3-3.1"
+    assert "Modernize Build Systems" in Run.load(repo).state["unresolved_stages"][0]
+    assert answer("done") == "modify-java-8-to-25-stage3-3.1"
+    assert _passes(repo) == "validate-java-8-to-25-stage3-1"
+    assert answer("fine") == "review-java-8-to-25"
+    report = _next(repo)
+    assert report["id"] == "report-java-8-to-25" and "Stages that did not build" in report["query"]
+
+
+def test_a_big_bang_run_still_moves_on_when_its_build_loop_runs_out(tmp_path, monkeypatch):
+    from agents import config
+    monkeypatch.setattr(config, "BUILD_LOOP_MAX_ITERATIONS", 1)
+    repo = tmp_path / "j"
+    (repo / "src").mkdir(parents=True)
+    (repo / "pom.xml").write_text("<project/>")
+    run = pipeline.start(repo, "java-8-to-25")
+    run.write_doc("plan", "## 1. What Changes\n\n### Task 1.1: Release\n- Files: `pom.xml`\n")
+    run.state.update({"phase": "code", "plan_approved": True, "pi": 0, "code": None})
+    run.save()
+    for prefix in ("modify-", "validate-"):
+        step = _next(repo)
+        assert step["id"].startswith(prefix)
+        _save(repo, step["id"], "done" if prefix == "modify-" else FAILED_BUILD)
+        pipeline.complete_step(Run.load(repo), step["id"])
+    assert _next(repo)["id"] != "stage-build-failed"

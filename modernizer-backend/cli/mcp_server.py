@@ -323,9 +323,11 @@ async def confirm(gate: str, selection: list[str] | None = None, documents: list
             confirmed), `plan` (the plan is approved — code changes start), `stacks` (stack-discovery:
             which stacks to document), `strategy` (stack-discovery: how to reverse engineer — one id
             from the offered options, before any code is read) or `documents` (stack-discovery: the
-            deliverables are accepted).
+            deliverables are accepted) or `stage` (an incremental Java 8 -> 25 stage's build loop ran
+            out and the run is paused: `retry`, `fix` or `skip`).
         selection: For `companions` / `stacks`: the chosen ids (empty list = none). For `strategy`:
-            [the strategy id] — layered-trace, api-first, data-first or stack-by-stack.
+            [the strategy id] — layered-trace, api-first, data-first or stack-by-stack. For `stage`: [`retry`
+            (the user fixed the code — validate again), `fix` (the fixer tries again) or `skip`].
         documents: For `stacks`: brd, technical_spec, test_inventory, setup, openapi, tech_debt, ui_screens.
     """
     return await _run(lambda: pipeline.confirm(_load(workspace), gate, selection, documents)

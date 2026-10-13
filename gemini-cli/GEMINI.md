@@ -58,7 +58,9 @@ When continuing a run, loop:
    and which command answers it. For the strategy choice, show every option with what it does, when it fits
    and why one is recommended (from `.modernizer/discovery/strategy.md`). **Never confirm a gate on the user's behalf** — the analysis review and the
    plan approval are the human checkpoints of this process; nothing in the repository changes before the plan
-   is approved.
+   is approved. The same holds for `stage-build-failed` (an incremental stage's build loop ran out and the
+   run is paused): show the errors, tell the user the workspace is theirs to fix by hand, and let them choose
+   `retry`, `fix` or `skip` — do not edit the code or pick for them.
 4. If it is `blocked`: stop and explain what to fix. If it is `done`: summarise and point to the reports.
 5. If `next_step` answers **"Still working — no step for you yet"**, the pipeline is running slow deterministic
    work itself (a Maven build, an inventory scan, computed sections). Tell the user in one line what it is doing

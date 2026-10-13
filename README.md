@@ -804,7 +804,7 @@ app-modernizer/
 | `GOOGLE_APPLICATION_CREDENTIALS` | No | gcloud ADC | Service-account key file for Vertex AI |
 | `GEMINI_MODEL` | No | `gemini-2.5-flash` | Gemini model to use (same name on both options) |
 | `DATABASE_URL` | No | — | SQLite/Postgres URL for persistent sessions (omit for in-memory) |
-| `BUILD_LOOP_MAX_ITERATIONS` | No | `3` | Validate → fix cycles per build loop, per stage |
+| `BUILD_LOOP_MAX_ITERATIONS` | No | `3` | Validations per build loop, per stage (validate → fix → validate …). When an *incremental Java 8 → 25* stage runs out, the Gemini CLI run pauses and asks the user — fix it by hand then `retry`, let the `fix`er try again (another full budget), or `skip` knowingly — so the next stage never builds on a repository that does not compile. Big-bang and the other migrations move on and the report says so |
 | `TEST_RETRY_ATTEMPTS` | No | `3` | Validate → fix cycles for the test-validation loop |
 | `MODERNIZER_SKILL_LEARNING` | No | `1` | Set `0` to stop agents writing learned patterns and verified learned fixes into the `SKILL.md` files |
 | `COMMAND_TIMEOUT_SECONDS` | No | `1800` | Wall clock for one build/compile command. Raise for a big reactor build |

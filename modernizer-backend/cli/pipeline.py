@@ -616,7 +616,7 @@ def _phase_code(run: Run, log: list[str]) -> dict | None:
     pattern = code["pattern"]
     spec = P.get(pattern)
 
-    if code["part"] in ("modify", "build", "fix"):
+    if code["part"] in ("modify", "build", "fix", "hold"):
         if code["si"] >= len(code["stages"]):
             _record_pass(run, code)
             if code.get("split") == "pre":
@@ -633,6 +633,8 @@ def _phase_code(run: Run, log: list[str]) -> dict | None:
             return None
         stage = code["stages"][code["si"]]
         run.state["approved_stage"] = str(stage["idx"]) if stage["idx"] else ""
+        if code["part"] == "hold":
+            return _hold_step(run, code, stage)
         if code["part"] == "modify":
             if not stage["units"]:
                 note = (f"SKIPPED — the confirmed plan has no `## Stage <n>: {stage['title']}` section, so there is "
@@ -646,7 +648,7 @@ def _phase_code(run: Run, log: list[str]) -> dict | None:
                 if pattern == P.JAVA_8_TO_11:
                     log.append(_mockito_rewrite(run, code))
                 _write_modify_result(run, code)
-                code.update({"part": "build", "iter": 0})
+                code.update({"part": "build", "iter": 0, "extra": 0})
                 run.save()
                 return None
             return _modify_step(run, code, stage, spec)
@@ -682,7 +684,7 @@ def _record_pass(run: Run, code: dict) -> None:
 
 
 def _next_stage(code: dict) -> None:
-    code.update({"si": code["si"] + 1, "ui": 0, "retry": False, "iter": 0, "part": "modify"})
+    code.update({"si": code["si"] + 1, "ui": 0, "retry": False, "iter": 0, "extra": 0, "part": "modify"})
 
 
 def _stage_label(code: dict, stage: dict) -> str:
@@ -961,12 +963,46 @@ def _complete_validate(run: Run, step: dict, output: str) -> str:
     if result["passed"]:
         _next_stage(code)
         return f"Validation PASSED for {step['title']}."
-    if code["iter"] >= max(1, config.BUILD_LOOP_MAX_ITERATIONS):
+    if code["iter"] - code.get("extra", 0) >= max(1, config.BUILD_LOOP_MAX_ITERATIONS):
+        if _holds_on_failure(code):
+            code["part"], code["hold"] = "hold", {"errors": (result.get("errors") or [])[:12],
+                                                 "summary": str(result.get("summary", ""))[:600]}
+            return (f"Validation FAILED and the build loop is out of iterations "
+                    f"(BUILD_LOOP_MAX_ITERATIONS={config.BUILD_LOOP_MAX_ITERATIONS}) — the run is paused for "
+                    f"{step['title']}: the next stage does not start until the user decides.")
         _next_stage(code)
         return (f"Validation FAILED and the build loop is out of iterations (BUILD_LOOP_MAX_ITERATIONS="
                 f"{config.BUILD_LOOP_MAX_ITERATIONS}) — moving on; the review and report will say so.")
     code["part"] = "fix"
     return f"Validation FAILED ({len(result.get('errors') or [])} error(s)) — the fixer runs next."
+
+
+def _holds_on_failure(code: dict) -> bool:
+    """An incremental Java 8 -> 25 run stops when a stage's build loop runs out: each stage builds on the previous
+    one, so carrying on would stack the next upgrade on a repository that does not build."""
+    return code["pattern"] == P.JAVA_8_TO_25 and (len(code["stages"]) > 1 or bool(code.get("split")))
+
+
+HOLD_CHOICES = {
+    "retry": "the user fixed the code themselves — validate this stage again",
+    "fix": "the fixer tries again",
+    "skip": "carry on with the next stage as it is, knowing it does not build",
+}
+
+
+def _hold_step(run: Run, code: dict, stage: dict) -> dict:
+    hold = code.get("hold") or {}
+    errors = "\n".join(f"- {e}" for e in hold.get("errors") or []) or "- (no individual errors were reported)"
+    budget = max(1, config.BUILD_LOOP_MAX_ITERATIONS)
+    return _step(run, "stage-build-failed", "ask_user", title=f"Build failing after {stage['title']}", text=(
+        f"The build/fix loop used all {budget} validation(s) of the **{stage['title']}** stage and the build still "
+        "fails. The run is paused here on purpose: the next stage would build on a repository that does not "
+        f"compile.\n\nLast validation: {hold.get('summary') or 'failed'}\n\nErrors:\n{errors}\n\n"
+        f"The workspace is `{run.workspace}` — the user can open it and fix it by hand (the full report is in "
+        f"`{run.rel(_results(run, code['pattern'], _build_result_name(code, stage)))}`). Tell the user this, show the "
+        "errors, and ask which they want, then call `confirm` with gate=`stage` and `selection` = [that choice]:\n"
+        + "\n".join(f"- `{k}` — {v}" for k, v in HOLD_CHOICES.items())
+        + f"\n\nA `retry` or `fix` gives the loop {budget} more validation(s) for this stage."))
 
 
 def _lesson_targets(spec: P.Pattern):
@@ -1087,6 +1123,10 @@ def _report_step(run: Run, code: dict, spec: P.Pattern) -> dict:
         body += "\n\n" + requirements_block(run, "report")
     if len(_all_stages(code)) > 1:
         body += " Cover every stage of this phased incremental migration."
+    if run.state.get("unresolved_stages"):
+        body += ("\n\n## Stages that did not build\nThe user chose to continue past these stages although their "
+                 "build still failed — state this prominently in the report, and that later stages were built on "
+                 "top of them:\n" + "\n".join(f"- {u}" for u in run.state["unresolved_stages"]))
     if java_preflight.module_for(pattern) and run.state.get("preflight_summary"):
         body += f"\n\n## Build Environment (preflight, before the migration)\n{run.state['preflight_summary']}"
     items = _stage_results_block(run, code) + [
@@ -1192,7 +1232,31 @@ def confirm(run: Run, gate: str, selection: list[str] | None = None, documents: 
         run.state.update({"plan_approved": True, "plan_sha256": digest, "current_step": None, "plan_feedback": None})
         run.save()
         return "Plan approved — code generation starts. Edits to the plan after this point are not used."
-    raise RunError(f"Unknown gate '{gate}'. Gates: companions, analysis, plan.")
+    if gate == "stage":
+        code = run.state.get("code") or {}
+        if phase != "code" or code.get("part") != "hold":
+            raise RunError("No stage is paused on a failing build.")
+        choice = (selection or [""])[0]
+        if choice not in HOLD_CHOICES:
+            raise RunError(f"Choose one of: {', '.join(HOLD_CHOICES)} (selection = [the choice]).")
+        stage = code["stages"][code["si"]]
+        run.state["current_step"] = None
+        if choice == "skip":
+            run.state.setdefault("unresolved_stages", []).append(
+                f"{stage['title']} — its build still failed when the run continued: "
+                + "; ".join(str(e) for e in (code.get("hold") or {}).get("errors", [])[:5]))
+            code.pop("hold", None)
+            _next_stage(code)
+            run.save()
+            return (f"Continuing without a passing build for {stage['title']} — the report will say so. "
+                    "The next stage builds on it as it is.")
+        code["extra"] = code["iter"]
+        code["part"] = "build" if choice == "retry" else "fix"
+        code.pop("hold", None)
+        run.save()
+        return (f"{stage['title']}: " + ("validating again after the user's changes." if choice == "retry"
+                                          else "the fixer runs again.") + " The next stage waits for a passing build.")
+    raise RunError(f"Unknown gate '{gate}'. Gates: companions, analysis, plan, stage.")
 
 
 def refine(run: Run, gate: str, feedback: str) -> str:
