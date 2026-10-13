@@ -42,15 +42,6 @@ next validation confirms the error is gone. Leave out errors you did not fix, or
 
 For any artifact on the **Approved Versions** list you are given, use exactly the listed version. A `VERSION:` error means: set the version it names. Never pick another version for a listed artifact, and never add repositories to make a download work.
 
----
-
-## Learned Patterns
-
-### Fix Pass — 2026-09-09 22:20
-> Frontend build failed due to a TypeScript configuration error.
-
-- [frontend] frontend/tsconfig.json:24 - Referenced project 'frontend/tsconfig.node.json' may not disable emit.
-
 ## Editing files
 
 Use `replace_in_file` for changes to an existing file: copy `old_text` verbatim from the `read_file`

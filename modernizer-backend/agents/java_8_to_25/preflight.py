@@ -15,8 +15,9 @@ the readiness stages hides what JDK 8 would report — so:
    on a newer runtime — marked approximate). A release no JDK can build stops
    the run here.
 2. Maven 3.6.3+ (the current plugins need it), and the settings file if set.
-3. Baseline build on the first stage's JDK: `clean package` (tests compiled,
-   not run) of the code exactly as uploaded. Dependency / repository /
+3. Baseline build on the first stage's JDK: `clean package` of the code exactly as uploaded,
+   with its tests (VALIDATE_RUN_TESTS; the tests that already fail are recorded so the validations
+   hold the migration only to the tests that passed). Dependency / repository /
    credential errors stop the run — a migrated build could not be verified
    either. Compile errors are reported to the planner: they fail before any
    change, and the readiness stages cannot be validated until they are
@@ -145,6 +146,8 @@ class Preflight:
     build_tool: str = "maven"
     baseline_jdk: int | None = None
     baseline_build_ok: bool | None = None
+    baseline_tests_run: bool = False                       # the baseline build also ran the test suite
+    baseline_failing_tests: list[str] = field(default_factory=list)   # Class#method failing on the code as uploaded
     compile_errors: list[str] = field(default_factory=list)
     other_errors: list[str] = field(default_factory=list)
     environment_errors: list[str] = field(default_factory=list)
@@ -230,12 +233,19 @@ def run(workspace_dir: str, strategy: str = "bigbang", springboot_upgrade: bool 
         pf.approved_unavailable = check_approved(entries, java_home=baseline["home"] or None)
 
     coords: list[str] = []
+    run_tests = config.VALIDATE_RUN_TESTS
     for n, root in enumerate(roots, 1):
         progress.stage(f"Environment check: baseline build of `{root.relative_to(workspace).as_posix() or '.'}` "
-                       f"({n} of {len(roots)}) on JDK {baseline['major']} — `mvn -fae -DskipTests clean package` "
-                       "of the code as uploaded (a first build downloads every dependency)")
-        code, out = java_env.run_maven(root, ["-fae", "-DskipTests", "clean", "package"],
-                                       java_home=baseline["home"] or None)
+                       f"({n} of {len(roots)}) on JDK {baseline['major']} — "
+                       f"`mvn -fae clean package{'' if run_tests else ' -DskipTests'}` of the code as uploaded"
+                       f"{', tests included' if run_tests else ''} (a first build downloads every dependency)")
+        if run_tests:
+            java_env.clear_reports(root)
+        args = ["-fae", "clean", "package", "-Dmaven.test.failure.ignore=true"] if run_tests \
+            else ["-fae", "-DskipTests", "clean", "package"]
+        code, out = java_env.run_maven(root, args, java_home=baseline["home"] or None)
+        if run_tests:
+            pf.baseline_failing_tests += [t for t in java_env.surefire_failures(root) if t not in pf.baseline_failing_tests]
         res = java_env.classify(out, code, root)
         rel = root.relative_to(workspace).as_posix()
         prefix = "" if rel in ("", ".") else f"{rel}/"
@@ -245,6 +255,7 @@ def run(workspace_dir: str, strategy: str = "bigbang", springboot_upgrade: bool 
         pf.skipped_modules += res.skipped
         coords += [c for c in res.coordinates if c not in coords]
     pf.baseline_build_ok = not (pf.compile_errors or pf.other_errors or pf.environment_errors)
+    pf.baseline_tests_run = run_tests and pf.baseline_build_ok is not None
     if pf.environment_errors:
         _stop(pf, "The uploaded code cannot download its own dependencies on this machine, before any change was "
                   "made — so a migrated build could not be verified either. Fix the build environment and retry: "
@@ -274,6 +285,10 @@ def to_markdown(pf: Preflight) -> str:
     elif pf.baseline_build_ok is False:
         out.append(f"- **Baseline on JDK {pf.baseline_jdk}: {len(pf.compile_errors)} compile error(s), "
                    f"{len(pf.other_errors)} other build error(s), {len(pf.environment_errors)} environment error(s).**")
+    if pf.baseline_tests_run:
+        out.append(f"- Baseline tests on JDK {pf.baseline_jdk}: {len(pf.baseline_failing_tests)} failing before any change"
+                   + (" — the validations tolerate exactly these and no others:" if pf.baseline_failing_tests else "."))
+        out += [f"  - `{t}`" for t in pf.baseline_failing_tests[:50]]
     if pf.skipped_modules:
         out.append(f"- Not built because a module they depend on failed: {', '.join(pf.skipped_modules[:20])}")
     if pf.approved_checked:
@@ -305,6 +320,8 @@ def summary(pf: Preflight) -> str:
     elif pf.baseline_build_ok is False:
         parts.append(f"uploaded code on JDK {pf.baseline_jdk}: {len(pf.compile_errors)} compile / "
                      f"{len(pf.other_errors)} other / {len(pf.environment_errors)} environment error(s)")
+    if pf.baseline_tests_run:
+        parts.append(f"{len(pf.baseline_failing_tests)} test(s) already failing on JDK {pf.baseline_jdk}")
     if pf.approved_unavailable:
         parts.append("approved versions NOT downloadable: " + ", ".join(u.split(" ")[0] for u in pf.approved_unavailable[:5]))
     if not pf.ok:

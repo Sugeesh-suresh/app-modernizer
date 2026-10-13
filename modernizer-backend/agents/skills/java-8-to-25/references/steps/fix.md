@@ -45,20 +45,3 @@ next validation confirms the error is gone. Leave out errors you did not fix, or
 ## Approved Versions
 
 For any artifact on the **Approved Versions** list you are given, use exactly the listed version. A `VERSION:` error means: set the version it names. Never pick another version for a listed artifact, and never add repositories to make a download work.
-
----
-
-## Learned Patterns
-
-### Fix Pass — 2026-09-10 15:50
-> Compilation failed due to missing jakarta.sql package, DataSource symbol, and SQL_DELETE_BY_ID variable in JdbcWeatherDao.java.
-
-- Java 8_Spring WAR_Oracle 19 application/src/main/java/com/example/weather/dao/JdbcWeatherDao.java:8 — package jakarta.sql does not exist
-- Java 8_Spring WAR_Oracle 19 application/src/main/java/com/example/weather/dao/JdbcWeatherDao.java:60 — cannot find symbol: class DataSource
-- Java 8_Spring WAR_Oracle 19 application/src/main/java/com/example/weather/dao/JdbcWeatherDao.java:106 — cannot find symbol: variable SQL_DELETE_BY_ID
-
-### Fix Pass — 2024-07-30 10:00
-> Review identified a critical namespace mismatch in JdbcWeatherDao.java and a potentially misleading error regarding SQL_DELETE_BY_ID.
-
-- **`JdbcWeatherDao.java` (`jakarta.sql.DataSource` vs `javax.sql.DataSource`):** `javax.sql.DataSource` is a Java SE class and is NOT renamed by the Jakarta migration — there is no `jakarta.sql` package. The fix for "package jakarta.sql does not exist" / "cannot find symbol: class DataSource" is to change the import back to `javax.sql.DataSource`, even when the rest of the project (Spring 6.x, `jakarta.servlet`) is on Jakarta EE.
-- **`SQL_DELETE_BY_ID` variable:** If an error reports `cannot find symbol: variable SQL_DELETE_BY_ID` but the variable clearly exists in the code, this might be an outdated build error or caching issue. Focus on resolving other critical errors first, as this one may resolve itself with successful compilation of other parts.

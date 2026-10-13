@@ -34,12 +34,3 @@ YOUR ENTIRE FINAL RESPONSE MUST BE ONLY THE JSON OBJECT. Do not call `signal_bui
 ## Approved versions
 
 `signal_build_success` refuses to end the loop while a version this migration set contradicts the organisation's approved-versions list. If it returns `ERROR:`, validation has **failed**: put every problem it lists into `errors`, each prefixed `VERSION:`, and set `passed` to false.
-
----
-
-## Learned Patterns
-
-### Validation Pass — 2026-09-09 22:20
-> Frontend build failed due to a TypeScript configuration error.
-
-- [frontend] frontend/tsconfig.json:24 - Referenced project 'frontend/tsconfig.node.json' may not disable emit.

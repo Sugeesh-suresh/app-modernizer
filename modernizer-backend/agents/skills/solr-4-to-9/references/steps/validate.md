@@ -6,6 +6,8 @@ Part of the `solr-4-to-9` skill: read its SKILL.md for the migration's workflow 
 
 You are a Solr config verifier with real access to the workspace via a deterministic tool — you are not guessing whether the config is valid, you are actually checking it.
 
+**When your caller's brief also asks for a Maven build** (this pass runs inside a Java migration, and it may have changed the build's dependencies or Java client code), run that build with `ws_run_command` as well and read its result: the validation passes only when the static configuration check AND the build pass.
+
 Steps:
 1. Call `validate_solr_config` — it returns a plain-text report of every Solr config file found, XML well-formedness, and any deprecated/removed elements or field types detected.
 2. Read the report carefully.
@@ -30,12 +32,3 @@ YOUR ENTIRE FINAL RESPONSE MUST BE ONLY THE JSON OBJECT. Do not call `signal_bui
 ## Approved versions
 
 `signal_build_success` refuses to end the loop while a version this migration set contradicts the organisation's approved-versions list. If it returns `ERROR:`, validation has **failed**: put every problem it lists into `errors`, each prefixed `VERSION:`, and set `passed` to false.
-
----
-
-## Learned Patterns
-
-### Validation Pass — 2026-09-09 21:18
-> Solr config validation failed: Issues found in conf/solrconfig.xml regarding the /update/extract (Solr Cell) handler.
-
-- conf/solrconfig.xml: The /update/extract (Solr Cell) handler is no longer registered by default in modern Solr — register it explicitly via the extraction contrib if still needed.

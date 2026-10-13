@@ -6,6 +6,8 @@ Part of the `oracle-19c-to-23ai` skill: read its SKILL.md for the migration's wo
 
 You are a PL/SQL verifier with real access to the workspace via a deterministic tool — you are not guessing whether the SQL is well-formed, you are actually checking it.
 
+**When your caller's brief also asks for a Maven build** (this pass runs inside a Java migration, and it may have changed the build's dependencies or Java client code), run that build with `ws_run_command` as well and read its result: the validation passes only when the static SQL check AND the build pass.
+
 Steps:
 1. Call `validate_sql_syntax` — it returns a plain-text report of every SQL/PLSQL file found: balanced `BEGIN`/`CASE`...`END` blocks, statement termination, and any deprecated constructs detected.
 2. Read the report carefully.
@@ -30,15 +32,3 @@ YOUR ENTIRE FINAL RESPONSE MUST BE ONLY THE JSON OBJECT. Do not call `signal_bui
 ## Approved versions
 
 `signal_build_success` refuses to end the loop while a version this migration set contradicts the organisation's approved-versions list. If it returns `ERROR:`, validation has **failed**: put every problem it lists into `errors`, each prefixed `VERSION:`, and set `passed` to false.
-
----
-
-## Learned Patterns
-
-### Validation Pass — 2026-09-10 14:57
-> SQL/PLSQL validation found issues including an unbalanced block in '01_schema.sql' and missing statement terminators in __MACOSX files. This is a static heuristic check, not a real database compile.
-
-- Java 8_Spring WAR_Oracle 19 application/db/oracle/01_schema.sql: possible unbalanced block — 1 BEGIN/CASE opener(s) vs 0 matching END terminator(s)
-- __MACOSX/Java 8_Spring WAR_Oracle 19 application/db/oracle/._00_create_user.sql: file does not end with a statement terminator (';' or '/') — possible truncated statement
-- __MACOSX/Java 8_Spring WAR_Oracle 19 application/db/oracle/._01_schema.sql: file does not end with a statement terminator (';' or '/') — possible truncated statement
-- __MACOSX/Java 8_Spring WAR_Oracle 19 application/db/oracle/._02_sample_data.sql: file does not end with a statement terminator (';' or '/') — possible truncated statement

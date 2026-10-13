@@ -39,23 +39,6 @@ next validation confirms the error is gone. Leave out errors you did not fix, or
 
 For any artifact on the **Approved Versions** list you are given, use exactly the listed version. A `VERSION:` error means: set the version it names. Never pick another version for a listed artifact, and never add repositories to make a download work.
 
-## Learned Patterns
-
-Based on independent code reviews, future runs should be mindful of the following common issues, even if not directly reported as syntax errors or deprecated constructs:
-
-*   **Hardcoded Database Credentials**: Always recommend externalizing sensitive information (like connection URLs, usernames, passwords) to secure configuration management systems (e.g., environment variables, secrets managers) instead of hardcoding them in source files. This is a critical security best practice.
-*   **Resource Management and Driver Registration**:
-    *   **JDBC Driver Registration**: For Java applications using JDBC 4.0+, the Oracle driver typically self-registers. Explicit `DriverManager.registerDriver(new OracleDriver());` calls should generally be performed only once at application startup, if at all, rather than repeatedly in methods.
-    *   **Try-with-resources**: Encourage the use of Java's `try-with-resources` statement (introduced in Java 7) for managing resources like `Connection`, `PreparedStatement`, and `ResultSet` to ensure automatic closure and improve code readability over nested `try-finally` blocks.
-
-### Fix Pass — 2026-09-10 14:57
-> SQL/PLSQL validation found issues including an unbalanced block in '01_schema.sql' and missing statement terminators in __MACOSX files. This is a static heuristic check, not a real database compile.
-
-- Java 8_Spring WAR_Oracle 19 application/db/oracle/01_schema.sql: possible unbalanced block — 1 BEGIN/CASE opener(s) vs 0 matching END terminator(s)
-- __MACOSX/Java 8_Spring WAR_Oracle 19 application/db/oracle/._00_create_user.sql: file does not end with a statement terminator (';' or '/') — possible truncated statement
-- __MACOSX/Java 8_Spring WAR_Oracle 19 application/db/oracle/._01_schema.sql: file does not end with a statement terminator (';' or '/') — possible truncated statement
-- __MACOSX/Java 8_Spring WAR_Oracle 19 application/db/oracle/._02_sample_data.sql: file does not end with a statement terminator (';' or '/') — possible truncated statement
-
 ## Editing files
 
 Use `replace_in_file` for changes to an existing file: copy `old_text` verbatim from the `read_file`

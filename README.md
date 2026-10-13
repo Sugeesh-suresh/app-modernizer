@@ -821,7 +821,7 @@ app-modernizer/
 | `PROGRESS_FIRST_REPORT_SECONDS` / `PROGRESS_REPORT_SECONDS` | No | `20` / `60` | Gemini CLI: `next_step` runs slow deterministic work (the preflight's Maven builds, inventories, computed sections) in the background and reports what is running — stage, Maven module, downloads, last output line — after the first wait, then at this interval, instead of a silent "Thinking…" |
 | `MIGRATION_JAVA_HOMES` | No | — | Java 8 → 25: one JDK per release, `8=/opt/jdk8,17=/opt/jdk17,25=/opt/jdk25`; a release without one builds on the nearest newer JDK found |
 | `PREFLIGHT` | No | `on` | Java 8 → 11 / 8 → 25 environment check and baseline build: `warn` reports problems without stopping, `off` skips it |
-| `VALIDATE_RUN_TESTS` | No | `true` | Java 8 → 11 validation runs the test suite |
+| `VALIDATE_RUN_TESTS` | No | `true` | Java 8 → 11 and Java 8 → 25 validation runs the test suite (Java 8 → 25: `clean test` / `clean package` on each stage's JDK). The preflight first runs the suite on the code as uploaded and records the tests that already fail; only those are tolerated, every other failing test fails the validation. `false` = compile only |
 | `VALIDATE_TIMEOUT_SECONDS` | No | `3600` | One Maven build, tests included |
 | `APPROVED_VERSIONS_FILE` | No | `approved-versions.txt` | Exact versions every code-changing pipeline must use for listed artifacts (your Nexus's versions); supports `[pipeline]` and `[java-8-to-25 stage N]` sections |
 | `APPROVED_VERSIONS_STRICT` | No | `false` | `true`: no version may be introduced unless it is on the list |

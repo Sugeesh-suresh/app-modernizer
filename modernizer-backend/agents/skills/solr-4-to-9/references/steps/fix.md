@@ -39,15 +39,6 @@ next validation confirms the error is gone. Leave out errors you did not fix, or
 
 For any artifact on the **Approved Versions** list you are given, use exactly the listed version. A `VERSION:` error means: set the version it names. Never pick another version for a listed artifact, and never add repositories to make a download work.
 
----
-
-## Learned Patterns
-
-### Fix Pass — 2026-09-09 21:19
-> Solr config validation failed: Issues found in conf/solrconfig.xml regarding the /update/extract (Solr Cell) handler.
-
-- conf/solrconfig.xml: The /update/extract (Solr Cell) handler is no longer registered by default in modern Solr — register it explicitly via the extraction contrib if still needed.
-
 ## Editing files
 
 Use `replace_in_file` for changes to an existing file: copy `old_text` verbatim from the `read_file`

@@ -2,6 +2,7 @@
 (tests/fixtures/orders-jsp-oracle-monorepo: Java 8 -> 25 incremental + Oracle; tests/fixtures/
 storefront-thymeleaf-solr4-oracle: big bang + Spring Boot + Oracle + Solr)."""
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -150,7 +151,7 @@ def test_a_big_bang_boot_run_validates_the_packaged_jar(tmp_path, monkeypatch):
     run = Run.load(repo)
     code = {"pattern": "java-8-to-25", "iter": 0, "stages": [{"title": "", "idx": 0}], "si": 0}
     step = pipeline._validate_step(run, code, code["stages"][0], pipeline.P.get("java-8-to-25"))
-    assert "`mvn -q -DskipTests clean package`" in step["query"]
+    assert "`mvn -B clean package`" in step["query"]                  # the packaged JAR, tests included
 
 
 def test_macos_archive_metadata_is_never_scanned():
@@ -267,3 +268,54 @@ def test_the_java11_audit_knows_the_hibernate_5_changes():
     line = 'session.createQuery("from C c where c.a = ?")'
     assert change_audit._scan([line], [hql], context=line)
     assert not change_audit._scan(['jdbc.query("select * from t where a = ?")'], [hql], context="JdbcTemplate")
+
+
+def _validate_query(tmp_path, monkeypatch, preflight: dict | None = None, **opts) -> str:
+    monkeypatch.setenv("MODERNIZER_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "repo"
+    shutil.copytree(FIXTURES / "orders-jsp-oracle-monorepo", repo)
+    pipeline.start(repo, "java-8-to-25", **opts)
+    run = Run.load(repo)
+    if preflight is not None:
+        run.state["preflight_json"] = json.dumps(preflight)
+    code = {"pattern": "java-8-to-25", "iter": 0, "stages": [{"title": "Java 8 → Java 17 LTS", "idx": 3}], "si": 0}
+    return pipeline._validate_step(run, code, code["stages"][0], pipeline.P.get("java-8-to-25"))["query"]
+
+
+def test_validation_runs_the_tests_and_tolerates_only_the_baseline_failures(tmp_path, monkeypatch):
+    q = _validate_query(tmp_path, monkeypatch, {"baseline_failing_tests": ["com.acme.A#old", "com.acme.B#flaky"]})
+    assert "`mvn -B clean test`" in q and "RUNS THE TESTS" in q and "## Tests" in q
+    assert "`com.acme.A#old`" in q and "`com.acme.B#flaky`" in q and "never fail the validation for them" in q
+    assert "TEST: Class#method" in q and "Zero tests run" in q
+    clean = _validate_query(tmp_path / "b", monkeypatch, {"baseline_failing_tests": []})
+    assert "No test failed on the code as uploaded: every failure is the migration's." in clean
+
+
+def test_with_test_running_off_validation_only_compiles_as_before(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "VALIDATE_RUN_TESTS", False)
+    q = _validate_query(tmp_path, monkeypatch)
+    assert "mvn -q -DskipTests clean test-compile" not in q or "## Tests" not in q
+    assert "## Tests" not in q and "RUNS THE TESTS" not in q
+
+
+def test_the_preflight_report_names_the_tests_already_failing(monkeypatch):
+    from agents.java_8_to_25 import preflight as pf25
+    pf = pf25.Preflight(baseline_build_ok=True, baseline_jdk=8, baseline_tests_run=True,
+                        baseline_failing_tests=["com.acme.A#old"], assignment={"8": {"major": 8, "source": "x", "exact": True}})
+    md, summary = pf25.to_markdown(pf), pf25.summary(pf)
+    assert "Baseline tests on JDK 8: 1 failing before any change" in md and "`com.acme.A#old`" in md
+    assert "1 test(s) already failing on JDK 8" in summary
+    assert json.loads(pf.to_json())["baseline_failing_tests"] == ["com.acme.A#old"]
+
+
+def test_the_stale_learned_patterns_of_an_unrelated_project_are_gone_from_the_skills():
+    junk = re.compile(r"Java 8_Spring|__MACOSX|6\.1\.8\.RELEASE")
+    for path in SKILLS.rglob("references/steps/*.md"):
+        assert not junk.search(path.read_text(encoding="utf-8")), path
+
+
+def test_the_jdk_25_mockito_requirement_is_stated_where_the_planner_and_modifier_read_it():
+    lib = (SKILLS / "java-8-to-25/references/legacy-library-modernization.md").read_text()
+    plan = (SKILLS / "java-8-to-25/references/steps/plan.md").read_text()
+    assert "5.17.0 fails, 5.23.0 passes on JDK 25" in lib and "ByteBuddy 1.17.7+" in lib
+    assert "an older 5.x cannot mock on JDK 25" in plan

@@ -893,22 +893,38 @@ def _validate_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
     sid = f"validate-{pattern}{'-' + suffix if suffix else ''}-{code['iter'] + 1}"
     run.state["build_signalled"] = False
     body = skill_steps.cli_instruction(spec.validate_skill) + " to validate the workspace and report the result."
+    # Java 8 -> 25 validations RUN the tests (VALIDATE_RUN_TESTS): a suite broken by the migration (a Mockito that
+    # cannot mock on the new JDK, a removed API in a test) must fail the stage, not surface after the run.
+    tests = pattern == P.JAVA_8_TO_25 and config.VALIDATE_RUN_TESTS
+    compile_cmd = "mvn -B clean test" if tests else "mvn -q -DskipTests clean test-compile"
+    package_cmd = "mvn -B clean package" if tests else "mvn -q -DskipTests clean package"
     if pattern == P.JAVA_8_TO_25 and suffix:
         st = next(s for s in INCREMENTAL_STAGES if s.idx == stage["idx"])
         body += (f" This is validating the '{st.title}' stage (Phase {st.phase}: {st.phase_title}) of an incremental "
                  f"migration — the build should target Java {st.java_release}.")
         if st.build_goal == "package":
-            body += (" For this stage run the `package` goal instead of `test-compile` (`mvn -q -DskipTests clean package`, or "
+            body += (f" For this stage run the `package` goal instead (`{package_cmd}`, or "
                      "`./gradlew assemble` for Gradle) so the new executable artifact is actually produced — a "
                      "failed repackage is a failed build.")
     if pattern == P.JAVA_8_TO_25 and not suffix and run.state.get("springboot_upgrade"):
         body += (" This big-bang run converts the application to a Spring Boot executable JAR: run the `package` goal "
-                 "instead of `test-compile` (`mvn -q -DskipTests clean package`, or `./gradlew clean bootJar`) so the "
+                 f"instead (`{package_cmd}`, or `./gradlew clean bootJar`) so the "
                  "artifact is really produced — a failed repackage is a failed build.")
+    if tests:
+        known = (json.loads(run.state.get("preflight_json") or "{}") or {}).get("baseline_failing_tests") or []
+        body += (f" Build command: `{compile_cmd}` (a package stage: `{package_cmd}`) — it RUNS THE TESTS, main and test "
+                 "sources compiled and the suite executed on this stage's JDK.\n\n"
+                 "## Tests\nA test that fails now and is not in the list below FAILS the validation: put each one in "
+                 "`errors` as `TEST: Class#method — the failure`, whatever its cause (a library that cannot work on "
+                 "this JDK, a removed API, a changed behaviour). A test the plan deliberately deleted or rewrote is "
+                 "not a failure. Zero tests run when the repository has tests is also a failure (a broken runner).\n"
+                 + ("Tests that ALREADY FAIL on the code as uploaded (before any change) — report them in `summary`, "
+                    "never fail the validation for them:\n" + "\n".join(f"- `{t}`" for t in known[:60])
+                    if known else "No test failed on the code as uploaded: every failure is the migration's."))
     note = spec.validator_note
     if build_pattern(run, pattern):
         note += (" This pass may also change the build (dependencies, the JDBC driver or client library) and Java "
-                 "code: ALSO build with ws_run_command (`mvn -q -DskipTests clean test-compile`, or `gradle clean testClasses`) — "
+                 f"code: ALSO build with ws_run_command (`{compile_cmd}`, or `gradle clean test`) — "
                  "it runs on the JDK of the Java stage this pass follows. The validation passes only when the "
                  "static check AND the build pass.")
     body += (f"\n\n{note}\n\nIf — and only if — the validation succeeded, call "

@@ -228,7 +228,7 @@ Goal: Java 25 — and, if a Spring Boot upgrade was requested, first move the fr
 ## Stage 6: Java 17 → Java 25 LTS
 - Compiler release → 25
 - Virtual threads for blocking-I/O thread pools, pattern matching for `switch`, record patterns, sequenced collections, unnamed variables (the checklist's 17→25 rows); `SecurityManager` removal
-- Library bumps needed for JDK 25 (e.g. Lombok 1.18.40+, Mockito 5.x) — never the Spring Boot version
+- Library bumps needed for JDK 25 (e.g. Lombok 1.18.40+, the newest Mockito 5.x with Byte Buddy 1.17.7+ pinned — an older 5.x cannot mock on JDK 25 and the stage's tests will fail) — never the Spring Boot version
 - **Verification that Phase 2's legacy cleanup really finished:** no `cglib`/`javassist` anywhere in the dependency tree (including transitively) — JDK 17+ strong encapsulation makes them throw `InaccessibleObjectException`, and `--add-opens` is not the fix; no remaining reflective access to JDK internals
 - **If `{springboot_upgrade}` is false and the app is on plain Spring 5.3:** Spring must move to 6.x in this stage, since 5.3 does not support Java 25 — which forces the Jakarta EE `javax.*` → `jakarta.*` rename here (never the Java SE `javax.sql`/`javax.naming`/`javax.crypto`/JAXP packages). List every renamed file. Never leave a Spring 5.3 application compiled at release 25
 
