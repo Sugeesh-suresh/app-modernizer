@@ -59,7 +59,9 @@ def _next(repo: Path) -> dict:
     return step
 
 
-def test_solr_run_end_to_end(tmp_path):
+def test_solr_run_end_to_end(tmp_path, monkeypatch):
+    from agents.shared import callbacks
+    monkeypatch.setattr(callbacks, "_LEARNING_ENABLED", True)      # learning on: still no curation step
     repo = _solr_repo(tmp_path)
     run = pipeline.start(repo, "solr-4-to-9")
     assert Path(run.state["baseline_dir"], "conf", "schema.xml").is_file()
@@ -118,8 +120,9 @@ def test_solr_run_end_to_end(tmp_path):
     _save(repo, report_step["id"], "# Report")
     pipeline.complete_step(Run.load(repo), report_step["id"])
 
-    done = _next(repo)                       # skill learning is off in tests: no curator step
-    assert done["kind"] == "done"
+    done = _next(repo)                       # the report is the last step: no skill-curation step follows
+    assert done["kind"] == "done" and not str(done.get("id", "")).startswith("curate")
+    assert Run.load(repo).state["pi"] == 1
     changes = (repo / ".modernizer" / "results" / "changes.md").read_text()
     assert "`conf/schema.xml`" in changes and ".modernizer" not in changes.split("|---|---|")[1]
 
@@ -408,7 +411,7 @@ def test_cli_path_never_imports_adk_or_the_web_server():
             "import cli.mcp_server, cli.discovery, cli.docs\n"
             "import agents.java_8_to_11.tools, agents.java_8_to_25.tools, agents.jsp_to_react_bff.tools\n"
             "import agents.solr_4_to_9.tools, agents.oracle_19c_to_23ai.tools, agents.tibco_ems_to_pubsub.tools\n"
-            "import agents.shared.change_audit, agents.shared.plan_coverage, agents.shared.skill_curator_tools\n")
+            "import agents.shared.change_audit, agents.shared.plan_coverage\n")
     result = subprocess.run([sys.executable, "-c", code], cwd=BACKEND, capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -568,3 +571,9 @@ def test_thymeleaf_spring_boot_oracle_and_solr4_search(tmp_path):
     if "UI_SCREENS.md" in {p.name for p in out.iterdir()}:
         screens = (out / "UI_SCREENS.md").read_text()
         assert screens.index("PG-01") < screens.index("PG-02")
+
+
+def test_no_curator_tool_is_registered_on_the_mcp_server():
+    names = {t.name for t in anyio.run(mcp_server.server.list_tools)}
+    assert "next_step" in names and "ws_write_file" in names
+    assert not [n for n in names if "curator" in n or n.endswith("_skill_file")]

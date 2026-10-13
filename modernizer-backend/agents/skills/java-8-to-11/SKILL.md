@@ -25,7 +25,7 @@ The pipeline runs the steps in this order, holds every change until a person app
 | 6 | `fix` | `references/steps/fix.md` | Repairs what the validation reported, inside the loop |
 | 7 | `report` | `references/steps/report.md` | The final migration report |
 
-Two more steps run in every migration and belong to shared skills: `code-review` (an independent review of the result against the plan) after the loop, and `skill-curator` (refines this skill from the run's evidence) at the very end.
+One more step runs in every migration and belongs to a shared skill: `code-review` (an independent review of the result against the plan) after the loop.
 
 ## Rules for every step
 

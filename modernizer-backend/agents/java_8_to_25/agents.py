@@ -58,7 +58,7 @@ from ..shared.learned_fixes import (
 from ..shared import skill_manifest, skill_steps
 from ..shared.rosters import PLAN_SKILL_ROSTERS
 from ..shared.plan_contract import make_plan_contract_callback
-from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
+from ..shared.review_and_curate import make_code_reviewer_agent
 from . import tools as fs_tools
 
 _MODEL = make_model()
@@ -191,13 +191,6 @@ build_loop = LoopAgent(
     max_iterations=config.BUILD_LOOP_MAX_ITERATIONS,
 )
 
-# Skills the skill-curator agent may refine for this pattern (bigbang and incremental alike).
-CURATED_SKILLS: list[str] = [
-    "java-8-to-25:plan", "java-8-to-25:modify",
-    "java-8-to-25:validate", "java-8-to-25:fix", "java-8-to-25:report",
-    "java-8-to-25:springboot-boot4", "java-8-to-25:readiness", "java-8-to-25:springboot-incremental",
-]
-
 code_reviewer_agent = make_code_reviewer_agent(
     _MODEL,
     FunctionTool(fs_tools.list_files),
@@ -222,19 +215,11 @@ reporter_agent = LlmAgent(
     include_contents="none",
 )
 
-skill_curator_agent = make_skill_curator_agent(
-    _MODEL,
-    allowed_skills=CURATED_SKILLS,
-    context_instruction=(
-        "## Confirmed Migration Plan\n{plan}\n\n## Modify Result\n{modify_result}\n\n"
-        "## Final Build Result\n{build_result}\n\n## Independent Code Review\n{code_review}"
-    ),
-)
 
 code_pipeline_bigbang = SequentialAgent(
     name="java8_code_pipeline_bigbang",
-    description="Applies the full Java 8 -> 25 migration plan in one pass, builds/fixes in a loop, reviews and reports the outcome, then curates the skill library.",
-    sub_agents=[modifier_agent, build_loop, code_reviewer_agent, reporter_agent, skill_curator_agent],
+    description="Applies the full Java 8 -> 25 migration plan in one pass, builds/fixes in a loop, reviews and reports the outcome.",
+    sub_agents=[modifier_agent, build_loop, code_reviewer_agent, reporter_agent],
 )
 
 
@@ -406,12 +391,3 @@ incremental_reporter_agent = LlmAgent(
     include_contents="none",
 )
 
-incremental_skill_curator_agent = make_skill_curator_agent(
-    _MODEL,
-    allowed_skills=CURATED_SKILLS,
-    context_instruction=(
-        "## Confirmed Migration Plan (all stages)\n{plan}\n\n"
-        + _incremental_stage_results
-        + "\n\n## Independent Code Review (of the final codebase, across all stages)\n{code_review}"
-    ),
-)

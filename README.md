@@ -93,7 +93,7 @@ The run also surfaces what it may not fix. JSPs compile on the **server's** JDK,
 ```
 upload → RE (Java 11 blockers + frozen-zone inventory) → HUMAN: review → plan (one stage, N tasks)
        → HUMAN: approve → modifier × N tasks (fresh context each) → build loop (mvn package + fence check)
-       → code review → report → skill curator → frozen-file restore → diff
+       → code review → report → frozen-file restore → diff
 ```
 
 ### Analysis-only pattern
@@ -289,8 +289,7 @@ flowchart TD
     CODE --> CONF[[Plan conformance<br/>vs. the approved manifest]]
     AUDIT --> CR[Code reviewer agent]
     CONF --> CR
-    CR --> REP[Reporter agent] --> CUR[Skill curator]
-    CUR --> OUT[Diff view · file browser · download]
+    CR --> REP[Reporter agent] --> OUT[Diff view · file browser · download]
 
     SNAP -.compared against.-> AUDIT
     SNAP -.compared against.-> CONF
@@ -347,7 +346,7 @@ Every pattern, every agent role and every skill also runs from a [Gemini CLI](ht
 # users: install the released extension from git (release branch `stable`)
 gemini extensions install https://github.com/sugeesh-suresh/app-modernizer.git --ref=stable --auto-update
 
-# development: link a checkout instead (edits and skill curation are live)
+# development: link a checkout instead (edits are live)
 node gemini-cli/install.mjs --link
 
 cd ~/src/legacy-app && gemini               # then: /reverse-engineer, or /modernize:start java-8-to-25
@@ -358,7 +357,7 @@ Releases are built and pushed with `node gemini-cli/build-release.mjs --push` (s
 | Piece | In Gemini CLI |
 |---|---|
 | Skills (`agents/skills/*`) | Loaded as Gemini CLI skills — the same files, shared with the web app |
-| Agents | Seven role subagents (`gemini-cli/agents/`): analyst, planner, coder, validator, reviewer, writer, curator |
+| Agents | Six role subagents (`gemini-cli/agents/`): analyst, planner, coder, validator, reviewer, writer |
 | Deterministic tools and checks | The `modernizer` MCP server (`modernizer-backend/cli/mcp_server.py`) calls the same functions: inventories, preflight, scope fence, approved-versions gate, validators, change audit, plan conformance, discovery's computed sections, grounding |
 | Orchestration and HITL gates | `cli/pipeline.py` / `cli/discovery.py`, a state machine kept in the repository's `.modernizer/` folder; `/modernize:approve` and `/modernize:refine` answer the gates |
 
@@ -440,8 +439,7 @@ flowchart TD
     J2 & SEQ --> REV
     COMPN --> REV
     REV[["Review evidence — no model<br/>change audit vs. baseline · plan conformance<br/>(files only another migration changed are set aside)"]] --> CR[Code reviewer]
-    CR --> REP[Reporter] --> CUR[Skill curator]
-    CUR --> FIN([changes.md + changes.patch · repository changed in place])
+    CR --> REP[Reporter] --> FIN([changes.md + changes.patch · repository changed in place])
 
     style G0 fill:#7c3aed,color:#fff
     style GA fill:#7c3aed,color:#fff
@@ -453,7 +451,7 @@ flowchart TD
     style REV fill:#0f766e,color:#fff
 ```
 
-Each pattern gets its own review, report and curation, in the order its code pass ends. In an incremental Java 8 → 25 run, the companions are reviewed after their own pass. The Java review covers all eight stages once the last one has passed. The web pipeline (`main.py`) follows the same order.
+Each pattern gets its own review and report, in the order its code pass ends. In an incremental Java 8 → 25 run, the companions are reviewed after their own pass. The Java review covers all eight stages once the last one has passed. The web pipeline (`main.py`) follows the same order.
 
 ---
 
@@ -527,9 +525,9 @@ agents/skills/oracle-19c-to-23ai/
   references/                 the migration's knowledge, shared by every step (baseline facts, checklist, patterns)
 ```
 
-Oracle, `solr-4-to-9` and `java-8-to-25` have no `re` step: their analysis is always the deterministic inventory. The same layout holds for `solr-4-to-9`, `tibco-ems-to-pubsub` (with an `re` step), `java-8-to-11` (with `re` and `re-module` steps), `java-8-to-25` (with the stage guides `readiness`, `springboot-incremental` and `springboot-boot4` as steps the modifier and fixer follow when a stage calls for them) and `jsp-to-react-bff` (with `classify`). Each agent is given the migration's skill and told which step file is its own; each step file names the knowledge files it needs — so the fixer, for example, sees the plan's checklist and the rewrite patterns. The pipeline, not the skill, decides which step runs and enforces the plan approval and the validate/fix loop. A step is named `"<migration>:<step>"` everywhere — the agents, the Gemini CLI briefs, the plan's Skill Composition table (`` `oracle-19c-to-23ai` › plan ``), the learned-fix targets and the curator's allow-list — through that one module. Skills that several pipelines share stay whole: `code-review`, `skill-curator`, the generators `react-frontend-generate` and `spring-boot-bff-generate`, and the reverse-engineering skills.
+Oracle, `solr-4-to-9` and `java-8-to-25` have no `re` step: their analysis is always the deterministic inventory. The same layout holds for `solr-4-to-9`, `tibco-ems-to-pubsub` (with an `re` step), `java-8-to-11` (with `re` and `re-module` steps), `java-8-to-25` (with the stage guides `readiness`, `springboot-incremental` and `springboot-boot4` as steps the modifier and fixer follow when a stage calls for them) and `jsp-to-react-bff` (with `classify`). Each agent is given the migration's skill and told which step file is its own; each step file names the knowledge files it needs — so the fixer, for example, sees the plan's checklist and the rewrite patterns. The pipeline, not the skill, decides which step runs and enforces the plan approval and the validate/fix loop. A step is named `"<migration>:<step>"` everywhere — the agents, the Gemini CLI briefs, the plan's Skill Composition table (`` `oracle-19c-to-23ai` › plan ``), and the learned-fix targets — through that one module. Skills that several pipelines share stay whole: `code-review`, the generators `react-frontend-generate` and `spring-boot-bff-generate`, and the reverse-engineering skills.
 
-After each run, a **skill curator** agent refines that pattern's own skills from concrete evidence — a real build error, a real review finding — with write access scoped to an explicit allow-list. Validators also append the errors they observe to their own step file (`references/steps/validate.md`) — the error only, with the repository's paths and line numbers removed, since the file is every later run's prompt.
+Validators append the errors they observe to their own step file (`references/steps/validate.md`) — the error only, with the repository's paths and line numbers removed, since the file is every later run's prompt.
 
 **Resolved build errors are fed forward to the agent that writes the code** (`shared/learned_fixes.py`). After fixing a build error, the fixer states in a `## Lessons` block the error verbatim, its cause, and a resolution written for any repository. Only lessons about errors the validator actually reported are kept, and they stay pending until the next validation. A lesson is published only if that validation no longer reports its error, or the build passes; a fix that did not work is dropped. Verified lessons go under `## Learned Fixes` in the pattern's **modify** step file (`<migration>/references/steps/modify.md`; for JSP → React, the React or BFF generator of the tree that failed) and in its fix step file. Repository paths and line numbers are removed, the newest resolution replaces an older one for the same error, and the section is capped at 25 entries. The next run's modifier reads the error, the cause and what to do before writing any code.
 
@@ -785,7 +783,7 @@ app-modernizer/
     │       ├── change_audit.py            # Relevance + coverage vs. the baseline
     │       ├── skill_manifest.py          # Skill composition table
     │       ├── diffing.py                 # Baseline snapshot + per-file diffs
-    │       ├── review_and_curate.py       # Code reviewer + skill curator factories
+    │       ├── review_and_curate.py       # Code reviewer factory
     │       ├── ux_designs.py              # UX design attachments (JSP → React)
     │       └── callbacks.py               # Loop exit + skill learning
     ├── tests/

@@ -403,7 +403,7 @@ async def _run_workspace_code_step(
     bundled pattern's code_pipeline runs against its own isolated internal
     ADK session (see _run_bundle_code_generation) — because every pattern's
     pipeline intentionally reuses identical ADK agent names
-    (modifier_agent/code_reviewer_agent/skill_curator_agent/...), running
+    (modifier_agent/code_reviewer_agent/...), running
     two different patterns' pipelines back-to-back in the SAME session
     corrupts Gemini's function-declaration bookkeeping (400 "Duplicate
     function declaration found: list_skills") — while the outward,
@@ -415,11 +415,10 @@ async def _run_workspace_code_step(
       fixer_agent         -> fix-stream       (also emits fix-agent-start)
       code_reviewer_agent -> review-stream    (runs after build_loop, before reporter_agent)
       reporter_agent      -> report-stream
-      skill_curator_agent -> curator-stream   (runs last, after reporter_agent)
 
     After the pipeline completes: emits validation-complete from
-    build_result, code-review-ready from code_review, report-ready from
-    final_report, and skill-curator-ready from skill_curator_summary.
+    build_result, code-review-ready from code_review, and report-ready from
+    final_report.
     """
     push_session_id = push_session_id or session_id
     runner = PATTERN_RUNNERS[pattern][code_key]
@@ -461,8 +460,6 @@ async def _run_workspace_code_step(
                 sse_type = "review-stream"
             elif author == "reporter_agent":
                 sse_type = "report-stream"
-            elif author == "skill_curator_agent":
-                sse_type = "curator-stream"
             else:
                 continue  # skip SequentialAgent / LoopAgent envelope events
 
@@ -476,7 +473,7 @@ async def _run_workspace_code_step(
         if iteration == 0:
             raise  # failed before the build/compile loop started — surface it as a real error
         # Once the build/compile loop has run, the migration is reported as complete regardless
-        # of errors (in the loop itself, or in the reviewer/reporter/curator that follow it).
+        # of errors (in the loop itself, or in the reviewer/reporter that follow it).
         traceback.print_exc()
 
     state = await _get_state(session_id)
@@ -499,16 +496,12 @@ async def _run_workspace_code_step(
     if final_report:
         await _push(push_session_id, "report-ready", content=final_report)
 
-    skill_curator_summary = state.get("skill_curator_summary", "")
-    if skill_curator_summary:
-        await _push(push_session_id, "skill-curator-ready", content=skill_curator_summary)
-
 
 async def _run_standalone_agent(session_id: str, runner, message: str, sse_event_type: str) -> None:
     """Run one single-agent runner to completion, streaming all of its text
     under one fixed SSE event type. Used for the incremental java-8-to-25
-    path's code-reviewer/reporter/skill-curator steps, which — unlike the
-    single-stage patterns' SequentialAgent-wired versions — run as three
+    path's code-reviewer/reporter steps, which — unlike the
+    single-stage patterns' SequentialAgent-wired versions — run as two
     separate runner calls (each stage's own pipeline already ended)."""
     content = types.Content(role="user", parts=[types.Part(text=message)])
     try:
@@ -544,7 +537,7 @@ async def _run_java8_incremental_code_step(
     stage's build loop then runs once, over the finished stage.
 
     Emits `stage-start`/`stage-complete` per stage, `task-start`/`task-complete`
-    per task, then runs the separate incremental reviewer/reporter/curator
+    per task, then runs the separate incremental reviewer/reporter
     runners once, over every stage.
 
     `between` (a coroutine function) runs once the stages up to
@@ -645,7 +638,7 @@ async def _run_java8_incremental_code_step(
             if from_plan:
                 await _push(push_session_id, "task-complete", **stage_meta, **task_meta)
 
-        # The reviewer, reporter and curator read one modify result per stage, not one per task.
+        # The reviewer and reporter read one modify result per stage, not one per task.
         await _update_state(session_id, {f"modify_result_stage{idx}": "\n\n".join(summaries).strip()})
 
         build_runner = PATTERN_RUNNERS["java-8-to-25"][f"code_stage_{idx}_build"]
@@ -732,20 +725,10 @@ async def _run_java8_incremental_code_step(
     if final_report:
         await _push(push_session_id, "report-ready", content=final_report)
 
-    await _run_standalone_agent(
-        session_id, PATTERN_RUNNERS["java-8-to-25"]["incremental_skill_curator"],
-        "Curate the java-8-to-25 skill library based on this completed incremental run.",
-        "curator-stream",
-    )
-    state = await _get_state(session_id)
-    skill_curator_summary = state.get("skill_curator_summary", "")
-    if skill_curator_summary:
-        await _push(push_session_id, "skill-curator-ready", content=skill_curator_summary)
-
 
 async def _run_java11_code_step(session_id: str, push_session_id: str | None = None) -> None:
     """Run the java-8-to-11 code phase: the modifier once per plan task, then
-    the build loop, reviewer, reporter and curator once over the result.
+    the build loop, reviewer and reporter once over the result.
 
     The plan's single `## Stage 1: Java 8 → Java 11` section is split into its
     `### Task` blocks (agents/shared/plan_tasks.py) and each is applied by its
@@ -850,7 +833,7 @@ async def _run_java11_code_step(session_id: str, push_session_id: str | None = N
                f"new one in Mockito 2.x/3.x):\n{shown}" if rewritten else f"Not applied: {why_not}.")
         )
 
-    # The build loop, reviewer, reporter and curator read one modify result for the run.
+    # The build loop, reviewer and reporter read one modify result for the run.
     await _update_state(session_id, {"modify_result": "\n\n".join(summaries).strip(), "current_task": ""})
     await _run_workspace_code_step(session_id, _JAVA_8_TO_11, "code_finish", push_session_id=push_session_id)
 
@@ -991,11 +974,10 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
         "fix_result": "",
         "code_review": "",
         "final_report": "",
-        "skill_curator_summary": "",
         "workflow_step": "upload",
     }
     # Every stage's keys exist up front (even the Spring Boot stages a run skips) so the
-    # incremental reviewer/reporter/curator instructions can always resolve their placeholders.
+    # incremental reviewer/reporter instructions can always resolve their placeholders.
     for stage in INCREMENTAL_STAGES:
         state[f"modify_result_stage{stage.idx}"] = ""
         state[f"build_result_stage{stage.idx}"] = ""
@@ -1007,7 +989,7 @@ def _initial_state(pattern: str, workspace_dir: str, baseline_dir: str, graph_js
     for p in _CORE_PATTERNS:
         for key in (
             "brd", "technical_spec", "test_inventory", "plan", "modify_result",
-            "build_result", "code_review", "final_report", "skill_curator_summary",
+            "build_result", "code_review", "final_report",
         ):
             state[f"{key}_{p}"] = ""
     return state
@@ -2106,7 +2088,7 @@ async def _create_pattern_session(
     """Creates a fresh, isolated ADK session for running one bundled pattern's
     code_pipeline. Required because every pattern's code_pipeline
     intentionally reuses identical ADK agent names (modifier_agent,
-    validator_agent, fixer_agent, code_reviewer_agent, skill_curator_agent,
+    validator_agent, fixer_agent, code_reviewer_agent,
     reporter_agent) — running two different patterns' pipelines back-to-back
     against the SAME session corrupts Gemini's function-declaration
     bookkeeping (400 "Duplicate function declaration found: list_skills").
@@ -2198,7 +2180,6 @@ async def _run_bundle_code_generation(session_id: str, bundle: list[str]) -> Non
             f"build_result_{pattern}": result_state.get("build_result", ""),
             f"code_review_{pattern}": result_state.get("code_review", ""),
             f"final_report_{pattern}": result_state.get("final_report", ""),
-            f"skill_curator_summary_{pattern}": result_state.get("skill_curator_summary", ""),
         })
 
     primary = outward_state.get("pattern")
@@ -2232,19 +2213,15 @@ async def _run_bundle_code_generation(session_id: str, bundle: list[str]) -> Non
 
     combined_report = _combine("final_report")
     combined_review = _combine("code_review")
-    combined_curator = _combine("skill_curator_summary")
 
     await _update_state(session_id, {
         "final_report": combined_report,
         "code_review": combined_review,
-        "skill_curator_summary": combined_curator,
     })
     if combined_report:
         await _push(session_id, "report-ready", content=combined_report)
     if combined_review:
         await _push(session_id, "code-review-ready", content=combined_review)
-    if combined_curator:
-        await _push(session_id, "skill-curator-ready", content=combined_curator)
 
 
 # ---------------------------------------------------------------------------

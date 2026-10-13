@@ -1,4 +1,4 @@
-import { Brain, FileText, GitBranch, Code2, ShieldCheck, Wrench, CheckCircle2, Network, Search, Sparkles, Circle, Loader2 } from 'lucide-react';
+import { Brain, FileText, GitBranch, Code2, ShieldCheck, Wrench, CheckCircle2, Network, Search, Circle, Loader2 } from 'lucide-react';
 import type { PatternId, WorkflowStep, CodeSubStep, ValidationResult, StageResult, TaskProgress } from '../types';
 import { phasesForRun } from '../data/incrementalStages';
 
@@ -6,7 +6,6 @@ const SUB_STEP_BADGE: Partial<Record<CodeSubStep, { icon: React.ReactNode; label
   validating: { icon: <ShieldCheck size={13} />, label: 'Validating…', color: 'bg-blue-500/10 text-blue-600 border-blue-500/20' },
   fixing: { icon: <Wrench size={13} />, label: 'Fixing issues…', color: 'bg-rose-500/10 text-rose-600 border-rose-500/20' },
   reviewing: { icon: <Search size={13} />, label: 'Independent code review…', color: 'bg-cyan-500/10 text-cyan-600 border-cyan-500/20' },
-  curating: { icon: <Sparkles size={13} />, label: 'Curating the skill library…', color: 'bg-violet-500/10 text-violet-600 border-violet-500/20' },
 };
 
 const STEP_CONFIG: Record<string, { icon: React.ReactNode; title: string; subtitle: string; color: string }> = {

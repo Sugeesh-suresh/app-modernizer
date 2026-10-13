@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   Code2, Copy, CheckCheck, FolderTree, PartyPopper, FileArchive, FileText,
   ChevronDown, ChevronUp, GitCompare, PlusCircle, MinusCircle, PencilLine,
-  Search, Sparkles,
+  Search,
 } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -23,8 +23,6 @@ interface Props {
   codeReview?: string;
   /** reporter_agent's closing summary */
   report?: string;
-  /** skill_curator_agent's summary of skill-library refinements (runs last) */
-  skillCuratorSummary?: string;
   onStartNew: () => void;
 }
 
@@ -109,7 +107,7 @@ function normaliseLanguage(lang: string): string {
 }
 
 export function CodeOutput({
-  sessionId, files, filesTotal, changedFiles, pattern, codeReview, report, skillCuratorSummary,
+  sessionId, files, filesTotal, changedFiles, pattern, codeReview, report,
   onStartNew,
 }: Props) {
   // On a large repository the browsable list is a capped preview of the result;
@@ -187,16 +185,6 @@ export function CodeOutput({
           icon={<FileText size={15} className="text-slate-600" />}
           content={report}
           defaultOpen={true}
-        />
-      )}
-
-      {/* skill_curator_agent's summary -- the last thing the pipeline does */}
-      {skillCuratorSummary && (
-        <CollapsiblePanel
-          title="Skill Library Updates"
-          icon={<Sparkles size={15} className="text-violet-600" />}
-          content={skillCuratorSummary}
-          defaultOpen={false}
         />
       )}
 

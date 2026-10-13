@@ -73,7 +73,7 @@ class FallbackGemini(Gemini):
 # Which role an agent plays, from its name. Order matters: first match wins.
 _ROLE_RULES: list[tuple[str, str]] = [
     (r"code_reviewer|reviewer", "review"),
-    (r"skill_curator|curator|reporter", "report"),
+    (r"reporter", "report"),
     (r"plan", "plan"),
     (r"validator", "check"),
     (r"fixer", "fix"),

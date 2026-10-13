@@ -13,7 +13,6 @@ import re
 import main
 from agents import APP_NAME, PATTERN_RUNNERS, USER_ID, session_service
 from agents.java_8_to_25.agents import (
-    CURATED_SKILLS,
     INCREMENTAL_STAGES,
     incremental_reporter_agent,
     incremental_stages,
@@ -110,11 +109,10 @@ def test_plan_skill_emits_every_stage_heading():
         assert f"`## Stage {position}: {stage.title}`" in plan_skill, stage.title
 
 
-def test_every_stage_skill_exists_and_is_curated():
+def test_every_stage_skill_exists():
     for stage in INCREMENTAL_STAGES:
         for name in stage.extra_skills:
             assert skill_steps.file(name).is_file(), name
-            assert name in CURATED_SKILLS, name
 
 
 def test_a_runner_is_registered_per_stage():

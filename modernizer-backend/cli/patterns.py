@@ -34,7 +34,6 @@ class Pattern:
     report_skill: str
     validator: str = ""                     # deterministic validator in tools_module ("" = build only)
     fenced: bool = False                    # writes go through the scope fence (Java 11)
-    curator_skills: tuple[str, ...] = field(default=())
     validator_note: str = ""
 
     @property
@@ -50,9 +49,6 @@ PATTERNS: dict[str, Pattern] = {
         JAVA_8_TO_25, "Java 8 → Java 25", "agents.java_8_to_25.tools",
         (), "java-8-to-25:plan", ("java-8-to-25:modify",),
         "java-8-to-25:validate", "java-8-to-25:fix", "java-8-to-25:report",
-        curator_skills=("java-8-to-25:plan", "java-8-to-25:modify", "java-8-to-25:validate",
-                        "java-8-to-25:fix", "java-8-to-25:report", "java-8-to-25:readiness",
-                        "java-8-to-25:springboot-incremental", "java-8-to-25:springboot-boot4"),
         validator_note="Build with ws_run_command (`mvn -q -DskipTests clean test-compile` — main and test sources, "
                        "no stale output — or `gradle clean testClasses`).",
     ),
@@ -61,8 +57,6 @@ PATTERNS: dict[str, Pattern] = {
         ("java-8-to-11:re",), "java-8-to-11:plan", ("java-8-to-11:modify",),
         "java-8-to-11:validate", "java-8-to-11:fix", "java-8-to-11:report",
         validator="run_java11_build", fenced=True,
-        curator_skills=("java-8-to-11:re", "java-8-to-11:re-module", "java-8-to-11:plan", "java-8-to-11:modify",
-                        "java-8-to-11:validate", "java-8-to-11:fix", "java-8-to-11:report"),
         validator_note=("Call ws_validate (runs `mvn clean package` on the migration JDK and classifies every "
                         "problem) and ws_check_invariants (the scope fence) — both must pass."),
     ),
@@ -71,8 +65,6 @@ PATTERNS: dict[str, Pattern] = {
         (), "solr-4-to-9:plan", ("solr-4-to-9:modify",),
         "solr-4-to-9:validate", "solr-4-to-9:fix", "solr-4-to-9:report",
         validator="validate_solr_config",
-        curator_skills=("solr-4-to-9:plan", "solr-4-to-9:modify", "solr-4-to-9:validate",
-                        "solr-4-to-9:fix", "solr-4-to-9:report"),
         validator_note="Call ws_validate (static Solr config check: well-formedness and removed elements/classes).",
     ),
     "oracle-19c-to-23ai": Pattern(
@@ -80,8 +72,6 @@ PATTERNS: dict[str, Pattern] = {
         (), "oracle-19c-to-23ai:plan", ("oracle-19c-to-23ai:modify",),
         "oracle-19c-to-23ai:validate", "oracle-19c-to-23ai:fix", "oracle-19c-to-23ai:report",
         validator="validate_sql_syntax",
-        curator_skills=("oracle-19c-to-23ai:plan", "oracle-19c-to-23ai:modify",
-                        "oracle-19c-to-23ai:validate", "oracle-19c-to-23ai:fix", "oracle-19c-to-23ai:report"),
         validator_note="Call ws_validate (static SQL / PL/SQL check).",
     ),
     "tibco-ems-to-pubsub": Pattern(
@@ -89,8 +79,6 @@ PATTERNS: dict[str, Pattern] = {
         ("tibco-ems-to-pubsub:re",), "tibco-ems-to-pubsub:plan", ("tibco-ems-to-pubsub:modify",),
         "tibco-ems-to-pubsub:validate", "tibco-ems-to-pubsub:fix", "tibco-ems-to-pubsub:report",
         validator="validate_pubsub_mapping",
-        curator_skills=("tibco-ems-to-pubsub:re", "tibco-ems-to-pubsub:plan", "tibco-ems-to-pubsub:modify",
-                        "tibco-ems-to-pubsub:validate", "tibco-ems-to-pubsub:fix", "tibco-ems-to-pubsub:report"),
         validator_note=("Build with ws_run_command when there is a pom.xml/build.gradle; otherwise call "
                         "ws_validate (static Pub/Sub mapping check)."),
     ),
@@ -99,9 +87,6 @@ PATTERNS: dict[str, Pattern] = {
         ("jsp-to-react-bff:re", "jsp-to-react-bff:classify"), "jsp-to-react-bff:plan",
         ("spring-boot-bff-generate", "react-frontend-generate"),
         "jsp-to-react-bff:validate", "jsp-to-react-bff:fix", "jsp-to-react-bff:report",
-        curator_skills=("jsp-to-react-bff:re", "jsp-to-react-bff:classify", "jsp-to-react-bff:plan", "spring-boot-bff-generate",
-                        "react-frontend-generate", "jsp-to-react-bff:validate", "jsp-to-react-bff:fix",
-                        "jsp-to-react-bff:report"),
         validator_note=("Build both trees with ws_run_command: `mvn -q -DskipTests compile` with subdir "
                         "`backend`, then `npm install` and `npm run build` with subdir `frontend`."),
     ),

@@ -6,7 +6,6 @@ from google.adk.skills import load_skill_from_dir
 
 from agents.shared import rosters, skill_manifest, skill_steps
 from agents.shared.learned_fixes import skill_targets
-from agents.shared.skill_curator_tools import make_skill_curator_tools
 from cli import patterns as P
 
 MIGRATIONS = ["oracle-19c-to-23ai", "solr-4-to-9", "tibco-ems-to-pubsub", "java-8-to-11", "java-8-to-25",
@@ -45,7 +44,7 @@ def test_every_step_the_pipelines_name_resolves():
     named = [n for roster in rosters.PLAN_SKILL_ROSTERS.values() for n, _ in roster]
     for spec in P.PATTERNS.values():
         named += [*spec.re_skills, spec.plan_skill, *spec.modify_skills, spec.validate_skill, spec.fix_skill,
-                  spec.report_skill, *spec.curator_skills]
+                  spec.report_skill]
     from agents.java_8_to_25.stages import INCREMENTAL_STAGES
     named += [n for st in INCREMENTAL_STAGES for n in st.extra_skills]
     missing = sorted({n for n in named if not skill_steps.exists(n)})
@@ -79,13 +78,10 @@ def test_step_names_paths_labels_and_directives():
     assert [s.name for s in toolset._list_skills()] == ["java-8-to-25"]
 
 
-def test_lessons_and_curation_reach_the_step_files_in_the_one_skill_folder(tmp_path):
+def test_lessons_reach_the_step_files_in_the_one_skill_folder(tmp_path):
     paths = skill_targets(tmp_path, "oracle-19c-to-23ai:modify", "oracle-19c-to-23ai:fix")({})
     assert [p.relative_to(tmp_path).as_posix() for p in paths] == [
         "oracle-19c-to-23ai/references/steps/modify.md", "oracle-19c-to-23ai/references/steps/fix.md"]
-    list_files, read_file, _ = make_skill_curator_tools(["oracle-19c-to-23ai:plan", "oracle-19c-to-23ai:fix"])
-    assert "references/steps/fix.md" in list_files("oracle-19c-to-23ai")
-    assert read_file("solr-4-to-9", "SKILL.md").startswith("ERROR")
 
 
 def test_inventory_only_migrations_have_no_reverse_engineering_step(monkeypatch):
@@ -102,7 +98,7 @@ def test_inventory_only_migrations_have_no_reverse_engineering_step(monkeypatch)
         assert not (skill_steps.SKILLS_DIR / m / "references" / "steps" / "re.md").exists(), m
         assert "`re`" not in (skill_steps.SKILLS_DIR / m / "SKILL.md").read_text(encoding="utf-8"), m
         spec = patterns.PATTERNS[m]
-        assert not spec.re_skills and f"{m}:re" not in spec.curator_skills, m
+        assert not spec.re_skills, m
         assert pipeline._uses_inventory(m) and main._uses_inventory(m, False), m
         assert not main._analysis_review(m), m
     assert not pipeline._uses_inventory("tibco-ems-to-pubsub")       # still has its agent

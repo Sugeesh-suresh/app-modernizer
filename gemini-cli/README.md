@@ -33,8 +33,8 @@ of time so the first Gemini session does not wait). `--auto-update` (or `gemini 
 stella-modernizer`) replaces the copy with the branch's latest release.
 
 Settings go in `~/.modernizer/.env` (the same keys as `modernizer-backend/.env.example`): an update replaces the
-installed folder, so a `.env` inside it would be lost. The skill curator's edits to an installed copy are lost on
-update as well — skills are improved in a checkout (option B) and released.
+installed folder, so a `.env` inside it would be lost. Skill edits made in an installed copy are lost on
+update — skills are improved in a checkout (option B) and released.
 
 ### Option B — link a checkout (development)
 
@@ -43,8 +43,8 @@ git clone -b CLI-modernizer https://github.com/sugeesh-suresh/app-modernizer.git
 node gemini-cli/install.mjs --link          # Python env (modernizer-backend/.venv-cli) + skills link + gemini extensions link
 ```
 
-Linked, the extension runs this checkout's code and skills directly: edits are live, and a skill curator run
-updates the skills in place. Settings come from `modernizer-backend/.env` (then `~/.modernizer/.env` for keys it
+Linked, the extension runs this checkout's code and skills directly: edits are live, and the skill
+learning updates the skills in place. Settings come from `modernizer-backend/.env` (then `~/.modernizer/.env` for keys it
 does not set). Use `link` for a checkout — `gemini extensions install <path>` would copy it and leave the skills
 link behind.
 
@@ -126,7 +126,7 @@ the data bottom-up (`layer-data-trace`).
 `/modernize:export` writes Word copies to `.modernizer/export/`.
 
 After the plan is approved the run goes on by itself: modifier per plan task (per stage for Java 8 → 25
-incremental), the real build in a validate/fix loop, the independent code review, the report, skill curation,
+incremental), the real build in a validate/fix loop, the independent code review, the report,
 the scope-fence restore (Java 8 → 11) and the diff. Results are in `.modernizer/results/<pattern>/`
 (`final_report.md`, `code_review.md`, `build_result*.json`) and `.modernizer/results/changes.md` /
 `changes.patch`. The repository as it was is kept under `~/.modernizer/baselines/` (`MODERNIZER_HOME`).
@@ -147,7 +147,7 @@ for Java 8 → 11 — anything outside the scope fence. Java 8 → 25 also remov
 (`web.xml`, Spring XML contexts) with `ws_delete_file`, one file per call. `ws_run_command` builds on the JDK the
 preflight assigned to the running stage's Java release. The validator can only build and check; success is
 recorded only through `ws_signal_build_success`, which refuses while an approved-versions or fence check fails.
-The reviewer gets the change audit and plan conformance; the curator can write only its pattern's skills.
+The reviewer gets the change audit and plan conformance.
 
 
 ### Parallel batches
@@ -163,7 +163,7 @@ on a group — a pass's merge, the rules finalisation, the writers — waits unt
 ### Skills learn from runs
 
 A run writes what it learns into the extension's own skill files: verified fixes into the pattern's `modify` and
-`fix` step files, validation errors into its `validate` step file, and the curator's edits. That is how the
+`fix` step files, validation errors into its `validate` step file. That is how the
 skills improve, and every later run on this machine reads them. Set `MODERNIZER_SKILL_LEARNING=0` in
 `~/.modernizer/.env` for trial runs, or where several people share one installation. An extension update
 replaces the files (and what they learned).

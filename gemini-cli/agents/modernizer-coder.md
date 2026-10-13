@@ -49,7 +49,6 @@ The skills were written for the web pipeline and name its tools. Here they are:
 | `check_java11_invariants` | `mcp_modernizer_ws_check_invariants` |
 | `signal_build_success` | `mcp_modernizer_ws_signal_build_success` |
 | `audit_migration_changes` / `compare_plan_to_actual_changes` | `mcp_modernizer_ws_audit_changes` / `mcp_modernizer_ws_compare_plan_to_changes` |
-| `list_skill_files` / `read_skill_file` / `write_skill_file` | `mcp_modernizer_curator_list_skill_files` / `..._read_skill_file` / `..._write_skill_file` |
 
 Use only the tools you have; a tool the table names that is not in your tool list is not part of your role.
 Where a skill says to return or output its result, save it with `mcp_modernizer_save_output` instead.

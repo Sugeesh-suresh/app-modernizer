@@ -169,8 +169,6 @@ class Scripted(BaseLlm):
         elif skill == "code-review":
             order = [t for t in ("audit_migration_changes", "compare_plan_to_actual_changes") if t in tools]
             yield self._reply(call=(order[n], {})) if n < len(order) else self._reply("## Code Review\nNo findings.")
-        elif skill == "skill-curator":
-            yield self._reply("## Skill Curator Summary\nNo changes made — nothing in this run surfaced a gap.")
         elif step == "report":
             yield self._reply("# Migration Report\nDone.")
         elif {"write_file", "replace_in_file", "read_file", "list_files"} <= tools:
@@ -319,7 +317,7 @@ def test_every_pipeline_runs_end_to_end_through_the_real_runners(scripted, tmp_p
     assert any(s.endswith(":plan") for s in skills)
     assert any(s.endswith(":validate") for s in skills), skills
     assert any(s.endswith(":report") for s in skills), skills
-    assert "code-review" in skills and "skill-curator" in skills
+    assert "code-review" in skills and "skill-curator" not in skills
     diff = next(e for e in events if e["type"] == "diff-ready")
     if pattern == "jsp-to-react-bff":
         assert {"backend/pom.xml", "frontend/package.json"} <= {f["path"] for f in diff["changed_files"]}

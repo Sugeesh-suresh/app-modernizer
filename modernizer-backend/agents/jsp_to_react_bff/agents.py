@@ -49,7 +49,7 @@ from ..shared.learned_fixes import (
 from ..shared import skill_manifest, skill_steps
 from ..shared.rosters import PLAN_SKILL_ROSTERS
 from ..shared.plan_contract import make_plan_contract_callback
-from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
+from ..shared.review_and_curate import make_code_reviewer_agent
 from ..shared.ux_designs import make_ux_design_callback
 from . import tools as fs_tools
 
@@ -260,25 +260,12 @@ reporter_agent = LlmAgent(
     include_contents="none",
 )
 
-skill_curator_agent = make_skill_curator_agent(
-    _MODEL,
-    allowed_skills=[
-        "jsp-to-react-bff:re", "jsp-to-react-bff:classify", "jsp-to-react-bff:plan",
-        "react-frontend-generate", "spring-boot-bff-generate",
-        "jsp-to-react-bff:validate", "jsp-to-react-bff:fix", "jsp-to-react-bff:report",
-    ],
-    context_instruction=(
-        "## Confirmed Migration Plan\n{plan}\n\n## Backend Generation Result\n{backend_generate_result}\n\n"
-        "## Frontend Generation Result\n{frontend_generate_result}\n\n"
-        "## Final Build Result (both trees)\n{build_result}\n\n## Independent Code Review\n{code_review}"
-    ),
-)
 
 code_pipeline = SequentialAgent(
     name="jsp_code_pipeline",
-    description="Generates the BFF backend then the React frontend, builds/fixes both in a loop, reviews and reports the outcome, then curates the skill library.",
+    description="Generates the BFF backend then the React frontend, builds/fixes both in a loop, reviews and reports the outcome.",
     sub_agents=[
         backend_generator_agent, frontend_generator_agent, build_loop,
-        code_reviewer_agent, reporter_agent, skill_curator_agent,
+        code_reviewer_agent, reporter_agent,
     ],
 )

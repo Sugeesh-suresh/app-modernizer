@@ -1,6 +1,6 @@
 """
-Shared factories for the two cross-cutting agents every pattern's code
-pipeline ends with:
+Shared factory for the cross-cutting code reviewer every pattern's code
+pipeline runs after its build loop:
 
   code_reviewer_agent -- runs right after the build/validate/fix loop, on
       the final (built or best-effort) code. An independent second pair
@@ -17,21 +17,10 @@ pipeline ends with:
       approved -- files promised but untouched, files touched but never
       approved, files the plan said to leave alone.
 
-  skill_curator_agent -- runs LAST, after the code reviewer and the
-      reporter, and refines that pattern's own skill files based on
-      concrete evidence from this run (a real build error, a real review
-      finding, a real ambiguity the generator had to resolve) so future
-      runs of the same pattern start from a better skill library. Its
-      write access is scoped to exactly the skills passed in
-      `allowed_skills` — see agents/shared/skill_curator_tools.py.
-
-Every pattern's agents.py calls these two factories with its own model
-and tools/context, then appends both agents at the end of its
-SequentialAgent (after reporter_agent). main.py's author-routing (see
-_CODE_STREAM_AUTHORS and the code_reviewer_agent/skill_curator_agent
-branches in _run_workspace_code_step) streams their output to the
-`review-stream`/`code-review-ready` and `curator-stream`/
-`skill-curator-ready` SSE events respectively.
+Every pattern's agents.py calls this factory with its own model and
+tools/context. main.py's author-routing (see _CODE_STREAM_AUTHORS and the
+code_reviewer_agent branch in _run_workspace_code_step) streams its output
+to the `review-stream`/`code-review-ready` SSE events.
 """
 import pathlib
 
@@ -42,7 +31,6 @@ from google.adk.tools.skill_toolset import SkillToolset
 
 from .change_audit import audit_migration_changes
 from .plan_coverage import compare_plan_to_actual_changes
-from .skill_curator_tools import make_skill_curator_tools
 
 _SKILLS_DIR = pathlib.Path(__file__).parent.parent / "skills"
 
@@ -87,33 +75,5 @@ def make_code_reviewer_agent(model, list_files_tool, read_file_tool, context_ins
             read_file_tool,
         ],
         output_key="code_review",
-        include_contents="none",
-    )
-
-
-def make_skill_curator_agent(model, allowed_skills: list[str], context_instruction: str) -> LlmAgent:
-    """*context_instruction* supplies the pattern-specific `{...}` template
-    block referencing this run's plan/generation/build/review results."""
-    from .skill_steps import skills as _folders
-    allowed_skills = _folders(*allowed_skills)    # steps of one migration share its skill folder
-    list_skill_files, read_skill_file, write_skill_file = make_skill_curator_tools(allowed_skills)
-    skills_bullets = "\n".join(f"- {s}" for s in allowed_skills)
-    return LlmAgent(
-        name="skill_curator_agent",
-        model=model,
-        description="Refines this pattern's own skill files based on concrete evidence from this run, so future runs of this pattern benefit.",
-        instruction=(
-            "Load and execute the `skill-curator` skill. This is the LAST step of the pipeline, run "
-            "after all code changes, the build/validate/fix loop, and the independent code review are "
-            "already complete. Your write access is restricted to exactly these skills — every tool "
-            f"call is rejected outside this set:\n{skills_bullets}\n\n" + context_instruction
-        ),
-        tools=[
-            _load_skill("skill-curator"),
-            FunctionTool(list_skill_files),
-            FunctionTool(read_skill_file),
-            FunctionTool(write_skill_file),
-        ],
-        output_key="skill_curator_summary",
         include_contents="none",
     )

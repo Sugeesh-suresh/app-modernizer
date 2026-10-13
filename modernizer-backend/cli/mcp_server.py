@@ -13,9 +13,7 @@ Three groups of tools:
 - **workspace** (ws_*) — the subagents' write, build and check tools: the same
   functions as the ADK agents' tools (agents/<pattern>/tools.py), so the Java 11
   scope fence, the approved-versions gate, the build classification and the
-  change audit behave exactly as in the web pipeline;
-- **curator** — the skill curator's skill-file tools, restricted to the
-  pattern's own skills.
+  change audit behave exactly as in the web pipeline.
 
 Usage outside Gemini CLI: `python -m cli.mcp_server` (stdio).
 """
@@ -540,36 +538,6 @@ async def ws_compare_plan_to_changes(workspace: str = "") -> str:
         run = _load(workspace)
         return plan_coverage.compare_plan_to_actual_changes(run.tool_context())
     return await _run(body)
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# Skill curator
-# ═════════════════════════════════════════════════════════════════════════════
-
-def _curator_tools(run: Run):
-    from agents.shared.skill_curator_tools import make_skill_curator_tools
-    allowed = run.state.get("curator_skills")
-    if not allowed:
-        raise RunError("Skill files are only written during the run's skill-curation step.")
-    return make_skill_curator_tools(allowed)
-
-
-@server.tool()
-async def curator_list_skill_files(skill_name: str, workspace: str = "") -> str:
-    """List the files of one skill this run's curator may edit (SKILL.md and references/)."""
-    return await _run(lambda: _curator_tools(_load(workspace))[0](skill_name))
-
-
-@server.tool()
-async def curator_read_skill_file(skill_name: str, relative_path: str, workspace: str = "") -> str:
-    """Read one file of a skill this run's curator may edit, e.g. relative_path="SKILL.md"."""
-    return await _run(lambda: _curator_tools(_load(workspace))[1](skill_name, relative_path))
-
-
-@server.tool()
-async def curator_write_skill_file(skill_name: str, relative_path: str, content: str, workspace: str = "") -> str:
-    """Write one file of a skill this run's curator may edit. Rejected for any other skill."""
-    return await _run(lambda: _curator_tools(_load(workspace))[2](skill_name, relative_path, content))
 
 
 def main() -> None:

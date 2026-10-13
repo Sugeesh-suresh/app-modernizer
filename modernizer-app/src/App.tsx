@@ -49,7 +49,6 @@ const INITIAL_STATE: WorkflowState = {
   currentTask: null,
   codeReview: '',
   finalReport: '',
-  skillCuratorSummary: '',
   refining: false,
   companionRecommendations: [],
   screenshotsOffer: null,
@@ -262,26 +261,6 @@ export default function App() {
         setState((s) => ({
           ...s,
           codeReview: event.content ?? '',
-          streamingContent: '',
-          codeSubStep: 'generating',
-        }));
-        break;
-
-      // ── Skill curator (runs last, after the reporter) ─────────────────────
-
-      case 'curator-stream':
-        setState((s) => ({
-          ...s,
-          codeSubStep: 'curating',
-          streamingContent: s.streamingContent + (event.content ?? ''),
-          progressMessage: 'Curating the skill library…',
-        }));
-        break;
-
-      case 'skill-curator-ready':
-        setState((s) => ({
-          ...s,
-          skillCuratorSummary: event.content ?? '',
           streamingContent: '',
           codeSubStep: 'generating',
         }));
@@ -674,7 +653,6 @@ export default function App() {
             pattern={patternConfig?.title ?? state.pattern ?? ''}
             codeReview={state.codeReview}
             report={state.finalReport}
-            skillCuratorSummary={state.skillCuratorSummary}
             onStartNew={handleStartNew}
           />
         )}

@@ -4,7 +4,7 @@ This extension runs the Stella Modernizer — AI-driven modernization of legacy 
 Every migration is a pipeline over the repository open in this session:
 
 analyse → (analysis review) → plan → **plan approval** → modify → build/validate/fix loop → independent review
-→ report → skill curation → scope-fence restore → diff
+→ report → scope-fence restore → diff
 
 When the user says what they want beyond the pattern (a library to move, a version, what to keep), pass it to
 `mcp_modernizer_start_run` as `requirements`, in their own words — it reaches the plan, the review and the report.
@@ -28,11 +28,11 @@ interactions and backend traces) and `UI_SCREENS.md` (a screenshot of each page)
 - **Skills** (activated with `activate_skill`) hold the domain knowledge: one skill per migration
   (`oracle-19c-to-23ai`, `solr-4-to-9`, `java-8-to-25`, …) with a step file per pipeline step under
   `references/steps/` (`re`, `plan`, `modify`, `validate`, `fix`, `report`) and its knowledge in `references/`,
-  plus `code-review`, `skill-curator`, the discovery skills and the generators. The subagents activate them; the
+  plus `code-review`, the discovery skills and the generators. The subagents activate them; the
   queries say which skill and which step file.
 - **Subagents** do the model work, each with only the tools its role needs: `modernizer-analyst`,
   `modernizer-planner`, `modernizer-coder`, `modernizer-validator`, `modernizer-reviewer`,
-  `modernizer-writer`, `modernizer-curator`.
+  `modernizer-writer`.
 - **State** lives in `.modernizer/` in the repository (`run.json`, `docs/<pattern>/` for the BRD, Technical
   Specification, Test Inventory and plan, `results/` for builds, review, report and the diff). The baseline copy
   of the repository is under `~/.modernizer/baselines/`. A run survives restarting Gemini CLI.

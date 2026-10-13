@@ -260,7 +260,7 @@ APPROVED_VERSIONS_STRICT: bool = os.getenv("APPROVED_VERSIONS_STRICT", "false").
 # ── Model traffic (agents/shared/llm_traffic.py, agents/shared/model_config.py) ──
 # A model per agent role. Unset roles use GEMINI_MODEL. Roles:
 #   PLAN (planners), CODE (modifiers / generators), FIX (fixers), CHECK (validators),
-#   REVIEW (code reviewer), REPORT (reporter, skill curator), ANALYSE (reverse
+#   REVIEW (code reviewer), REPORT (reporter), ANALYSE (reverse
 #   engineering, dependency mapper, classifiers).
 MODEL_ROLES: dict[str, str] = {
     role: (os.getenv(f"MODEL_{role.upper()}", "") or "").strip()

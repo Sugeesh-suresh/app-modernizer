@@ -414,15 +414,13 @@ class TestWiring:
 
     def test_the_finish_pipeline_uses_the_names_main_routes_on(self):
         names = [a.name for a in j11_agents.code_finish_pipeline.sub_agents]
-        assert names == ["build_loop", "code_reviewer_agent", "reporter_agent", "skill_curator_agent"]
+        assert names == ["build_loop", "code_reviewer_agent", "reporter_agent"]
         assert [a.name for a in j11_agents.build_loop.sub_agents] == ["validator_agent", "fixer_agent"]
         assert j11_agents.modifier_agent.name == "modifier_agent"
 
     def test_every_rostered_skill_exists_on_disk(self):
         refs = skill_manifest.resolve(j11_agents._PLAN_SKILL_ROSTER)
         assert not [r.name for r in refs if r.missing]
-        for name in j11_agents.CURATED_SKILLS:
-            assert skill_steps.file(name).is_file()
 
     def test_re_skill_emits_the_parser_markers(self):
         text = (SKILLS / "java-8-to-11" / "references" / "steps" / "re.md").read_text()

@@ -2,7 +2,7 @@
 The migration pipeline as a state machine, for Gemini CLI.
 
 main.py drives each pattern as ADK runners: analyse -> (analysis review) ->
-plan -> plan review -> modify -> build/fix loop -> review -> report -> curate ->
+plan -> plan review -> modify -> build/fix loop -> review -> report ->
 scope-fence restore -> diff. Here the same sequence is a cursor in `.modernizer/run.json`:
 
 - `next_step(run)` runs every deterministic step it reaches (inventory,
@@ -50,9 +50,9 @@ SKILLS_DIR = Path(__file__).resolve().parent.parent / "agents" / "skills"
 _COMPANION_PRIORITY = ["oracle-19c-to-23ai", "solr-4-to-9", "tibco-ems-to-pubsub"]
 
 # Subagents (gemini-cli/agents/*.md), one per role.
-ANALYST, PLANNER, CODER, VALIDATOR, REVIEWER, WRITER, CURATOR = (
+ANALYST, PLANNER, CODER, VALIDATOR, REVIEWER, WRITER = (
     "modernizer-analyst", "modernizer-planner", "modernizer-coder", "modernizer-validator",
-    "modernizer-reviewer", "modernizer-writer", "modernizer-curator",
+    "modernizer-reviewer", "modernizer-writer",
 )
 
 
@@ -658,8 +658,6 @@ def _phase_code(run: Run, log: list[str]) -> dict | None:
         return _review_step(run, code, spec)
     if code["part"] == "report":
         return _report_step(run, code, spec)
-    if code["part"] == "curate":
-        return _curate_step(run, code, spec)
     # done with this pattern
     run.state["code"] = None
     run.state["pi"] = run.state.get("pi", 0) + 1
@@ -1104,33 +1102,8 @@ def _report_step(run: Run, code: dict, spec: P.Pattern) -> dict:
 def _complete_report(run: Run, step: dict, output: str) -> str:
     code = run.state["code"]
     _results(run, code["pattern"], "final_report.md").write_text(output, encoding="utf-8")
-    code["part"] = "curate" if callbacks._LEARNING_ENABLED else "done"
-    return f"Report saved to `{run.rel(_results(run, code['pattern'], 'final_report.md'))}`."
-
-
-def _curate_step(run: Run, code: dict, spec: P.Pattern) -> dict:
-    pattern = code["pattern"]
-    sid = f"curate-{pattern}"
-    folders = skill_steps.skills(*spec.curator_skills)          # the migration's skill folder, and generators
-    allowed = "\n".join(f"- {s}" for s in folders)
-    run.state["curator_skills"] = folders
-    body = ("Activate the `skill-curator` skill and execute it. This is the LAST step of the pipeline, run after all "
-            "code changes, the build/validate/fix loop, and the independent code review are already complete. "
-            "Use only `curator_list_skill_files`, `curator_read_skill_file` and `curator_write_skill_file` for skill "
-            "files. Your write access is restricted to exactly these skills — every call is rejected outside this "
-            f"set:\n{allowed}")
-    items = [("Confirmed Migration Plan", run.doc_path("plan", pattern))] + _stage_results_block(run, code) + [
-        ("Independent Code Review", _results(run, pattern, "code_review.md"))]
-    q = body + _files_block(run, items) + _output_rule(sid, "summary of the skill changes you made (or why none)")
-    return _sub(run, sid, CURATOR, q, f"Skill curation ({spec.label})", "curate", pattern=pattern)
-
-
-def _complete_curate(run: Run, step: dict, output: str) -> str:
-    code = run.state["code"]
-    _results(run, code["pattern"], "skill_curator_summary.md").write_text(output, encoding="utf-8")
     code["part"] = "done"
-    run.state.pop("curator_skills", None)
-    return "Skill curation recorded."
+    return f"Report saved to `{run.rel(_results(run, code['pattern'], 'final_report.md'))}`."
 
 
 # ── finish ───────────────────────────────────────────────────────────────────
@@ -1180,7 +1153,7 @@ _PHASES = {
 _COMPLETE = {
     "analysis": _complete_analysis, "plan": _complete_plan, "modify": _complete_modify,
     "validate": _complete_validate, "fix": _complete_fix, "review": _complete_review,
-    "report": _complete_report, "curate": _complete_curate,
+    "report": _complete_report,
 }
 
 

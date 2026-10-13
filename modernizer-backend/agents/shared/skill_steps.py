@@ -17,8 +17,8 @@ that one step, and the knowledge files its step names.
 A step is named `"<migration>:<step>"` (e.g. `"oracle-19c-to-23ai:plan"`); a
 skill that is not split into steps (`code-review`, `react-frontend-generate`)
 is named by itself. Every place that names a skill — the ADK agents, the
-Gemini CLI pipeline, the plan's skill roster, the learned-fix targets, the
-skill curator — goes through this module, so a step cannot be named two ways.
+Gemini CLI pipeline, the plan's skill roster, the learned-fix targets —
+goes through this module, so a step cannot be named two ways.
 """
 from __future__ import annotations
 

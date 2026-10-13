@@ -35,7 +35,7 @@ export type WorkflowStep =
   | 'error';
 
 /** Sub-step within code-generation */
-export type CodeSubStep = 'generating' | 'validating' | 'fixing' | 'reviewing' | 'curating';
+export type CodeSubStep = 'generating' | 'validating' | 'fixing' | 'reviewing';
 
 export type MigrationStrategy = 'bigbang' | 'incremental';
 
@@ -199,8 +199,6 @@ export interface WorkflowState {
   codeReview: string;
   /** reporter_agent's closing summary, set when report-ready fires */
   finalReport: string;
-  /** skill_curator_agent's summary of what it refined in the skill library (or that it made no changes), set when skill-curator-ready fires — the last thing to happen in the pipeline */
-  skillCuratorSummary: string;
   /** True while a refine-brd/refine-plan request is in flight and streaming back */
   refining: boolean;
   /** Auto-detected companion migrations, set when companion-recommendations fires (java-8-to-25 only) */

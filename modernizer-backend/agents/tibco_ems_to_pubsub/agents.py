@@ -28,7 +28,7 @@ from ..shared.learned_fixes import (
 from ..shared import skill_manifest, skill_steps
 from ..shared.rosters import PLAN_SKILL_ROSTERS
 from ..shared.plan_contract import make_plan_contract_callback
-from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
+from ..shared.review_and_curate import make_code_reviewer_agent
 from . import tools as fs_tools
 
 _MODEL = make_model()
@@ -170,20 +170,9 @@ reporter_agent = LlmAgent(
     include_contents="none",
 )
 
-skill_curator_agent = make_skill_curator_agent(
-    _MODEL,
-    allowed_skills=[
-        "tibco-ems-to-pubsub:re", "tibco-ems-to-pubsub:plan", "tibco-ems-to-pubsub:modify",
-        "tibco-ems-to-pubsub:validate", "tibco-ems-to-pubsub:fix", "tibco-ems-to-pubsub:report",
-    ],
-    context_instruction=(
-        "## Confirmed Migration Plan\n{plan}\n\n## Modify Result\n{modify_result}\n\n"
-        "## Final Validation Result\n{build_result}\n\n## Independent Code Review\n{code_review}"
-    ),
-)
 
 code_pipeline = SequentialAgent(
     name="tibco_ems_code_pipeline",
-    description="Applies the migration plan, validates/fixes the workspace in a loop, reviews and reports the outcome, then curates the skill library.",
-    sub_agents=[modifier_agent, build_loop, code_reviewer_agent, reporter_agent, skill_curator_agent],
+    description="Applies the migration plan, validates/fixes the workspace in a loop, reviews and reports the outcome.",
+    sub_agents=[modifier_agent, build_loop, code_reviewer_agent, reporter_agent],
 )

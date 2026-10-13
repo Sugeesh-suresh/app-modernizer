@@ -27,7 +27,7 @@ for a single-pass migration straight to Java 25, or `code_stage_1`..
 `code_stage_8` for the phased staged builds (Readiness -> Java 17 ->
 Spring Boot 2.7 -> 3.x -> Java 25 -> Spring Boot 4.x -> executable JAR;
 the Spring Boot stages only run when requested) plus separate incremental reviewer/
-reporter/curator runners that work across every stage (see
+reporter runners that work across every stage (see
 agents/java_8_to_25/agents.py's INCREMENTAL_STAGES and main.py's
 _run_java8_incremental_code_step for the orchestration).
 """
@@ -46,7 +46,6 @@ from .java_8_to_25.agents import (
     STAGE_PIPELINES as j8_stage_pipelines,
     incremental_code_reviewer_agent as j8_incremental_code_reviewer,
     incremental_reporter_agent as j8_incremental_reporter,
-    incremental_skill_curator_agent as j8_incremental_skill_curator,
 )
 from .java_8_to_11.agents import (
     re_agent as j11_re,
@@ -124,11 +123,10 @@ PATTERN_RUNNERS: dict[str, dict[str, Runner]] = {
         },
         "incremental_code_reviewer": _runner(j8_incremental_code_reviewer),
         "incremental_reporter": _runner(j8_incremental_reporter),
-        "incremental_skill_curator": _runner(j8_incremental_skill_curator),
     },
     # A JDK-only upgrade of a JSP + WildFly monolith. main.py runs `code_modify`
-    # once per plan task, then `code_finish` (build loop -> review -> report ->
-    # curator) once -- see _run_java11_code_step.
+    # once per plan task, then `code_finish` (build loop -> review -> report)
+    # once -- see _run_java11_code_step.
     "java-8-to-11": {
         "re": _runner(j11_re),                  # single pass (RE_UNIT_MAX_FILES=0)
         # Chunked reverse engineering — main.py's _run_java11_re.

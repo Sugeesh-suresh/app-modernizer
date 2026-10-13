@@ -15,14 +15,14 @@ the validator's `signal_build_success` refuses to end the loop while
 the baseline before the diff (agents/shared/scope_fence.py).
 
 Shape: re -> HITL -> plan -> HITL -> per-task modifier runs -> one
-build_loop(validate, fix) -> code review -> report -> skill curation.
+build_loop(validate, fix) -> code review -> report.
 
 The modifier is registered on its own (`code_modify`) and main.py runs it
 once per `### Task` block of the plan's single `## Stage 1: Java 8 → Java 11`
 section (agents/shared/plan_tasks.py), each run with a fresh context holding
 only that task's files. A large monolith applied in one pass would accumulate
 every file it touched in one context. `code_finish` then builds, fixes,
-reviews, reports and curates once, over the finished workspace -- see
+reviews and reports once, over the finished workspace -- see
 main.py's _run_java11_code_step.
 """
 import pathlib
@@ -39,7 +39,7 @@ from ..shared.learned_fixes import (
     jsp_targets, make_lesson_capture_callback, make_lesson_verify_callback, skill_targets,
 )
 from ..shared.plan_contract import make_plan_contract_callback
-from ..shared.review_and_curate import make_code_reviewer_agent, make_skill_curator_agent
+from ..shared.review_and_curate import make_code_reviewer_agent
 from . import tools as fs_tools
 
 _MODEL = make_model()
@@ -244,11 +244,6 @@ build_loop = LoopAgent(
     max_iterations=config.BUILD_LOOP_MAX_ITERATIONS,
 )
 
-CURATED_SKILLS: list[str] = [
-    "java-8-to-11:re", "java-8-to-11:re-module", "java-8-to-11:plan", "java-8-to-11:modify",
-    "java-8-to-11:validate", "java-8-to-11:fix", "java-8-to-11:report",
-]
-
 code_reviewer_agent = make_code_reviewer_agent(
     _MODEL,
     FunctionTool(fs_tools.list_files),
@@ -280,20 +275,12 @@ reporter_agent = LlmAgent(
     include_contents="none",
 )
 
-skill_curator_agent = make_skill_curator_agent(
-    _MODEL,
-    allowed_skills=CURATED_SKILLS,
-    context_instruction=(
-        "## Confirmed Migration Plan\n{plan}\n\n## Modify Result\n{modify_result}\n\n"
-        "## Final Build Result\n{build_result}\n\n## Independent Code Review\n{code_review}"
-    ),
-)
 
 # Runs after every task's modifier pass: build/fix once over the finished
-# workspace, then review, report and curate. main.py's _run_workspace_code_step
+# workspace, then review and report. main.py's _run_workspace_code_step
 # drives it and routes each agent's output by name.
 code_finish_pipeline = SequentialAgent(
     name="java11_code_finish_pipeline",
-    description="Builds and fixes the Java 11 workspace in a loop, reviews and reports the outcome, then curates the skill library.",
-    sub_agents=[build_loop, code_reviewer_agent, reporter_agent, skill_curator_agent],
+    description="Builds and fixes the Java 11 workspace in a loop, reviews and reports the outcome.",
+    sub_agents=[build_loop, code_reviewer_agent, reporter_agent],
 )
