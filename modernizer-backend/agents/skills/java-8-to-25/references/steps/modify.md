@@ -41,3 +41,16 @@ When every file in your task has been handled, output a short markdown summary (
 - Deprecated libraries still present in the files you read (JUnit 3/4 and `junit-vintage-engine`, Jackson 1 or old / Jackson 2-on-Boot-4 usage, Ehcache 2 and its integrations, google-collections or a Guava older than the newest release) — even when your task did not own them
 
 Do not include file contents in this summary — the files are already on disk; this is a change log, not a code dump.
+
+---
+
+## Learned Fixes
+
+_Written automatically after verified fixes. Each entry is a build error a previous run of this pattern hit after this step, and the change that made the next build stop reporting it. Apply the resolution up front wherever the same situation occurs; it is not specific to any one repository._
+
+### constructor DeadLetterRoute in class DeadLetterRoute cannot be applied to given types
+<!-- learned-fix: constructor deadletterroute in class deadletterroute cannot be applied to given types -->
+- **Error:** `constructor DeadLetterRoute in class DeadLetterRoute cannot be applied to given types`
+- **Cause:** a bean converted to constructor injection while a test that builds it by hand was in no task's file list.
+- **Resolution:** when converting a bean class, grep the test sources for `new <Class>(` and setter calls and update them in the same task.
+- _Verified 2026-10-14: the next validation of a java-8-to-25 run no longer reported it._
