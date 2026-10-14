@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jboss-deployment-structure xmlns="urn:jboss:deployment-structure:1.2">
+  <deployment>
+    <!-- the war ships Spring, Jackson, Camel and log4j/slf4j itself -->
+    <exclude-subsystems>
+      <subsystem name="jaxrs"/>
+    </exclude-subsystems>
+    <exclusions>
+      <module name="org.apache.log4j"/>
+      <module name="org.apache.commons.logging"/>
+      <module name="org.slf4j"/>
+      <module name="org.slf4j.impl"/>
+      <module name="com.fasterxml.jackson.core.jackson-core"/>
+      <module name="com.fasterxml.jackson.core.jackson-databind"/>
+      <module name="com.fasterxml.jackson.core.jackson-annotations"/>
+      <module name="org.jboss.resteasy.resteasy-jackson2-provider"/>
+      <module name="org.jboss.resteasy.resteasy-jaxrs"/>
+    </exclusions>
+    <dependencies>
+      <!-- container-provided Bean Validation implementation (validation-api is "provided") -->
+      <module name="org.hibernate.validator" services="import"/>
+    </dependencies>
+  </deployment>
+</jboss-deployment-structure>

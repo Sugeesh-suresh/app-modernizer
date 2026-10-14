@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="
+         http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+         http://camel.apache.org/schema/spring http://camel.apache.org/schema/spring/camel-spring.xsd">
+
+  <!-- beans referenced by the routes -->
+  <bean id="orderRegistry" class="com.acme.orders.camel.bean.OrderRegistry"/>
+  <bean id="shipmentService" class="com.acme.orders.camel.bean.ShipmentService"/>
+  <bean id="statusReportBuilder" class="com.acme.orders.camel.bean.StatusReportBuilder"/>
+  <bean id="lineEnricher" class="com.acme.orders.camel.bean.LineEnricher"/>
+  <bean id="customerDirectory" class="com.acme.orders.camel.bean.CustomerDirectory"/>
+  <bean id="deadLetterStore" class="com.acme.orders.camel.bean.DeadLetterStore"/>
+
+  <!-- Java DSL route builders -->
+  <bean id="orderIntakeRoute" class="com.acme.orders.camel.routes.OrderIntakeRoute"/>
+  <bean id="fulfilmentRoute" class="com.acme.orders.camel.routes.FulfilmentRoute"/>
+  <bean id="notificationRoute" class="com.acme.orders.camel.routes.NotificationRoute"/>
+  <bean id="reportRoute" class="com.acme.orders.camel.routes.ReportRoute"/>
+  <bean id="deadLetterRoute" class="com.acme.orders.camel.routes.DeadLetterRoute">
+    <property name="deadLetterStore" ref="deadLetterStore"/>
+  </bean>
+
+  <camelContext id="orderCamelContext" xmlns="http://camel.apache.org/schema/spring">
+    <propertyPlaceholder id="properties" location="classpath:camel.properties"/>
+
+    <template id="producerTemplate"/>
+    <consumerTemplate id="consumerTemplate"/>
+
+    <routeBuilder ref="orderIntakeRoute"/>
+    <routeBuilder ref="fulfilmentRoute"/>
+    <routeBuilder ref="notificationRoute"/>
+    <routeBuilder ref="reportRoute"/>
+    <routeBuilder ref="deadLetterRoute"/>
+
+    <endpoint id="customerLookupEndpoint" uri="direct:customerLookup"/>
+
+    <!-- XML DSL route -->
+    <route id="customer-lookup">
+      <from ref="customerLookupEndpoint"/>
+      <onException>
+        <exception>java.util.NoSuchElementException</exception>
+        <redeliveryPolicy maximumRedeliveries="2" redeliveryDelay="10"/>
+        <handled><constant>true</constant></handled>
+        <to uri="direct:deadLetter"/>
+      </onException>
+      <bean ref="customerDirectory" method="lookup"/>
+      <marshal><json library="Jackson"/></marshal>
+    </route>
+  </camelContext>
+</beans>

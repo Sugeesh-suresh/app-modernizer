@@ -1,0 +1,23 @@
+# Deploys orders-api.war to a running JBoss EAP 7 / WildFly standalone server.
+#   $JBOSS_HOME/bin/jboss-cli.sh --connect --file=deploy/jboss-cli/orders-api.cli
+# Run from the repository root after `mvn -DskipTests package`.
+
+batch
+
+# Security domain referenced by WEB-INF/jboss-web.xml (file based, for non-production use)
+/subsystem=security/security-domain=orders-security-domain:add(cache-type=default)
+/subsystem=security/security-domain=orders-security-domain/authentication=classic:add
+/subsystem=security/security-domain=orders-security-domain/authentication=classic/login-module=UsersRoles:add(code=UsersRoles, flag=required, module-options={usersProperties="${jboss.server.config.dir}/orders-users.properties", rolesProperties="${jboss.server.config.dir}/orders-roles.properties"})
+
+# Application logger and file for the war's own log4j-less categories (logging subsystem is excluded per deployment,
+# the war uses its bundled log4j; this keeps container-side messages readable)
+/subsystem=logging/logger=com.acme.orders:add(level=INFO)
+
+# Outbox directory used by the Camel file endpoint (camel.properties: outbox.dir)
+/system-property=orders.outbox.dir:add(value="${jboss.server.data.dir}/orders-outbox")
+
+run-batch
+
+reload
+
+deploy orders-api/target/orders-api.war --force

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.acme.camelorders</groupId>
+  <artifactId>camel-orders-parent</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>Camel Orders Platform (parent) - Java 8 / Spring 4.3 / Camel 2.25 / JBoss EAP 7</name>
+
+  <modules>
+    <module>shared-model</module>
+    <module>camel-routes</module>
+    <module>orders-api</module>
+  </modules>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.source>1.8</maven.compiler.source>
+    <maven.compiler.target>1.8</maven.compiler.target>
+    <spring.version>4.3.30.RELEASE</spring.version>
+    <camel.version>2.25.4</camel.version>
+    <jackson.version>2.9.10</jackson.version>
+    <slf4j.version>1.7.25</slf4j.version>
+    <log4j.version>1.2.17</log4j.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- pin every Spring artifact (incl. those pulled in by camel-spring) to 4.3.x -->
+      <dependency><groupId>org.springframework</groupId><artifactId>spring-framework-bom</artifactId><version>${spring.version}</version><type>pom</type><scope>import</scope></dependency>
+
+      <!-- project modules -->
+      <dependency><groupId>${project.groupId}</groupId><artifactId>shared-model</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>${project.groupId}</groupId><artifactId>camel-routes</artifactId><version>${project.version}</version></dependency>
+
+      <!-- Spring 4.3 -->
+      <dependency><groupId>org.springframework</groupId><artifactId>spring-context</artifactId><version>${spring.version}</version></dependency>
+      <dependency><groupId>org.springframework</groupId><artifactId>spring-web</artifactId><version>${spring.version}</version></dependency>
+      <dependency><groupId>org.springframework</groupId><artifactId>spring-webmvc</artifactId><version>${spring.version}</version></dependency>
+      <dependency><groupId>org.springframework</groupId><artifactId>spring-test</artifactId><version>${spring.version}</version><scope>test</scope></dependency>
+
+      <!-- Apache Camel 2.25 (last Java 8 line) -->
+      <dependency><groupId>org.apache.camel</groupId><artifactId>camel-core</artifactId><version>${camel.version}</version></dependency>
+      <dependency><groupId>org.apache.camel</groupId><artifactId>camel-spring</artifactId><version>${camel.version}</version></dependency>
+      <dependency><groupId>org.apache.camel</groupId><artifactId>camel-jackson</artifactId><version>${camel.version}</version></dependency>
+      <dependency><groupId>org.apache.camel</groupId><artifactId>camel-test</artifactId><version>${camel.version}</version><scope>test</scope></dependency>
+      <dependency><groupId>org.apache.camel</groupId><artifactId>camel-test-spring</artifactId><version>${camel.version}</version><scope>test</scope></dependency>
+
+      <!-- JSON -->
+      <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>${jackson.version}</version></dependency>
+      <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-core</artifactId><version>${jackson.version}</version></dependency>
+      <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-annotations</artifactId><version>${jackson.version}</version></dependency>
+
+      <!-- Servlet / validation: provided by JBoss EAP 7 -->
+      <dependency><groupId>javax.servlet</groupId><artifactId>javax.servlet-api</artifactId><version>3.1.0</version><scope>provided</scope></dependency>
+      <dependency><groupId>javax.validation</groupId><artifactId>validation-api</artifactId><version>1.1.0.Final</version><scope>provided</scope></dependency>
+
+      <!-- Logging -->
+      <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>${slf4j.version}</version></dependency>
+      <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-log4j12</artifactId><version>${slf4j.version}</version></dependency>
+      <dependency><groupId>log4j</groupId><artifactId>log4j</artifactId><version>${log4j.version}</version></dependency>
+
+      <!-- Test -->
+      <dependency><groupId>junit</groupId><artifactId>junit</artifactId><version>4.13.2</version><scope>test</scope></dependency>
+      <dependency><groupId>org.mockito</groupId><artifactId>mockito-core</artifactId><version>4.11.0</version><scope>test</scope></dependency>
+      <dependency><groupId>org.hibernate</groupId><artifactId>hibernate-validator</artifactId><version>5.3.6.Final</version><scope>test</scope></dependency>
+      <dependency><groupId>org.glassfish</groupId><artifactId>javax.el</artifactId><version>3.0.1-b08</version><scope>test</scope></dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.8.1</version>
+          <configuration><source>1.8</source><target>1.8</target><encoding>UTF-8</encoding></configuration></plugin>
+        <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>2.22.2</version></plugin>
+        <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.5.1</version></plugin>
+        <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-war-plugin</artifactId><version>3.4.0</version>
+          <configuration><failOnMissingWebXml>true</failOnMissingWebXml></configuration></plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+</project>
