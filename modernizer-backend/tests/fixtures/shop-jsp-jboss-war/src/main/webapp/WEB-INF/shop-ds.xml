@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<datasources xmlns="http://www.jboss.org/ironjacamar/schema">
+  <datasource jndi-name="java:jboss/datasources/ShopDS" pool-name="ShopDS" enabled="true" use-java-context="true">
+    <connection-url>jdbc:oracle:thin:@//dbhost.example.com:1521/SHOPPDB</connection-url>
+    <driver>oracle</driver>
+    <security>
+      <user-name>shop_app</user-name>
+      <!-- placeholder only: injected at deploy time, never commit a real secret -->
+      <password>${ds.password}</password>
+    </security>
+    <pool>
+      <min-pool-size>2</min-pool-size>
+      <max-pool-size>20</max-pool-size>
+    </pool>
+    <validation>
+      <valid-connection-checker class-name="org.jboss.jca.adapters.jdbc.extensions.oracle.OracleValidConnectionChecker"/>
+    </validation>
+  </datasource>
+</datasources>

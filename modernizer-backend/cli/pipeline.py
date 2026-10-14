@@ -38,6 +38,7 @@ from agents.shared import (
     learned_fixes, migration_inventory, plan_contract, plan_paths, plan_tasks, re_units, scope_fence, skill_manifest,
     skill_steps,
 )
+from agents.shared.rosters import boot_roster
 from agents.shared.pipeline_text import (
     file_digests, inject_dependency_graph, parse_re_sections, task_paths, unexplained_unchanged,
     with_reviewer_notes, workspace_paths,
@@ -526,7 +527,7 @@ def _phase_plan(run: Run, log: list[str]) -> dict | None:
     sid = f"plan-{pattern}"
     feedback = run.state.get("plan_feedback")
     parts = [skill_steps.cli_instruction(spec.plan_skill, *_overlay(run, "plan")) + " to create the migration plan.",
-             skill_manifest.planner_block(spec.roster)]
+             skill_manifest.planner_block(boot_roster() if boot_profile(run) else spec.roster)]
     if requirements_block(run, "plan"):
         parts.append(requirements_block(run, "plan"))
     if pattern == P.JAVA_8_TO_25:

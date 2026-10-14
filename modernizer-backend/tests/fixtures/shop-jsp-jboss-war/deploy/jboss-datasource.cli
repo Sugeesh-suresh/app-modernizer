@@ -1,0 +1,14 @@
+# Adds the ShopDS datasource to a standalone JBoss EAP / WildFly server.
+# Usage: $JBOSS_HOME/bin/jboss-cli.sh --connect --file=deploy/jboss-datasource.cli
+# Requires -Dds.password or an env var; the value below is a placeholder.
+batch
+data-source add --name=ShopDS \
+  --jndi-name=java:jboss/datasources/ShopDS \
+  --driver-name=oracle \
+  --connection-url=jdbc:oracle:thin:@//dbhost.example.com:1521/SHOPPDB \
+  --user-name=shop_app \
+  --password=${ds.password} \
+  --min-pool-size=2 --max-pool-size=20 \
+  --use-java-context=true
+run-batch
+reload

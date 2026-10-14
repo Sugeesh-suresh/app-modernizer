@@ -67,3 +67,26 @@ PLAN_SKILL_ROSTERS: dict[str, list[tuple[str, str]]] = {
         ("tibco-ems-to-pubsub:report", "Produces the final migration report"),
     ],
 }
+
+
+_BOOT_ROLES = {
+    "plan": "Profile overlay — adds the Spring Component Inventory and the Conversion Order to the plan",
+    "modify": "Profile overlay — converts every Spring Framework component to its Spring Boot equivalent",
+    "validate": "Profile overlay — the Spring Boot conformance scan must show no error finding",
+    "fix": "Profile overlay — how to clear each conformance finding",
+    "report": "Profile overlay — the Spring → Spring Boot component conversion table and the end-state checklist",
+}
+
+
+def boot_roster() -> list[tuple[str, str]]:
+    """The java-8-to-25 roster with the `java-8-to-25-boot` overlay's steps next to the steps they supplement
+    (the plan reproduces it, so the modifier, the reviewer and the reporter see which skills govern the run)."""
+    out: list[tuple[str, str]] = []
+    for name, role in PLAN_SKILL_ROSTERS["java-8-to-25"]:
+        out.append((name, role))
+        step = name.split(":", 1)[1] if ":" in name else ""
+        if name.startswith("java-8-to-25:") and step in _BOOT_ROLES:
+            out.append((f"java-8-to-25-boot:{step}", _BOOT_ROLES[step]))
+        if name == "code-review":
+            out.append(("java-8-to-25-boot:review", "Profile overlay — the reviewer's conformance and behaviour-preserved checklist"))
+    return out

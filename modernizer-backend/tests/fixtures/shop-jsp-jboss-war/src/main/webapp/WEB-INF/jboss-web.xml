@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jboss-web>
+  <context-root>/shop</context-root>
+  <security-domain>shop-security-domain</security-domain>
+  <resource-ref>
+    <res-ref-name>jdbc/ShopDS</res-ref-name>
+    <res-type>javax.sql.DataSource</res-type>
+    <jndi-name>java:jboss/datasources/ShopDS</jndi-name>
+  </resource-ref>
+</jboss-web>

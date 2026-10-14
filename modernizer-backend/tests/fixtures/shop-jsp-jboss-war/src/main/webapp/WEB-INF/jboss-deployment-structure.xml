@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jboss-deployment-structure>
+  <deployment>
+    <exclusions>
+      <module name="org.apache.log4j"/>
+      <module name="org.slf4j"/>
+      <module name="org.slf4j.impl"/>
+      <module name="com.fasterxml.jackson.core.jackson-databind"/>
+      <module name="com.fasterxml.jackson.core.jackson-core"/>
+      <module name="com.fasterxml.jackson.core.jackson-annotations"/>
+    </exclusions>
+    <dependencies>
+      <module name="com.acme.shop.config" services="import"/>
+    </dependencies>
+  </deployment>
+</jboss-deployment-structure>

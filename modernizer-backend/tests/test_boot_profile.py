@@ -245,6 +245,7 @@ def test_the_planner_is_told_the_end_state_and_to_follow_the_boot_skill(tmp_path
     assert "the `java-8-to-25-boot` skill's `references/steps/plan.md`" in q
     assert "Profile: Java 8 → Java 25 + Spring Boot 4 (embedded Tomcat)" in q and "never a WAR" in q
     assert "## Spring Boot Upgrade Requested\ntrue" in q and "B001–B013" in q
+    assert "| `java-8-to-25-boot` › modify |" in q and "| `java-8-to-25-boot` › review |" in q
     plain_repo = _legacy_repo(tmp_path / "plain")
     plain = pipeline.start(plain_repo, "java-8-to-25")
     plain.state.update({"phase": "plan", "pi": 0, "selection_confirmed": True})
