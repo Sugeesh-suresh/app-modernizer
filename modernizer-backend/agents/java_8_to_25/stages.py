@@ -115,7 +115,7 @@ INCREMENTAL_STAGES: list[IncrementalStage] = [
     IncrementalStage(
         7, 4, "Spring Boot 4 & Cloud Native", "Upgrade to Spring Boot 4.x", "25", True,
         ("java-8-to-25:springboot-boot4", "java-8-to-25:springboot-incremental"),
-        "Keep `<packaging>war</packaging>` and the JSP views (with their JSP libraries) in this stage — "
+        "Keep `<packaging>war</packaging>` (and the JSP views with their JSP libraries, if the application has any) in this stage — "
         "the executable JAR conversion and JSP → Thymeleaf are the next stage.",
     ),
     IncrementalStage(

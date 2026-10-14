@@ -63,6 +63,8 @@ ANALYST, PLANNER, CODER, VALIDATOR, REVIEWER, WRITER = (
 
 MAX_REQUIREMENTS_CHARS = 4000
 
+BOOT4_STAGES = (7, 8)       # the incremental stages that set the Spring Boot 4 version (Upgrade to Boot 4.x, Convert to executable JAR)
+
 BOOT_PROFILE_TEXT = (
     "## Profile: Java 8 → Java 25 + Spring Boot 4 (embedded Tomcat)\n"
     "This run's end state is fixed, not optional: the newest Spring Boot 4.x on Java 25 and Jakarta EE 11, packaged as an "
@@ -229,7 +231,7 @@ def _approved(run: Run, pattern: str, stage: int | None = None) -> str:
         text += ("\n\n**⚠ Not downloadable through the configured repository — do NOT use these until the list "
                  "is corrected:** " + ", ".join(f"`{u.split(' ')[0]}`" for u in run.state["approved_unavailable"]))
     text = text or "(none listed)"
-    if boot_profile(run) and pattern == P.JAVA_8_TO_25:
+    if boot_profile(run) and pattern == P.JAVA_8_TO_25 and (stage is None or stage in BOOT4_STAGES):
         text += ("\n\n**Spring Boot parent version (the one version you choose):** resolve the newest GA 4.x (never a "
                  "milestone `-M` or release candidate `-RC`) from Maven Central metadata and write it once, in the parent; "
                  "every other managed library takes its version from the BOM.")

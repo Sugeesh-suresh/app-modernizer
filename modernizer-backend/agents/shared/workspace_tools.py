@@ -558,6 +558,9 @@ def _resolve_executable(arg0: str, cwd: Path) -> str:
     return shutil.which(arg0) or arg0
 
 
+_JVM_BANNERS = ("Picked up JAVA_TOOL_OPTIONS", "Picked up _JAVA_OPTIONS", "Picked up JDK_JAVA_OPTIONS")
+
+
 def make_run_command(allowed_commands: set[str], env_factory=None, extra_args=None):
     """Build a `run_command` tool restricted to *allowed_commands* executables.
 
@@ -592,6 +595,11 @@ def make_run_command(allowed_commands: set[str], env_factory=None, extra_args=No
             return f"ERROR: could not parse command: {exc}"
         if not args:
             return "ERROR: empty command."
+        shell_tokens = [a for a in args[1:] if a in ("|", "||", "&&", ";", ">", ">>", "<", "2>&1", "&", "2>/dev/null", "2>")]
+        if shell_tokens:
+            return (f"ERROR: no shell is involved, so `{shell_tokens[0] if shell_tokens else '|'}` is not an operator — it would be "
+                    "passed to the build tool as an argument. Run the command alone; the output is returned to you "
+                    "already trimmed (both ends kept), and the build summary at its end says passed / failed.")
 
         executable = _command_name(args[0])
         if executable not in allowed:
@@ -624,6 +632,7 @@ def make_run_command(allowed_commands: set[str], env_factory=None, extra_args=No
             )
 
         full = (result.stdout or "") + (result.stderr or "")
+        full = "\n".join(l for l in full.splitlines() if not l.startswith(_JVM_BANNERS)) if "Picked up" in full else full
         output = _clip_command_output(full)
         text = f"exit_code={result.returncode}\n{output}"
         if executable in ("mvn", "mvnw", "./mvnw", "gradle", "gradlew", "./gradlew"):

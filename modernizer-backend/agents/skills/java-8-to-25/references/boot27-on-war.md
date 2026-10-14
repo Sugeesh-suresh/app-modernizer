@@ -49,3 +49,9 @@ public class Application extends SpringBootServletInitializer {
 ## Java level
 
 This stage runs on Java 17, which the preceding JDK stage set up. Spring Boot 2.7 / Spring Framework 5.3 support Java 8 through 21, so this is a supported, deployable combination (Tomcat 9 runs on Java 17 too). It's also why the Java 25 upgrade waits until after the Spring Boot 3.x stage — never leave a Spring Boot 2.x codebase on a Java 25 compiler release, and never change the compiler release in this stage.
+
+## The test engine, and what Boot 2.7 manages that is older than the earlier stages set
+
+- **JUnit 4 tests need the Vintage engine from the first Boot stage.** `spring-boot-starter-test` stopped bringing `junit-vintage-engine` in 2.4: with only Jupiter on the test classpath Surefire runs zero JUnit 4 tests and reports success. When the repository has JUnit 4 tests and the plan does not convert them, add `org.junit.vintage:junit-vintage-engine` (test scope, version managed by Boot) in the same task that introduces the starter, and check that the test count did not drop.
+- **Boot 2.7.18 manages older libraries than the Java 17 stages may have set** (Spring Framework 5.3.x, Jackson 2.13.x, Mockito 4.5.x and its Byte Buddy). "Never regress a version" wins over the BOM: override the BOM's version properties in the parent (`spring-framework.version`, `jackson-bom.version`, `mockito.version`, `byte-buddy.version`) with the versions the previous stage set, and drop each override at the stage where Boot's own managed version is no longer older (Boot 3.x / 4.x).
+- **A library on `jaxb-impl` 2.3.0** (Apache Camel 2.x, older JAX-B users) fails on Java 17 with `Injector.defineClass is null`: pin `jaxb-impl` and `jaxb-core` 2.3.9 / `jaxb-api` 2.3.1 until the library itself moves; Boot 2.7 does not manage them.

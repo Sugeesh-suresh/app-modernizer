@@ -115,9 +115,56 @@ def sql_code(text: str) -> str:
     return "".join(out)
 
 
+_DOC_SUFFIXES = {".md", ".markdown", ".txt", ".adoc", ".rst"}
+_C_COMMENT_SUFFIXES = {".java", ".groovy", ".kt", ".kts", ".gradle", ".js", ".ts"}
+_XML_SUFFIXES = {".xml", ".xsd", ".xsl", ".html", ".htm", ".jsp", ".jspx", ".tld"}
+
+
+def c_code(text: str) -> str:
+    """`text` with `//` and `/* */` comments blanked out (line breaks kept); string and char literals are kept, and
+    a `//` inside one (`"http://..."`) does not start a comment."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append(re.sub(r"[^\n]", " ", text[i:j]))
+            i = j
+        elif c in "\"'":
+            j = i + 1
+            while j < n and text[j] != c and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            j = min(j + 1, n)
+            out.append(text[i:j])
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def code_text(path: str, text: str) -> str:
-    """What the markers read: SQL without comments and literals; any other file as it is."""
-    return sql_code(text) if Path(path).suffix.lower() in SQL_SUFFIXES else text
+    """What the markers read: code only. SQL without comments; Java and other C-style sources without comments;
+    XML and JSP without `<!-- -->`; properties without comment lines; prose documents (a README, a deploy
+    note) not at all — a legacy name in a comment or a document is not legacy code."""
+    suffix = Path(path).suffix.lower()
+    if suffix in SQL_SUFFIXES:
+        return sql_code(text)
+    if suffix in _DOC_SUFFIXES:
+        return ""
+    if suffix in _C_COMMENT_SUFFIXES:
+        return c_code(text)
+    if suffix in _XML_SUFFIXES:
+        return re.sub(r"<!--.*?-->", lambda m: re.sub(r"[^\n]", " ", m.group(0)), text, flags=re.S)
+    if suffix == ".properties":
+        return re.sub(r"(?m)^[ \t]*[#!].*$", "", text)
+    return text
 
 
 # ---------------------------------------------------------------------------

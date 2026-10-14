@@ -636,3 +636,23 @@ def test_a_measurement_where_the_agent_never_wrote_is_not_a_zero_percent_baselin
     monkeypatch.setattr(coverage.java_env, "run_maven", fake_maven)
     m = coverage.measure(root, None, packages=["a"])
     assert not m.ok and "3 test(s) ran but JaCoCo recorded nothing" in m.problem and "JAVA_TOOL_OPTIONS" in m.problem
+
+
+def test_run_command_refuses_shell_operators_and_drops_jvm_banners(tmp_path, monkeypatch):
+    from agents.shared import workspace_tools as wt
+    import subprocess
+    monkeypatch.setattr(wt, "workspace_root", lambda ctx: tmp_path)
+    monkeypatch.setattr(wt, "resolve_within_workspace", lambda ctx, sub: tmp_path)
+    monkeypatch.setattr(wt, "_resolve_executable", lambda exe, cwd: exe)
+
+    class R:
+        returncode = 0
+        stdout = "Picked up JAVA_TOOL_OPTIONS: -Dhttps.proxyHost=x\n[INFO] BUILD SUCCESS\n"
+        stderr = ""
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: R())
+    run = wt.make_run_command({"mvn"})
+    for bad in ("mvn test 2>&1 | tail -30", "mvn test | tail", "mvn test && mvn package", "mvn test > out.txt"):
+        out = run(None, bad)
+        assert out.startswith("ERROR: no shell is involved"), bad
+    ok = run(None, "mvn -q test")
+    assert "Picked up" not in ok and "BUILD SUCCESS" in ok

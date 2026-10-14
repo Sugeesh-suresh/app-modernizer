@@ -301,3 +301,14 @@ class TestSkillContract:
         body = self._skill("java-8-to-25:report")
         assert "## Migration Coverage" in body
         assert "prefer it over the Modify Results" in body
+
+
+def test_markers_read_code_not_comments_or_prose():
+    from agents.shared import change_audit as ca
+    java = 'import jakarta.servlet.Filter; // was javax.servlet.Filter\n/* javax.persistence.Entity */\nString u = "http://x//y"; // tail\n'
+    code = ca.code_text("A.java", java)
+    assert "javax" not in code and 'String u = "http://x//y";' in code and code.count("\n") == java.count("\n")
+    assert "javax" not in ca.code_text("pom.xml", "<!-- javax.validation comment -->\n<a>jakarta</a>")
+    assert "javax" not in ca.code_text("app.properties", "# javax.servlet\nkey=value")
+    assert ca.code_text("docs/DEPLOY.md", "javax.servlet notes") == ""
+    assert "javax.servlet" in ca.code_text("B.java", "import javax.servlet.Filter;")       # real code still counts

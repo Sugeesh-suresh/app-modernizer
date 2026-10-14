@@ -78,3 +78,7 @@ Only what cannot be decided from the inventory: a JSP tag library or custom tag 
 ## Where the Spring facts come from
 
 The Technical Specification's `## Spring XML Bean Definitions` table lists, per Spring XML context, its beans, component scans, JNDI lookups, MVC / tx / aop elements and property files. Build the Spring Component Inventory from it and from the Behaviour Inventory; read the XML itself only for what the table cannot show (a bean's property values, an interceptor's mapping). A file you list in a task's `Files:` line but leave unchanged is named in the manifest as `no change needed`.
+
+## Blast radius: find every file a changed class touches
+
+For each class whose injection style or API changes (constructor injection instead of setters, a moved or removed package, a renamed method), search the sources **and the tests** for `new <Class>(`, calls of the removed setters, and imports of moved packages (for Camel: `org.apache.camel.impl.*`, `org.apache.camel.processor.*`), and give every hit a manifest row and a place in a task's `Files:`. A file a task needs but the plan does not name costs a failed validation and a fix pass. Do not list a file in a task only because it is nearby: unchanged files appear in the manifest as `no change needed`.

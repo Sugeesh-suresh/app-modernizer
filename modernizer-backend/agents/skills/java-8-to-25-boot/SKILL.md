@@ -81,3 +81,11 @@ Base knowledge it builds on, all in the `java-8-to-25` skill: `war-to-executable
 - **The Boot version is the one version you choose.** The parent's version is resolved at modify time from Maven Central metadata as the newest **GA** 4.x — never a milestone (`-M`) or release candidate (`-RC`) — and written once, in `spring-boot-starter-parent`. This is the exception to "use only versions you have seen": every other managed library takes its version from the BOM.
 - **Keep the repository's data-access style.** `JdbcTemplate` / plain JDBC → `spring-boot-starter-jdbc` (the template is auto-configured); JPA / Hibernate → `spring-boot-starter-data-jpa`. Do not rewrite hand-written SQL into entities to satisfy a "with Spring Data JPA" line in the base skill — this profile overrides it; JPA is for code that is already JPA.
 - **Starter name.** The web starter is `spring-boot-starter-webmvc` in Boot 4 (fall back to `spring-boot-starter-web` only if the chosen release does not publish it).
+
+## Looking things up (versions, artifact names)
+
+- **Maven Central rate-limits** (HTTP 429) when several metadata files or poms are fetched in a row. Fetch what you need once, wait and retry with a growing pause (2 s, 5 s, 12 s), and write the answer into your output so nobody asks again. Never conclude "not found" from a 429.
+- **An artifact name you cannot verify** (a read-only step cannot resolve anything) is written with `(verify)` after it, for example `camel-spring-boot-xml-starter (verify)`; the first step that can build resolves it and corrects the plan's row in its output. Never invent a coordinate and present it as fact.
+- **A Boot-managed library's version is never copied from memory:** it comes from the BOM, resolved by the build.
+
+Camel (any Camel route in the repository): `references/camel-to-boot.md` — the starter and BOM names, the wiring, and the Camel 2 → 4 API table.

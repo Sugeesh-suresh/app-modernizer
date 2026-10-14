@@ -43,3 +43,7 @@ Grep the files in your task for the patterns in `references/boot-conformance-rul
 - **Beans:** XML beans converted (name → new form), manual beans deleted (name → property or auto-configuration that replaces them), customisations kept (and how)
 - **Bridges left:** every `@ImportResource` or XML file still present, with the later stage that removes it ("none" at the end of the final stage)
 - **Behaviour notes:** anything that could change a URL, a security rule, a transaction boundary, a message or a JSON shape, stated plainly
+
+## A file outside your task that your change breaks
+
+When your change makes a file outside your task's `Files:` stop compiling (a test that builds the converted bean with `new`, a caller of a removed setter), fix it in this task and list it in your output under `Files outside the task` with the reason. Do not leave it for the fixer.

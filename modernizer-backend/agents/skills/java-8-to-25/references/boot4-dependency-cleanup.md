@@ -70,3 +70,7 @@ After the cleanup, go through the pom once more and delete the `<version>` of ev
 - **Hibernate 7 / Jakarta Persistence 3.2:** entity annotations live in `jakarta.persistence`; Hibernate-native `Session`/`HibernateTemplate` code does not carry over — use Spring Data JPA.
 - **Spring MVC 7:** suffix-pattern and trailing-slash matching are off (`/cities/St. Louis` stays intact — no config needed). Replace `@RequestMapping(method = GET)` with `@GetMapping` and friends while touching controllers.
 - **Servlet 6.1 / Tomcat 11** is the embedded container.
+
+## When Jackson 2 stays on purpose
+
+Do not delete an explicit Jackson 2 dependency that a library's data format still needs: Apache Camel's `camel-jackson` (and `camel-jackson-starter`) is a Jackson 2 data format, and Camel 4.22 also ships `camel-jackson3-starter`. Switching it changes serialised shapes (dates, `BigDecimal`), so it is a decision for the plan, not a cleanup. Keep it, name it as a deliberate, listed exception in the plan's Open Questions and the report, and keep Boot's own MVC on Jackson 3.

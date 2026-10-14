@@ -321,3 +321,31 @@ def test_an_incremental_boot_run_checks_the_end_state_only_at_its_last_stage(tmp
     _save(repo, final["id"], json.dumps({"passed": True, "errors": [], "summary": "ok"}), signalled=True)
     results = {p.name: json.loads(p.read_text()) for p in (repo / ".modernizer/results").rglob("build_result*")}
     assert results["build_result_stage8.json"]["passed"] is False and results["build_result_stage1.json"]["passed"] is True
+
+
+def test_the_boot_parent_version_rule_is_printed_only_where_the_boot_version_is_chosen(tmp_path):
+    repo = _legacy_repo(tmp_path)
+    run = pipeline.start(repo, "java-8-to-25-boot", migration_strategy="incremental")
+    marker = "Spring Boot parent version (the one version you choose)"
+    assert marker not in pipeline._approved(run, "java-8-to-25", 1)
+    assert marker not in pipeline._approved(run, "java-8-to-25", 4)      # Boot 2.7 / 3.x stages name their own line
+    assert marker not in pipeline._approved(run, "java-8-to-25", 5)
+    assert marker in pipeline._approved(run, "java-8-to-25", 7)
+    assert marker in pipeline._approved(run, "java-8-to-25", 8)
+    assert marker in pipeline._approved(run, "java-8-to-25")             # a big-bang run has one stage
+
+
+def test_the_camel_knowledge_file_is_tagged_so_it_is_read_only_for_camel_repositories():
+    from agents.shared import knowledge_slice
+    path = skill_steps.SKILLS_DIR / "java-8-to-25-boot" / "references" / "camel-to-boot.md"
+    sections = knowledge_slice.parse(path.read_text())
+    assert sections[0].terms == ["camel"]
+    assert "camel-spring-boot-xml-starter" in path.read_text() and "camel-spring-xml-starter" not in path.read_text()
+
+
+def test_skill_files_no_longer_contradict_themselves_about_tests_and_the_web_starter():
+    boot = skill_steps.SKILLS_DIR / "java-8-to-25-boot" / "references"
+    testing = (boot / "testing-to-boot.md").read_text()
+    assert "Which tests change" in testing and "stays on `@RunWith(SpringRunner.class)`" not in testing
+    base = (skill_steps.SKILLS_DIR / "java-8-to-25" / "references" / "boot27-on-war.md").read_text()
+    assert "junit-vintage-engine" in base and "jackson-bom.version" in base

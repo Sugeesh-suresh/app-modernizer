@@ -20,7 +20,7 @@ class OrderServiceTest {
     @Test void places() { … }          // org.junit.jupiter.api.Test
 }
 ```
-- Without the JUnit upgrade a JUnit 4 test that must keep running stays on `@RunWith(SpringRunner.class)` — a deprecation (B012) listed in the report, not an error; never downgrade Spring or JUnit to silence it. With the upgrade, use `@SpringBootTest` (the Jupiter extension is built in) and `org.junit.jupiter.api` assertions/annotations.
+- **Which tests change.** A Spring test that loads an XML context (`@ContextConfiguration("classpath:….xml")`) must change whatever the options say, because the XML context is going away: convert it to `@SpringBootTest` or a slice (`@JdbcTest`, `@WebMvcTest`, …) on Jupiter. A JUnit 4 Spring test that uses annotation configuration, and a plain JUnit 4 test with no Spring (Mockito only), may stay on JUnit 4 while the JUnit upgrade is off: a Spring one on `@RunWith(SpringRunner.class)` is a deprecation (B012, a warning) listed in the report, not an error; never downgrade Spring or JUnit to silence it. With the JUnit upgrade, convert them all (`@SpringBootTest`, `@ExtendWith`, Jupiter assertions).
 - `@ContextConfiguration(classes = AppConfig.class)` → `@SpringBootTest`; a test-only `@Configuration` becomes `@TestConfiguration` imported with `@Import`. XML test contexts are deleted once their beans are test configuration or properties.
 - `@TestPropertySource(properties = …)`, `@ActiveProfiles("test")` stay; `src/test/resources/application-test.yml` replaces `test.properties`.
 - `@WebAppConfiguration` + hand-built `MockMvc` → `@AutoConfigureMockMvc` with `@SpringBootTest`, or a slice.
@@ -67,4 +67,4 @@ With Spring Security: add `spring-security-test`; `@WithMockUser(roles = "ADMIN"
 
 - Slice test starters are modular: `spring-boot-starter-webmvc-test`, `spring-boot-starter-jdbc-test`, … next to `spring-boot-starter-test`.
 - `org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest`, `org.springframework.boot.jdbc.test.autoconfigure.JdbcTest`, `org.springframework.test.context.bean.override.mockito.MockitoBean`.
-- A repository with JUnit 4 tests may keep them next to Jupiter ones through `junit-vintage-engine` (version managed by the BOM) when converting them is outside the plan; `SpringJUnit4ClassRunner` / `@ContextConfiguration` tests are converted.
+- A repository with JUnit 4 tests may keep them next to Jupiter ones through `junit-vintage-engine` (version managed by the BOM) while the JUnit upgrade is off — see "Which tests change" above for the ones that must convert anyway.
