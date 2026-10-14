@@ -8,7 +8,7 @@ Legend: **auto** = Boot configures it, delete the manual definition; **prop** = 
 
 | Spring today | Spring Boot |
 |---|---|
-| `spring-webmvc`, `spring-web`, `<mvc:annotation-driven/>`, `@EnableWebMvc`, `DispatcherServlet` in `web.xml` | `spring-boot-starter-web` — **auto**. Customisations in a `WebMvcConfigurer` (**code**) |
+| `spring-webmvc`, `spring-web`, `<mvc:annotation-driven/>`, `@EnableWebMvc`, `DispatcherServlet` in `web.xml` | `spring-boot-starter-webmvc` — **auto**. Customisations in a `WebMvcConfigurer` (**code**) |
 | `@RestController`/`@Controller` classes | Unchanged; found by component scan from the `@SpringBootApplication` package |
 | `InternalResourceViewResolver`, JSP, Tiles | `spring-boot-starter-thymeleaf` — **auto**; JSP → Thymeleaf (`web-layer-to-boot.md`) |
 | FreeMarker/Velocity view resolvers | `spring-boot-starter-freemarker` — **auto** (Velocity has no Boot support: convert to Thymeleaf) |
@@ -72,3 +72,13 @@ Legend: **auto** = Boot configures it, delete the manual definition; **prop** = 
 ## Hand-written Java config that Boot makes unnecessary
 
 `@EnableWebMvc`, `@EnableTransactionManagement`, `@EnableJpaRepositories` (in the application package), `@EnableAspectJAutoProxy`, `@ComponentScan` duplicating the application's, `@Import`/`@ImportResource` of XML, `PropertySourcesPlaceholderConfigurer`, `ObjectMapper`/`MessageSource`/`DataSource`/`EntityManagerFactory`/`JdbcTemplate`/transaction-manager `@Bean` methods. Delete each, carry its settings into properties, and keep what is a genuine customisation as a `Customizer`.
+
+
+## Rows that are code, not properties
+
+| Legacy | Boot 4 | Note |
+|---|---|---|
+| `SessionLocaleResolver` / `CookieLocaleResolver` bean + `LocaleChangeInterceptor` | `@Bean LocaleResolver localeResolver()` (keep the bean name `localeResolver`) + the interceptor added in `WebMvcConfigurer.addInterceptors` | `spring.web.locale-resolver` only offers `accept-header` and `fixed`; a session/cookie resolver stays a bean (the B009 scan does not flag it) |
+| `web.xml` `<filter>` of the application's own class | `@Component` on the `Filter` (a `FilterRegistrationBean` only when the order or `url-pattern` matters) | |
+| `web.xml` `<listener>` of the application's own class | `@Component` on the `ServletContextListener` | |
+| `log4j.properties` pattern with `%d{yyyy-MM-dd'T'HH:mm:ss,SSS}` | `logging.pattern.*` with `%d{ISO8601}` (or a dot before the milliseconds) | after a comma Logback expects a time-zone: `ZoneRulesException: Unknown time-zone ID: SSS` fails the context at startup |

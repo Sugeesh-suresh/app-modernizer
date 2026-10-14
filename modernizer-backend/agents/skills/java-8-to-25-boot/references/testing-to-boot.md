@@ -61,3 +61,10 @@ With Spring Security: add `spring-security-test`; `@WithMockUser(roles = "ADMIN"
 - A test never "fixed" by `spring.main.allow-bean-definition-overriding=true` or by re-declaring an auto-configured bean in a test config — fix the production wiring.
 - Do not delete or weaken a test to make a build pass; do not add tests the plan did not list.
 - The validation builds with `-DskipTests`: a test that cannot compile still fails the build, but one that would fail at runtime is a human follow-up, which the report names.
+
+
+## Boot 4 package and starter names (found by building)
+
+- Slice test starters are modular: `spring-boot-starter-webmvc-test`, `spring-boot-starter-jdbc-test`, … next to `spring-boot-starter-test`.
+- `org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest`, `org.springframework.boot.jdbc.test.autoconfigure.JdbcTest`, `org.springframework.test.context.bean.override.mockito.MockitoBean`.
+- A repository with JUnit 4 tests may keep them next to Jupiter ones through `junit-vintage-engine` (version managed by the BOM) when converting them is outside the plan; `SpringJUnit4ClassRunner` / `@ContextConfiguration` tests are converted.

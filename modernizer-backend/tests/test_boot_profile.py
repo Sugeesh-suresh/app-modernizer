@@ -292,6 +292,7 @@ def test_a_bigbang_boot_run_cannot_pass_validation_until_the_result_is_a_boot_ap
     review = _next(repo)
     assert review["id"].startswith("review-")
     assert "boot_conformance.md" in review["query"] and "references/steps/review.md" in review["query"]
+    assert "## Plan Conformance" in review["query"] and "newest GA 4.x" in modify["query"]
 
 
 STAGED = ("## Stage 1: Modernize Build Systems (Maven/Gradle)\n\n### Task 1.1: Wrapper\n- Files: `pom.xml`\n\n"

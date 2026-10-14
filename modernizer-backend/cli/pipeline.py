@@ -228,7 +228,12 @@ def _approved(run: Run, pattern: str, stage: int | None = None) -> str:
     if pattern == P.JAVA_8_TO_11 and run.state.get("approved_unavailable"):
         text += ("\n\n**⚠ Not downloadable through the configured repository — do NOT use these until the list "
                  "is corrected:** " + ", ".join(f"`{u.split(' ')[0]}`" for u in run.state["approved_unavailable"]))
-    return text or "(none listed)"
+    text = text or "(none listed)"
+    if boot_profile(run) and pattern == P.JAVA_8_TO_25:
+        text += ("\n\n**Spring Boot parent version (the one version you choose):** resolve the newest GA 4.x (never a "
+                 "milestone `-M` or release candidate `-RC`) from Maven Central metadata and write it once, in the parent; "
+                 "every other managed library takes its version from the BOM.")
+    return text
 
 
 def _output_rule(step_id: str, what: str) -> str:
@@ -1173,7 +1178,8 @@ def _review_step(run: Run, code: dict, spec: P.Pattern) -> dict:
         body += ("\n\nThis is a Java 8 → Java 25 + Spring Boot 4 run: also follow the `java-8-to-25-boot` skill's "
                  "`references/steps/review.md`. The conformance scan below is deterministic — a remaining error finding "
                  "is a CRITICAL finding; a warning is a finding to weigh. Check that behaviour was preserved, not only that "
-                 "the shape is right.")
+                 "the shape is right. Give the review the sections `## Change Relevance` (from `ws_audit_changes`) and "
+                 "`## Plan Conformance` (from `ws_compare_plan_to_changes`) — the report reads them by name.")
     if requirements_block(run, "review"):
         body += "\n\n" + requirements_block(run, "review")
     q = body + _files_block(run, [("Confirmed Migration Plan", run.doc_path("plan", pattern))]

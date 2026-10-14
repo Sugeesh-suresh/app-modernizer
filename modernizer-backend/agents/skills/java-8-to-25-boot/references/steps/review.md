@@ -13,7 +13,7 @@ Mark each item **met**, **unmet** (with file and line evidence) or **not applica
 - [ ] The pipeline's conformance report has no error-level finding (B001–B011); warnings (B012, B013, W101) are listed with a note on whether each was in scope
 - [ ] Parent or BOM is Spring Boot 4.x; no `<version>` on a Boot-managed dependency; `spring-boot-maven-plugin` present with `repackage`
 - [ ] Packaging `jar`; no `maven-war-plugin`; no `web.xml`, no `WebApplicationInitializer`/`SpringBootServletInitializer`, no `src/main/webapp/WEB-INF`
-- [ ] Embedded Tomcat via `spring-boot-starter-web`; no Jetty/Undertow starter, no external-container plugin, no `provided` Tomcat
+- [ ] Embedded Tomcat via `spring-boot-starter-webmvc`; no Jetty/Undertow starter, no external-container plugin, no `provided` Tomcat
 - [ ] Exactly one `@SpringBootApplication`, in a package above the scanned ones
 - [ ] No Spring XML bean file, no `@ImportResource`, no `ClassPathXmlApplicationContext`/`XmlWebApplicationContext`
 - [ ] No `.jsp`, no JSTL/Jasper dependency, no `InternalResourceViewResolver`; Thymeleaf templates exist for every former view

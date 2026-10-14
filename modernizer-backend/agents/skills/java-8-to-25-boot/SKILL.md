@@ -74,3 +74,10 @@ The stage guides of `java-8-to-25` (`readiness`, `springboot-incremental`, `spri
 | `references/testing-to-boot.md` | `modify`, `fix` |
 
 Base knowledge it builds on, all in the `java-8-to-25` skill: `war-to-executable-jar.md`, `webxml-to-javaconfig.md`, `spring-data-jpa-migration.md`, `jsp-to-thymeleaf.md`, `boot4-dependency-cleanup.md`, `boot27-on-war.md`, `boot3-jakarta-transition.md`, `jakarta-ee11-namespace-map.md`, `legacy-library-modernization.md`.
+
+
+## Decisions the base skill leaves open (this profile settles them)
+
+- **The Boot version is the one version you choose.** The parent's version is resolved at modify time from Maven Central metadata as the newest **GA** 4.x — never a milestone (`-M`) or release candidate (`-RC`) — and written once, in `spring-boot-starter-parent`. This is the exception to "use only versions you have seen": every other managed library takes its version from the BOM.
+- **Keep the repository's data-access style.** `JdbcTemplate` / plain JDBC → `spring-boot-starter-jdbc` (the template is auto-configured); JPA / Hibernate → `spring-boot-starter-data-jpa`. Do not rewrite hand-written SQL into entities to satisfy a "with Spring Data JPA" line in the base skill — this profile overrides it; JPA is for code that is already JPA.
+- **Starter name.** The web starter is `spring-boot-starter-webmvc` in Boot 4 (fall back to `spring-boot-starter-web` only if the chosen release does not publish it).

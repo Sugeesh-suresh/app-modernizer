@@ -17,7 +17,7 @@ Include components "not used" only if the plan listed them. A component the run 
 
 ## End-state checklist with evidence
 
-A table `Requirement | Met? | Evidence`, one row per line of the end state in SKILL.md (Boot 4.x parent/BOM; Java 25; Jakarta EE 11; `jar` packaging with `repackage`; embedded Tomcat via `spring-boot-starter-web`; single `@SpringBootApplication`; `application.yml` + `@ConfigurationProperties`; no Spring XML; no manual auto-configured beans; Thymeleaf, no JSP; starters only; no `web.xml`/WAR/initializer). Evidence is a file, a build result or a conformance-report line: "no B001–B011 findings in the final conformance report", "`target/orders.jar` listed by the final build". A requirement with no evidence is **Not shown**, never Met. List any warning left (B012, B013, W101) with its count.
+A table `Requirement | Met? | Evidence`, one row per line of the end state in SKILL.md (Boot 4.x parent/BOM; Java 25; Jakarta EE 11; `jar` packaging with `repackage`; embedded Tomcat via `spring-boot-starter-webmvc`; single `@SpringBootApplication`; `application.yml` + `@ConfigurationProperties`; no Spring XML; no manual auto-configured beans; Thymeleaf, no JSP; starters only; no `web.xml`/WAR/initializer). Evidence is a file, a build result or a conformance-report line: "no B001–B011 findings in the final conformance report", "`target/orders.jar` listed by the final build". A requirement with no evidence is **Not shown**, never Met. List any warning left (B012, B013, W101) with its count.
 
 ## What was dropped or replaced
 

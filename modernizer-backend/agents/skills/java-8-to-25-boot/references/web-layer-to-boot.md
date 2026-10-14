@@ -1,7 +1,7 @@
 # Web layer → Spring Boot (controllers, views, assets, `server.*`)
 <!-- applies-to: controller, jsp, dispatcherservlet, webmvc -->
 
-Target: `spring-boot-starter-web` (Spring MVC on embedded Tomcat 11, Servlet 6.1). Controllers stay; everything around them that Boot configures goes away. Per-element `web.xml` translations are in `java-8-to-25` › `webxml-to-javaconfig.md`; the JSP translation tables are in `java-8-to-25` › `jsp-to-thymeleaf.md` (not repeated here).
+Target: `spring-boot-starter-webmvc` (Spring MVC on embedded Tomcat 11, Servlet 6.1). Controllers stay; everything around them that Boot configures goes away. Per-element `web.xml` translations are in `java-8-to-25` › `webxml-to-javaconfig.md`; the JSP translation tables are in `java-8-to-25` › `jsp-to-thymeleaf.md` (not repeated here).
 
 ## MVC configuration
 
@@ -76,3 +76,9 @@ Tomcat tuning lives only in `server.tomcat.*` (or a `WebServerFactoryCustomizer<
 ## Check list
 
 No `@EnableWebMvc`/adapter/resolver beans; URLs and context path unchanged; every view has a template; static files under `static/`; error pages reachable; `server.*` keys cover the former container settings.
+
+
+## Known behaviour differences to list in the report
+
+- Spring 7 no longer matches a trailing slash: `/products/` is 404 where Spring 4 matched `/products`.
+- A web.xml `<error-page>` answered every client with the error JSP; Boot's error handling answers `Accept: text/html` with `templates/error.html` and other clients with a JSON error body.

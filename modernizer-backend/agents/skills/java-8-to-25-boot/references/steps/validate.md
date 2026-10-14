@@ -24,5 +24,5 @@ Supplement to the `java-8-to-25` skill's `references/steps/validate.md` — foll
 ## Example final response
 
 ```
-{"passed": false, "errors": ["BOOT: B006 — pom.xml: explicit org.springframework:spring-webmvc; use spring-boot-starter-web", "BOOT: B009 — src/main/java/com/acme/config/WebConfig.java:14: @EnableWebMvc"], "summary": "package succeeded and target/orders.jar exists, but 2 Boot conformance errors remain (B006, B009); 1 warning (W101)."}
+{"passed": false, "errors": ["BOOT: B006 — pom.xml: explicit org.springframework:spring-webmvc; use spring-boot-starter-webmvc", "BOOT: B009 — src/main/java/com/acme/config/WebConfig.java:14: @EnableWebMvc"], "summary": "package succeeded and target/orders.jar exists, but 2 Boot conformance errors remain (B006, B009); 1 warning (W101)."}
 ```
