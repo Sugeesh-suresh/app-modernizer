@@ -3,10 +3,12 @@ prompt = """
 Start a Stella Modernizer run on the current repository. The user's arguments: `{{args}}`
 
 1. Work out the pattern from the arguments. Valid patterns: `java-8-to-25`, `java-8-to-11`, `solr-4-to-9`,
-   `oracle-19c-to-23ai`, `tibco-ems-to-pubsub`, `jsp-to-react-bff`, `stack-discovery`. If none is given or it is
+   `oracle-19c-to-23ai`, `tibco-ems-to-pubsub`, `jsp-to-react-bff`, `java-8-to-25-boot`, `stack-discovery`.
+   (`java-8-to-25-boot` is Java 8 → 25 with every Spring component converted to Spring Boot 4 and the result an
+   executable JAR on embedded Tomcat — no WAR; use it when the user wants Spring Boot as the final shape.) If none is given or it is
    ambiguous, call `mcp_modernizer_list_patterns`, show the list and ask which one — do not guess.
-   For `java-8-to-25` only: "incremental" means migration_strategy=incremental (default bigbang), "springboot"
-   means springboot_upgrade=true, "junit" means junit_upgrade=true. `context=` lists Swagger / OpenAPI / design
+   For `java-8-to-25` and `java-8-to-25-boot`: "incremental" means migration_strategy=incremental (default bigbang), "junit" means junit_upgrade=true; for plain
+   `java-8-to-25` only, "springboot" means springboot_upgrade=true (`java-8-to-25-boot` always includes it). `context=` lists Swagger / OpenAPI / design
    files for the planner.
    **Everything else the user wrote is their requirement — pass it as `requirements`, complete and in their
    own words** (e.g. "migrate the backend to Java 11, keep the JSP WARs, Spring and Hibernate to compatible

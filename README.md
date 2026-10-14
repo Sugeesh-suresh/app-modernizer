@@ -13,6 +13,7 @@ It also runs **from Gemini CLI with no ADK pipeline and no web server** — the 
 | Pattern | From | To | Validation | Strategies |
 |---|---|---|---|---|
 | **Java 8 → Java 25** | Java 8, Spring 3/4, WAR | Java 25, Spring Boot 4.x, executable JAR | Real `mvn`/`gradle` compile + package | Bigbang **or** phased incremental |
+| **Java 8 → Java 25 + Spring Boot 4 (embedded Tomcat)** (`java-8-to-25-boot`, Gemini CLI) | Java 8 Spring WAR, XML contexts, JSP | Java 25, **every Spring component converted to Spring Boot 4.x**, executable JAR on embedded Tomcat — no WAR | Real `mvn package` + a deterministic Spring Boot conformance scan | Bigbang **or** incremental |
 | **Java 8 → Java 11 (JSP & WildFly preserved)** | Java 8 JSP + WildFly monolith (WAR) | Java 11, **same WAR, same JSPs, same WildFly deployment** | Real `mvn package` at release 11 + deterministic scope-fence check | Single pass, modifier chunked per plan task |
 | **Solr 4x → Solr 9x** | Solr 4.x schema, solrconfig, SolrJ | Solr 9.x, Point fields, `*SolrClient` | Deterministic config validator | Single pass |
 | **Oracle 19c → 23ai** | 19c SQL / PL/SQL, `ojdbc6` | 23ai-compatible, `ojdbc11` | Deterministic SQL validator | Single pass |
@@ -95,6 +96,12 @@ upload → RE (Java 11 blockers + frozen-zone inventory) → HUMAN: review → p
        → HUMAN: approve → modifier × N tasks (fresh context each) → build loop (mvn package + fence check)
        → code review → report → frozen-file restore → diff
 ```
+
+### Java 8 → 25 + Spring Boot 4 pipeline (Gemini CLI)
+
+`/modernize:start java-8-to-25-boot` is the Java 8 → 25 engine with the Spring Boot end state fixed, so there is no toggle to forget: the newest Spring Boot 4.x on Java 25 and Jakarta EE 11, packaged as an **executable JAR on the embedded Tomcat** (never a WAR, never another server), and **every Spring Framework component converted to its Spring Boot equivalent** — individual Spring libraries to starters, XML bean files and `web.xml` to annotations and `application.yml`, hand-declared `DataSource` / `EntityManagerFactory` / transaction-manager / `JdbcTemplate` / view-resolver beans to auto-configuration, `WebSecurityConfigurerAdapter` to a `SecurityFilterChain`, JSP to Thymeleaf, `javax.*` Java EE imports to `jakarta.*`, old Spring test runners to `@SpringBootTest`. It takes the same `incremental` and `junit` options as `java-8-to-25`; the plain `java-8-to-25` pattern is unchanged (Spring Boot stays an opt-in there).
+
+It runs the same stages, JDK handling, test baseline, build loop and human gates, with an overlay skill (`agents/skills/java-8-to-25-boot`) that adds a Spring Component Inventory and a Conversion Order to the plan and the conversion rules to the modify, validate, fix, review and report steps. The result is **checked in code**, not on an agent's word: after the last stage (a big-bang run's validation, an incremental run's final stage — earlier stages are legitimately still WARs on the way) `agents/shared/boot_conformance.py` scans the workspace, and any error finding fails the validation and goes to the fixer: B001 WAR packaging, B002 `web.xml` / servlet initializer, B003 no `@SpringBootApplication`, B004 JSP or `src/main/webapp`, B005 Spring XML bean files, B006 a Spring library not brought in as its starter (the finding names the starter), B007 no Boot parent/BOM or plugin, B008 `javax.*` Java EE left, B009 configuration that fights Boot (`@EnableWebMvc`, `@ImportResource`, hand-built auto-configured beans), B010 another server or a container-scoped Tomcat, B011 no `application.yml`; warnings for old test runners, log4j configuration and hand-set versions of managed libraries. A deliberate exception is kept with a `boot:keep <reason>` comment that the plan's Open Questions allow, and the report lists it. When the build loop runs out, the incremental stage pause applies as for any Java 8 → 25 run.
 
 ### Test-coverage pattern (Gemini CLI)
 

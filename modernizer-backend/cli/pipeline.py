@@ -34,7 +34,7 @@ from agents.java_8_to_11 import mechanical as java11_mechanical
 from agents.java_8_to_11.fence_rules import FENCE_RULES, STAGE_TITLE as JAVA11_STAGE_TITLE
 from agents.java_8_to_25.stages import COMPANIONS_AFTER_STAGE, INCREMENTAL_STAGES, incremental_stages
 from agents.shared import (
-    approved_versions, knowledge_slice, progress, callbacks, change_audit, companion_detector, dependency_graph, diffing, java_preflight,
+    approved_versions, boot_conformance, knowledge_slice, progress, callbacks, change_audit, companion_detector, dependency_graph, diffing, java_preflight,
     learned_fixes, migration_inventory, plan_contract, plan_paths, plan_tasks, re_units, scope_fence, skill_manifest,
     skill_steps,
 )
@@ -62,6 +62,16 @@ ANALYST, PLANNER, CODER, VALIDATOR, REVIEWER, WRITER = (
 
 MAX_REQUIREMENTS_CHARS = 4000
 
+BOOT_PROFILE_TEXT = (
+    "## Profile: Java 8 → Java 25 + Spring Boot 4 (embedded Tomcat)\n"
+    "This run's end state is fixed, not optional: the newest Spring Boot 4.x on Java 25 and Jakarta EE 11, packaged as an "
+    "executable JAR on the EMBEDDED Tomcat (never a WAR, never another server), with every Spring Framework component "
+    "converted to its Spring Boot equivalent — starters instead of individual Spring libraries, auto-configuration instead "
+    "of hand-declared beans, `application.yml` instead of XML and web.xml, Thymeleaf instead of JSP, Jakarta instead of "
+    "`javax.*` Java EE imports. The plan must contain the Spring Component Inventory and the Conversion Order that the "
+    "`java-8-to-25-boot` plan step describes. The pipeline checks the end state with a deterministic scan (findings "
+    "B001–B013) and fails the final validation while any error finding remains.")
+
 
 def requirements_block(run: Run, role: str) -> str:
     """The person's requirements as a section of a step's query ("" when none were given). `role` says what
@@ -84,6 +94,29 @@ def requirements_block(run: Run, role: str) -> str:
     return f"## Requirements from the person who asked for this migration\n{text}\n\n{use}"
 
 
+def boot_profile(run: Run) -> bool:
+    """A `java-8-to-25-boot` run: the Java 8 -> 25 engine, ending as a Spring Boot 4 executable JAR on embedded Tomcat."""
+    return run.state.get("profile") == "boot"
+
+
+def _overlay(run: Run, step: str) -> tuple[str, ...]:
+    """The steps the Boot profile's skill adds alongside a Java 8 -> 25 step (passed to cli_instruction)."""
+    return (f"java-8-to-25-boot:{step}",) if boot_profile(run) else ()
+
+
+def _boot_gate(run: Run, code: dict) -> bool:
+    """Whether this validation is the one that must show the Boot end state: a big-bang run's, or an incremental
+    run's last stage. (Earlier stages are legitimately still WARs on their way.)"""
+    return (boot_profile(run) and code["pattern"] == P.JAVA_8_TO_25 and code.get("split") != "pre"
+            and code["si"] == len(code["stages"]) - 1)
+
+
+def _boot_scan(run: Run) -> boot_conformance.Conformance:
+    scan = boot_conformance.scan(run.workspace)
+    _results(run, P.JAVA_8_TO_25, "boot_conformance.md").write_text(scan.markdown(), encoding="utf-8")
+    return scan
+
+
 def start(workspace: Path, pattern: str, migration_strategy: str = "bigbang", springboot_upgrade: bool = False,
           junit_upgrade: bool = False, context_files: list[str] | None = None, restart: bool = False,
           requirements: str = "") -> Run:
@@ -95,6 +128,10 @@ def start(workspace: Path, pattern: str, migration_strategy: str = "bigbang", sp
     skill decides how to migrate by default, the requirements decide what this person needs."""
     if pattern not in P.ALL_PATTERNS:
         raise RunError(f"Unknown pattern '{pattern}'. Choose one of: {', '.join(P.ALL_PATTERNS)}.")
+    profile = ""
+    if pattern == P.JAVA_8_TO_25_BOOT:
+        # The Java 8 -> 25 engine with the Spring Boot end state fixed: nothing to choose, nothing to forget.
+        pattern, profile, springboot_upgrade = P.JAVA_8_TO_25, "boot", True
     if Run.exists(workspace) and not restart:
         raise RunError("A modernizer run already exists in this repository (.modernizer/run.json). "
                        "Continue it with /modernize:next, or start over with restart=true.")
@@ -123,7 +160,7 @@ def start(workspace: Path, pattern: str, migration_strategy: str = "bigbang", sp
 
     run = Run.create(workspace, pattern, migration_strategy=migration_strategy,
                      springboot_upgrade=bool(springboot_upgrade), junit_upgrade=bool(junit_upgrade),
-                     additional_context=context, requirements=requirements)
+                     additional_context=context, requirements=requirements, profile=profile)
     ws = str(workspace)
     if pattern == P.STACK_DISCOVERY:
         from . import discovery
@@ -147,6 +184,8 @@ def summary(run: Run) -> str:
     lines = [f"# Modernizer run `{s['run_id']}`", "",
              f"- **Pattern:** {s['pattern']}", f"- **Repository:** {s['workspace_dir']}",
              f"- **Baseline snapshot:** {s['baseline_dir']}"]
+    if s.get("profile") == "boot":
+        lines.append(f"- **Pipeline:** {P.JAVA_8_TO_25_BOOT} — {P.BOOT_LABEL}")
     if s["pattern"] == P.JAVA_8_TO_25:
         lines.append(f"- **Strategy:** {s.get('migration_strategy')} (Spring Boot upgrade: "
                      f"{s.get('springboot_upgrade')}, JUnit upgrade: {s.get('junit_upgrade')})")
@@ -486,7 +525,7 @@ def _phase_plan(run: Run, log: list[str]) -> dict | None:
     spec = P.get(pattern)
     sid = f"plan-{pattern}"
     feedback = run.state.get("plan_feedback")
-    parts = [skill_steps.cli_instruction(spec.plan_skill) + " to create the migration plan.",
+    parts = [skill_steps.cli_instruction(spec.plan_skill, *_overlay(run, "plan")) + " to create the migration plan.",
              skill_manifest.planner_block(spec.roster)]
     if requirements_block(run, "plan"):
         parts.append(requirements_block(run, "plan"))
@@ -494,6 +533,8 @@ def _phase_plan(run: Run, log: list[str]) -> dict | None:
         parts.append(f"## Migration Strategy\n{run.state.get('migration_strategy')}\n\n"
                      f"## JUnit Upgrade Requested\n{str(run.state.get('junit_upgrade')).lower()}\n\n"
                      f"## Spring Boot Upgrade Requested\n{str(run.state.get('springboot_upgrade')).lower()}")
+    if pattern == P.JAVA_8_TO_25 and boot_profile(run):
+        parts.append(BOOT_PROFILE_TEXT)
     if pattern == P.JAVA_8_TO_11:
         parts.append("## Scope Fence (the plan must stay inside it)\n" + FENCE_RULES)
     parts.append("## Approved Versions (your organisation's list — use exactly these for these artifacts)\n"
@@ -775,7 +816,7 @@ def _modify_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
         guides = " and ".join(f"`{skill_steps.step_resource(n)}`" for n in st.extra_skills)
         preamble = (f"You are applying the '{st.title}' stage (step {stage['position']} of {stage['total']}, "
                     f"Phase {st.phase}: {st.phase_title}) of the confirmed migration plan.")
-        body = (skill_steps.cli_instruction("java-8-to-25:modify") + " — apply ONLY the work described under '## Your Task' "
+        body = (skill_steps.cli_instruction("java-8-to-25:modify", *_overlay(run, "modify")) + " — apply ONLY the work described under '## Your Task' "
                 f"below. It is one task of the '{st.title}' stage; earlier tasks and stages are already applied, and "
                 "the remaining ones run as separate passes — do not do their work, and do not re-do work already "
                 f"in place. {write_tools}\n\nThis is Phase {st.phase} ({st.phase_title}) of an incremental "
@@ -822,7 +863,8 @@ def _modify_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
                      "4.x as an executable JAR on an embedded Tomcat (never a WAR), with Spring Data JPA, Thymeleaf "
                      "instead of JSP, and every conflicting legacy library removed. It supersedes the modify step's "
                      "generic Spring Boot guidance.")
-        body = (skill_steps.cli_instruction(unit["skill"]) + " to apply the confirmed migration plan to the "
+        body = (skill_steps.cli_instruction(unit["skill"], *(_overlay(run, "modify") if unit["skill"].startswith("java-8-to-25") else ()))
+                + " to apply the confirmed migration plan to the "
                 f"files in the workspace. {write_tools}{extra}\n\n## Approved Versions (your organisation's list — "
                 f"use exactly these for these artifacts)\n" + _approved(run, pattern))
     if code["retry"]:
@@ -904,7 +946,7 @@ def _validate_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
     suffix = _stage_label(code, stage)
     sid = f"validate-{pattern}{'-' + suffix if suffix else ''}-{code['iter'] + 1}"
     run.state["build_signalled"] = False
-    body = skill_steps.cli_instruction(spec.validate_skill) + " to validate the workspace and report the result."
+    body = skill_steps.cli_instruction(spec.validate_skill, *_overlay(run, "validate")) + " to validate the workspace and report the result."
     # Java 8 -> 25 validations RUN the tests (VALIDATE_RUN_TESTS): a suite broken by the migration (a Mockito that
     # cannot mock on the new JDK, a removed API in a test) must fail the stage, not surface after the run.
     tests = pattern == P.JAVA_8_TO_25 and config.VALIDATE_RUN_TESTS
@@ -939,6 +981,11 @@ def _validate_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
                  f"code: ALSO build with ws_run_command (`{compile_cmd}`, or `gradle clean test`) — "
                  "it runs on the JDK of the Java stage this pass follows. The validation passes only when the "
                  "static check AND the build pass.")
+    if _boot_gate(run, code):
+        scan = _boot_scan(run)
+        body += ("\n\n## Spring Boot conformance (a deterministic scan of the workspace, run just now)\n" + scan.markdown()[:6000]
+                 + "\nThis is the final state of a Spring Boot pipeline: every ERROR finding above fails the validation "
+                   "(the pipeline enforces it whatever you report) — list each one in `errors` prefixed `BOOT:` with its code.")
     body += (f"\n\n{note}\n\nIf — and only if — the validation succeeded, call "
              "`ws_signal_build_success`; it refuses while an approved-versions or scope-fence check still fails, "
              "and then validation has failed. Never edit files: you only build and report.")
@@ -961,6 +1008,12 @@ def _complete_validate(run: Run, step: dict, output: str) -> str:
         result = {"passed": False, "errors": result.get("errors") or [],
                   "summary": "The validator reported a pass but did not call ws_signal_build_success (or it was "
                              "refused) — treated as a failed validation. " + str(result.get("summary", ""))}
+    if result["passed"] and _boot_gate(run, code):
+        scan = _boot_scan(run)
+        if not scan.ok:
+            result = {"passed": False, "errors": list(result.get("errors") or []) + [f"BOOT: {l}" for l in scan.error_lines()],
+                      "summary": f"The build passed but the result is not yet a Spring Boot 4 executable JAR on embedded "
+                                 f"Tomcat: {len(scan.errors)} conformance error(s). " + str(result.get("summary", ""))}
     raw = json.dumps(result, indent=2, ensure_ascii=False)
     _results(run, code["pattern"], _build_result_name(code, stage)).write_text(raw, encoding="utf-8")
     # The validator's ADK callbacks: verify the fixer's pending lessons, and note new errors in its skill.
@@ -1027,7 +1080,7 @@ def _fix_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
     pattern = code["pattern"]
     suffix = _stage_label(code, stage)
     sid = f"fix-{pattern}{'-' + suffix if suffix else ''}-{code['iter']}"
-    body = (skill_steps.cli_instruction(spec.fix_skill) + " on the validation report below. Read with "
+    body = (skill_steps.cli_instruction(spec.fix_skill, *_overlay(run, "fix")) + " on the validation report below. Read with "
             "read_file / grep_search / glob / list_directory; write ONLY with `ws_replace_in_file` and "
             "`ws_write_file`.")
     if pattern == P.JAVA_8_TO_11:
@@ -1112,10 +1165,18 @@ def _review_step(run: Run, code: dict, spec: P.Pattern) -> dict:
     if len(_all_stages(code)) > 1:
         body += ("\n\nThis is the FULL final codebase after every incremental stage completed — review it as one "
                  "whole, not stage by stage.")
+    items = []
+    if boot_profile(run):
+        _boot_scan(run)
+        items.append(("Spring Boot conformance scan of the final workspace", _results(run, pattern, "boot_conformance.md")))
+        body += ("\n\nThis is a Java 8 → Java 25 + Spring Boot 4 run: also follow the `java-8-to-25-boot` skill's "
+                 "`references/steps/review.md`. The conformance scan below is deterministic — a remaining error finding "
+                 "is a CRITICAL finding; a warning is a finding to weigh. Check that behaviour was preserved, not only that "
+                 "the shape is right.")
     if requirements_block(run, "review"):
         body += "\n\n" + requirements_block(run, "review")
     q = body + _files_block(run, [("Confirmed Migration Plan", run.doc_path("plan", pattern))]
-                            + _stage_results_block(run, code)) + _output_rule(sid, "code review")
+                            + _stage_results_block(run, code) + items) + _output_rule(sid, "code review")
     return _sub(run, sid, REVIEWER, q, f"Independent code review ({spec.label})", "review", pattern=pattern)
 
 
@@ -1129,7 +1190,7 @@ def _complete_review(run: Run, step: dict, output: str) -> str:
 def _report_step(run: Run, code: dict, spec: P.Pattern) -> dict:
     pattern = code["pattern"]
     sid = f"report-{pattern}"
-    body = (skill_steps.cli_instruction(spec.report_skill) + " to produce the final migration report. Fold the "
+    body = (skill_steps.cli_instruction(spec.report_skill, *_overlay(run, "report")) + " to produce the final migration report. Fold the "
             "Independent Code Review's findings into a dedicated report section rather than ignoring them.")
     if requirements_block(run, "report"):
         body += "\n\n" + requirements_block(run, "report")
@@ -1144,6 +1205,9 @@ def _report_step(run: Run, code: dict, spec: P.Pattern) -> dict:
     items = _stage_results_block(run, code) + [
         ("Independent Code Review", _results(run, pattern, "code_review.md")),
         ("Fix passes", _results(run, pattern, "fix_result.md"))]
+    if boot_profile(run):
+        _boot_scan(run)
+        items.append(("Spring Boot conformance scan of the final workspace", _results(run, pattern, "boot_conformance.md")))
     if pattern == P.JSP_TO_REACT:
         items.insert(0, ("Backend Generation Result", run.out_path(f"modify-{pattern}-spring-boot-bff-generate")))
         items.insert(1, ("Frontend Generation Result", run.out_path(f"modify-{pattern}-react-frontend-generate")))

@@ -131,6 +131,8 @@ async def list_patterns() -> str:
     """List the modernization patterns this server can run, with what each changes."""
     rows = [f"- `{p.id}` — {p.label}" for p in P.PATTERNS.values()]
     rows.append(f"- `{P.STACK_DISCOVERY}` — Discover & reverse-engineer my stack (documents only; changes nothing)")
+    rows.append(f"- `{P.JAVA_8_TO_25_BOOT}` — {P.BOOT_LABEL}: the Java 8 → 25 migration with every Spring component "
+                "converted to Spring Boot, packaged as an executable JAR (no WAR); takes migration_strategy and junit_upgrade")
     rows.append(f"- `{P.TEST_COVERAGE}` — Raise unit-test coverage (writes new tests only, with the test frameworks the "
                 "repository already has; measured with JaCoCo; Maven)")
     return "\n".join(rows) + ("\n\njava-8-to-25 also takes migration_strategy=bigbang|incremental, "
@@ -147,7 +149,7 @@ async def start_run(pattern: str, workspace: str = "", migration_strategy: str =
 
     Args:
         pattern: java-8-to-25, java-8-to-11, solr-4-to-9, oracle-19c-to-23ai, tibco-ems-to-pubsub,
-            jsp-to-react-bff, stack-discovery or test-coverage.
+            jsp-to-react-bff, java-8-to-25-boot, stack-discovery or test-coverage.
         workspace: Repository root; defaults to the Gemini CLI workspace.
         migration_strategy: java-8-to-25 only — "bigbang" (one pass) or "incremental" (staged).
         springboot_upgrade: java-8-to-25 only — also move to Spring Boot 4 / executable JAR.

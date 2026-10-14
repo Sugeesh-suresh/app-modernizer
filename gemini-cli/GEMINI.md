@@ -9,7 +9,8 @@ analyse → (analysis review) → plan → **plan approval** → modify → buil
 When the user says what they want beyond the pattern (a library to move, a version, what to keep), pass it to
 `mcp_modernizer_start_run` as `requirements`, in their own words — it reaches the plan, the review and the report.
 
-Patterns: `java-8-to-25` (bigbang or incremental, optional Spring Boot 4 / JUnit), `java-8-to-11` (JDK only;
+Patterns: `java-8-to-25` (bigbang or incremental, optional Spring Boot 4 / JUnit), `java-8-to-25-boot` (the same, with
+Spring Boot 4 on embedded Tomcat as an executable JAR fixed and every Spring component converted to Boot; no WAR), `java-8-to-11` (JDK only;
 JSP and WildFly frozen), `solr-4-to-9`, `oracle-19c-to-23ai`, `tibco-ems-to-pubsub`, `jsp-to-react-bff`, and
 `stack-discovery` (reverse engineering: documents the repository as it is; changes nothing).
 `test-coverage` raises unit-test coverage of a Maven repository by adding new tests only (`/modernize:coverage [line=85] [branch=70] [rounds=6] [scope=...]`): the pipeline measures with JaCoCo, stops at the `coverage` gate (step `coverage-target`) for the user's target, and again at `coverage-stalled` (`accept`, `more=<n>` or a new target); the `modernizer-tester` subagent writes the tests under `src/test` only, with the repository's existing frameworks.

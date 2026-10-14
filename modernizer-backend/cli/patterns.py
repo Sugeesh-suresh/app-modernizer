@@ -19,6 +19,10 @@ JAVA_8_TO_25 = "java-8-to-25"
 JSP_TO_REACT = "jsp-to-react-bff"
 STACK_DISCOVERY = "stack-discovery"
 TEST_COVERAGE = "test-coverage"
+# A profile of the Java 8 -> 25 engine, offered as a pipeline of its own: the same stages, builds and gates, with
+# the Spring Boot 4 end state forced (executable JAR on embedded Tomcat) and every Spring component converted.
+JAVA_8_TO_25_BOOT = "java-8-to-25-boot"
+BOOT_LABEL = "Java 8 → Java 25 + Spring Boot 4 (embedded Tomcat)"
 
 
 @dataclass(frozen=True)
@@ -93,7 +97,7 @@ PATTERNS: dict[str, Pattern] = {
     ),
 }
 
-ALL_PATTERNS = (*PATTERNS, STACK_DISCOVERY, TEST_COVERAGE)
+ALL_PATTERNS = (*PATTERNS, STACK_DISCOVERY, TEST_COVERAGE, JAVA_8_TO_25_BOOT)
 
 
 def get(pattern: str) -> Pattern:
