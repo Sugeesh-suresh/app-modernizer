@@ -290,6 +290,13 @@ def compare_plan_to_changes(plan: str, baseline_dir: str, workspace_dir: str,
     # search space is every path the plan could mean, not just the changed ones.
     universe = sorted(set(changed) | set(all_workspace_paths or []))
     matched_actual: set[str] = set()
+    # Files the manifest says stay as they are. A task's `Files:` line often names the same file by a shorter
+    # path (`GlobalExceptionHandler.java`), which is a second entry for it: it must not turn an unchanged file the
+    # manifest cleared into "under-delivery".
+    cleared: set[str] = set()
+    for entry in planned:
+        if entry.no_change_expected:
+            cleared.update(_resolve(entry.path, universe))
 
     for entry in planned:
         targets = _resolve(entry.path, universe)
@@ -305,7 +312,7 @@ def compare_plan_to_changes(plan: str, baseline_dir: str, workspace_dir: str,
         touched = [t for t in targets if t in changed]
         matched_actual.update(touched)
         if not touched:
-            if not entry.no_change_expected:
+            if not entry.no_change_expected and not (_rank(entry) <= 1 and set(targets) <= cleared):
                 coverage.missing.append(entry)
             continue
         for target in touched:

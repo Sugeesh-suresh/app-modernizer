@@ -399,3 +399,34 @@ class TestSkillContract:
         body = self._skill("java-8-to-25:report")
         assert "Plan Conformance" in body
         assert "Carry every confirmed under-delivery into Follow-up Recommendations" in body
+
+
+def test_a_task_naming_an_unchanged_file_by_a_short_path_is_not_under_delivery(trees):
+    """The manifest clears `GlobalExceptionHandler.java` (no change needed); a task's `Files:` line names the same
+    file by its bare name. That second mention must not become a "planned but not changed" finding."""
+    baseline, workspace = trees
+    for root in (baseline, workspace):
+        _write(root, "src/main/java/com/acme/web/GlobalExceptionHandler.java", "class G {}\n")
+        _write(root, "src/main/java/com/acme/web/ProductController.java", "class P {}\n")
+    _write(workspace, "src/main/java/com/acme/web/ProductController.java", "class P { int changed; }\n")
+    plan = """
+## File Change Manifest
+
+| File | Change Type | What Changes |
+|---|---|---|
+| `src/main/java/com/acme/web/GlobalExceptionHandler.java` | no change needed | stays |
+| `src/main/java/com/acme/web/ProductController.java` | edit | jakarta |
+
+### Task 5: Web layer
+- Files: `ProductController.java`, `GlobalExceptionHandler.java`
+- Change: jakarta imports
+"""
+    cov = _compare(plan, trees)
+    assert cov.missing == [] and cov.contradicted == []
+    assert {e.path.rsplit("/", 1)[-1] for e, _ in cov.as_planned} == {"ProductController.java"}
+    # a file only a task names (nothing clears it) that did not change is still under-delivery
+    _write(baseline, "src/main/java/com/acme/web/Other.java", "class O {}\n")
+    _write(workspace, "src/main/java/com/acme/web/Other.java", "class O {}\n")
+    cov = _compare(plan.replace("`GlobalExceptionHandler.java`", "`Other.java`").replace(
+        "| `src/main/java/com/acme/web/GlobalExceptionHandler.java` | no change needed | stays |\n", ""), trees)
+    assert [e.path for e in cov.missing] == ["Other.java"]

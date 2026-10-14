@@ -60,7 +60,7 @@ With Spring Security: add `spring-security-test`; `@WithMockUser(roles = "ADMIN"
 - No `@ContextConfiguration` pointing at a deleted XML file; no `@ImportResource` kept alive for tests.
 - A test never "fixed" by `spring.main.allow-bean-definition-overriding=true` or by re-declaring an auto-configured bean in a test config — fix the production wiring.
 - Do not delete or weaken a test to make a build pass; do not add tests the plan did not list.
-- The validation builds with `-DskipTests`: a test that cannot compile still fails the build, but one that would fail at runtime is a human follow-up, which the report names.
+- The validation builds with the command in the validator's `## Build command` section: with `VALIDATE_RUN_TESTS` on (the default) it runs the suite, so a converted test that fails fails the stage; with it off, only compilation is checked and a runtime failure is a human follow-up the report names.
 
 
 ## Boot 4 package and starter names (found by building)

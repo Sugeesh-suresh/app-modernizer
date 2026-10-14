@@ -57,7 +57,7 @@ Ground every claim in the BRD, the Technical Specification and the Existing Test
 
 - `### Evidence Plan` — one row per behaviour in the Behaviour Inventory: Behaviour | What proves it survives | Exists today? Name the actual test class from the Existing Test Inventory where one exists, and say what would have to be written where none does.
 - `### Coverage Gaps` — the behaviours with nothing proving them, stated plainly and counted: "12 of 31 endpoints have no characterisation test". Take the Test Inventory's own Coverage Gaps section as the starting point and extend it to the Behaviour Inventory. State this up front — a gap discovered at review is a gap that was hidden at approval. Say explicitly whether the run will generate characterisation tests first or proceed without them, since that is a decision the approver is making.
-- `### Validation Contract` — the exit criteria this run is held to, taken from the skills that govern it: the build loop compiles (and `package`s, when the Spring Boot upgrade is included) but **does not run the test suite** — say so plainly; every stage must leave the project compiling; the independent code review must find no unapproved change and no unmet manifest row. Name what a human still has to do that no automated step covers.
+- `### Validation Contract` — the exit criteria this run is held to, taken from the skills that govern it: the build loop compiles (and `package`s, when the Spring Boot upgrade is included) and, unless the run was started with `VALIDATE_RUN_TESTS=false`, **also runs the test suite on each stage's JDK** (tests that already failed before the migration are recorded and tolerated; any other failing test fails the stage) — state which applies from the validator's brief if you have it, otherwise say the loop's own command is authoritative; every stage must leave the project compiling; the independent code review must find no unapproved change and no unmet manifest row. Name what a human still has to do that no automated step covers.
 
 ### 5. What Happens If It Fails
 
@@ -129,7 +129,7 @@ Rules that make the table checkable rather than decorative:
 ## 4. How We'll Prove It Worked
 ## 5. What Happens If It Fails
 ## 6. What the Planner Doesn't Know
-Each exactly as specified in "Every plan answers six questions" above, with the subsections named there. Note for question 4 that real build validation happens automatically in the build loop (mvn/gradle compile — `package` when the Spring Boot upgrade is included, so the executable JAR is really built — iterated with the fixer), and that the loop does not run the test suite; and for question 5 that the deployment model changes to `java -jar` plus the environment variables ops must supply.
+Each exactly as specified in "Every plan answers six questions" above, with the subsections named there. Note for question 4 that real build validation happens automatically in the build loop (mvn/gradle compile — `package` when the Spring Boot upgrade is included, so the executable JAR is really built — iterated with the fixer), and that the loop runs the test suite unless `VALIDATE_RUN_TESTS=false` (the validator's brief names the exact command); and for question 5 that the deployment model changes to `java -jar` plus the environment variables ops must supply.
 
 ## Estimated Effort
 
@@ -247,7 +247,7 @@ Goal: Spring Boot 4 on Jakarta EE 11 with Spring Data JPA, then an executable JA
 ## 5. What Happens If It Fails
 ## 6. What the Planner Doesn't Know
 Each exactly as specified in "Every plan answers six questions" above, with the subsections named there, placed after the last stage. Two things are specific to a phased run:
-- Question 4's Validation Contract: each stage is independently built and fixed by its own build loop before the next begins, and no stage may be left uncompilable — but the loop only compiles, it never runs the test suite. The full suite run after the last stage is a human step.
+- Question 4's Validation Contract: each stage is independently built and fixed by its own build loop before the next begins, and no stage may be left uncompilable — and the loop runs the test suite on each stage's JDK unless `VALIDATE_RUN_TESTS=false` (then it only compiles and the full suite run after the last stage is a human step).
 - Question 5's Rollback Plan: there is a rollback point per phase, which is the main reason to choose this strategy over bigbang — say which phase boundaries are safe to stop at, and note the deployment-target change each Spring Boot stage implies (Tomcat 9 → 10.1 → 11 → standalone `java -jar` with environment variables), since stopping between them leaves a container the ops team must still support.
 
 ## Estimated Effort

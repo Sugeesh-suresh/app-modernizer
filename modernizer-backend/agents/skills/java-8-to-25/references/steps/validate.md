@@ -14,6 +14,7 @@ Steps:
    - `mvn -q -DskipTests clean test-compile` if a `pom.xml` is present
    - `./mvnw -q -DskipTests clean test-compile` if `pom.xml` is present but `mvn` is not installed (check the earlier error)
    - `gradle clean testClasses` or `./gradlew clean testClasses` if a Gradle build file is present instead
+   - **If your caller's instruction has a `## Build command` section, run exactly that command and no other — it states whether the tests run — and it overrides every command in this list.**
    - If your caller's instruction asks for a different goal (e.g. `package` for a stage that changes the build artifact itself), run that goal in place of `test-compile` / `testClasses`, keeping `clean` and `-DskipTests` (`package` compiles the tests too)
 
    Always `clean`: output left by an earlier build (the preflight's, a previous pass's) still holds deleted or

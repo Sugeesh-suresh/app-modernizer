@@ -73,3 +73,8 @@ Only what cannot be decided from the inventory: a JSP tag library or custom tag 
 - Each of B001–B013 has an entry (a stage and a task, or "not applicable: <evidence>").
 - The Behaviour Inventory in question 3 lists the URLs, security rules, scheduled jobs and message listeners the conversion must preserve; the Evidence Plan says what proves each.
 - The Rollback Plan names the deployment change: external container → `java -jar` with environment variables.
+
+
+## Where the Spring facts come from
+
+The Technical Specification's `## Spring XML Bean Definitions` table lists, per Spring XML context, its beans, component scans, JNDI lookups, MVC / tx / aop elements and property files. Build the Spring Component Inventory from it and from the Behaviour Inventory; read the XML itself only for what the table cannot show (a bean's property values, an interceptor's mapping). A file you list in a task's `Files:` line but leave unchanged is named in the manifest as `no change needed`.

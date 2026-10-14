@@ -111,6 +111,47 @@ def _packaging(scan: Scan) -> list[str]:
     return _rows("| POM | Packaging | finalName |", rows, "| — | — | — |") + ([""] + extra if extra else [])
 
 
+def _spring_xml_beans(scan: Scan) -> list[str]:
+    """What each Spring XML context defines — the planner has no access to the code, and "Spring XML context" tells
+    it nothing about the beans, the component scans, the JNDI lookups, the MVC set-up or the placeholders it must
+    carry over."""
+    rows = []
+    for rel, text in sorted(scan.texts.items()):
+        if not (rel.endswith(".xml") and re.search(r"<beans[\s>]", text)):
+            continue
+        beans = []
+        for tag in re.findall(r"<bean\b[^>]*>", text):
+            cls = re.search(r'\bclass="([^"]+)"', tag)
+            ident = re.search(r'\b(?:id|name)="([^"]+)"', tag)
+            if cls:
+                beans.append(f"{ident.group(1) + ' → ' if ident else ''}{cls.group(1).rsplit('.', 1)[-1]}")
+        parts = []
+        if beans:
+            parts.append(f"{len(beans)} bean(s): " + ", ".join(beans[:10]) + (f", +{len(beans) - 10} more" if len(beans) > 10 else ""))
+        scans = re.findall(r'<context:component-scan[^>]*base-package="([^"]+)"', text)
+        if scans:
+            parts.append("component-scan " + ", ".join(scans))
+        jndi = re.findall(r'jndi-name="([^"]+)"', text) + re.findall(r'name="jndiName"\s+value="([^"]+)"', text)
+        if jndi:
+            parts.append("JNDI " + ", ".join(sorted(set(jndi))))
+        for pattern, label in ((r"<(mvc:[\w-]+)", "MVC"), (r"<(tx:[\w-]+)", "tx"), (r"<(aop:[\w-]+)", "aop"),
+                               (r"<(security:[\w-]+|sec:[\w-]+)", "security"), (r"<(task:[\w-]+)", "task"),
+                               (r"<(cache:[\w-]+)", "cache"), (r"<(jdbc:[\w-]+)", "jdbc"), (r"<(jee:[\w-]+)", "jee")):
+            found = sorted(set(re.findall(pattern, text)))
+            if found:
+                parts.append(f"{label}: " + ", ".join(found))
+        locs = re.findall(r'<context:property-placeholder[^>]*\blocations?="([^"]+)"', text) + \
+            re.findall(r'<(?:property|constructor-arg)\s+name="locations?"\s+value="([^"]+)"', text) + \
+            re.findall(r'<jdbc:script[^>]*\blocation="([^"]+)"', text)
+        if locs:
+            parts.append("properties " + ", ".join(locs))
+        imports = re.findall(r'<import\s+resource="([^"]+)"', text)
+        if imports:
+            parts.append("imports " + ", ".join(imports))
+        rows.append(f"| `{rel}` | {'; '.join(parts) or 'no beans'} |")
+    return _rows("| Spring XML file | Defines |", rows, "| — | no Spring XML context |")
+
+
 def _persistence_view(scan: Scan) -> list[str]:
     rows = []
     for rel, text in sorted(scan.texts.items()):
@@ -311,7 +352,8 @@ SPECS: dict[str, Spec] = {
         suffixes=frozenset(_JAVA_BUILD | {".jsp", ".jspf", ".tag", ".html", ".htm"}),
         checks=tuple(LEGACY_MARKERS["java-8-to-25"]) + _JAVA11_AS_MARKERS + _JAVA25_EXTRA,
         dependency_filter=r".",
-        tables=(("Packaging & Deployment Model", _packaging), ("Persistence & View Layer", _persistence_view)),
+        tables=(("Packaging & Deployment Model", _packaging), ("Persistence & View Layer", _persistence_view),
+                ("Spring XML Bean Definitions", _spring_xml_beans)),
         behaviour=_java_endpoints,
     ),
     "solr-4-to-9": Spec(

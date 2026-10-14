@@ -958,22 +958,27 @@ def _validate_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
     tests = pattern == P.JAVA_8_TO_25 and config.VALIDATE_RUN_TESTS
     compile_cmd = "mvn -B clean test" if tests else "mvn -q -DskipTests clean test-compile"
     package_cmd = "mvn -B clean package" if tests else "mvn -q -DskipTests clean package"
+    final_package = False
     if pattern == P.JAVA_8_TO_25 and suffix:
         st = next(s for s in INCREMENTAL_STAGES if s.idx == stage["idx"])
         body += (f" This is validating the '{st.title}' stage (Phase {st.phase}: {st.phase_title}) of an incremental "
                  f"migration — the build should target Java {st.java_release}.")
-        if st.build_goal == "package":
-            body += (f" For this stage run the `package` goal instead (`{package_cmd}`, or "
-                     "`./gradlew assemble` for Gradle) so the new executable artifact is actually produced — a "
-                     "failed repackage is a failed build.")
+        final_package = st.build_goal == "package"
     if pattern == P.JAVA_8_TO_25 and not suffix and run.state.get("springboot_upgrade"):
-        body += (" This big-bang run converts the application to a Spring Boot executable JAR: run the `package` goal "
-                 f"instead (`{package_cmd}`, or `./gradlew clean bootJar`) so the "
-                 "artifact is really produced — a failed repackage is a failed build.")
+        body += " This big-bang run converts the application to a Spring Boot executable JAR."
+        final_package = True
+    if pattern == P.JAVA_8_TO_25:
+        # ONE command: the skill files, the stage text and the pattern note used to name three or four different ones.
+        build_cmd = package_cmd if final_package else compile_cmd
+        body += (f"\n\n## Build command (the only one to run)\nRun `{build_cmd}` with `ws_run_command` (Gradle: "
+                 f"`{'./gradlew clean assemble' if final_package else './gradlew clean test' if tests else './gradlew clean testClasses'}`). "
+                 + ("It produces the executable artifact, so a failed repackage is a failed build. " if final_package else "")
+                 + ("It compiles main and test sources and RUNS THE TESTS on this stage's JDK. " if tests else
+                    "It compiles main and test sources without running the tests. ")
+                 + "Where a skill file names a different command (`-DskipTests`, `test-compile`, ...), this command wins.")
     if tests:
         known = (json.loads(run.state.get("preflight_json") or "{}") or {}).get("baseline_failing_tests") or []
-        body += (f" Build command: `{compile_cmd}` (a package stage: `{package_cmd}`) — it RUNS THE TESTS, main and test "
-                 "sources compiled and the suite executed on this stage's JDK.\n\n"
+        body += ("\n\n"
                  "## Tests\nA test that fails now and is not in the list below FAILS the validation: put each one in "
                  "`errors` as `TEST: Class#method — the failure`, whatever its cause (a library that cannot work on "
                  "this JDK, a removed API, a changed behaviour). A test the plan deliberately deleted or rewrote is "
@@ -981,7 +986,7 @@ def _validate_step(run: Run, code: dict, stage: dict, spec: P.Pattern) -> dict:
                  + ("Tests that ALREADY FAIL on the code as uploaded (before any change) — report them in `summary`, "
                     "never fail the validation for them:\n" + "\n".join(f"- `{t}`" for t in known[:60])
                     if known else "No test failed on the code as uploaded: every failure is the migration's."))
-    note = spec.validator_note
+    note = "" if pattern == P.JAVA_8_TO_25 else spec.validator_note
     if build_pattern(run, pattern):
         note += (" This pass may also change the build (dependencies, the JDBC driver or client library) and Java "
                  f"code: ALSO build with ws_run_command (`{compile_cmd}`, or `gradle clean test`) — "
