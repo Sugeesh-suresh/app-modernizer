@@ -287,3 +287,17 @@ LLM_LIMITS: str = os.getenv("LLM_LIMITS", "")
 # fewer characters than no masking (Gemini CLI's sizing: 28%).
 CONTEXT_PROTECT_TOKENS: int = _int("CONTEXT_PROTECT_TOKENS", 12_000)
 CONTEXT_MIN_PRUNABLE_TOKENS: int = _int("CONTEXT_MIN_PRUNABLE_TOKENS", 5_000)
+
+
+# ── Test-coverage pipeline (agents/shared/coverage.py, cli/coverage_run.py) ─────────────────────────────────
+# Targets are the defaults offered at the run's target gate; the person can change each there.
+COVERAGE_TARGET_LINE: int = max(1, min(100, _int("COVERAGE_TARGET_LINE", 80)))
+COVERAGE_TARGET_BRANCH: int = max(0, min(100, _int("COVERAGE_TARGET_BRANCH", 0)))     # 0: line coverage only
+COVERAGE_MAX_ROUNDS: int = max(1, _int("COVERAGE_MAX_ROUNDS", 6))                      # writer rounds before the run asks
+COVERAGE_MIN_GAIN: float = float(os.getenv("COVERAGE_MIN_GAIN", "1.0") or 1.0)         # percentage points a round must add
+COVERAGE_BATCH_CLASSES: int = max(1, _int("COVERAGE_BATCH_CLASSES", 4))                # classes per writer round
+COVERAGE_BATCH_LINES: int = max(20, _int("COVERAGE_BATCH_LINES", 300))                 # uncovered lines per writer round
+COVERAGE_MIN_CLASS_LINES: int = max(1, _int("COVERAGE_MIN_CLASS_LINES", 3))            # smaller gaps are not worth a round
+COVERAGE_FIX_ATTEMPTS: int = max(0, _int("COVERAGE_FIX_ATTEMPTS", 2))                  # repair passes per round
+COVERAGE_FLAKE_CHECK: bool = os.getenv("COVERAGE_FLAKE_CHECK", "on").strip().lower() not in {"0", "false", "no", "off"}
+JACOCO_VERSION: str = os.getenv("JACOCO_VERSION", "").strip()                          # "": chosen by the JDK's major

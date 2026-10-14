@@ -56,3 +56,8 @@ def test_a_cut_off_build_has_no_verdict_and_a_pass_is_a_pass():
 
 def test_credentials_are_redacted():
     assert "pw" not in bs.redact("https://u:pw@nexus.corp/repo")
+
+
+def test_a_quiet_build_is_judged_by_its_exit_code():
+    assert bs.summarize("", 0).passed is True and bs.summarize("[ERROR] boom\n", 1).passed is False
+    assert bs.summarize("TIMEOUT after 5s: mvn", 124).passed is None

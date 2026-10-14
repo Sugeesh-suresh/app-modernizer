@@ -1,0 +1,41 @@
+description = "Raise unit-test coverage with the repository's own test frameworks: /modernize:coverage [line=85] [branch=70] [rounds=6] [scope=com.acme] [what you want, in your words]"
+prompt = """
+Start a Stella Modernizer `test-coverage` run on the current repository. The user's arguments: `{{args}}`
+
+The pipeline adds NEW unit tests under src/test only, using the test frameworks the repository already has; it
+never changes production code, existing tests or any pom. It measures coverage with JaCoCo itself.
+
+1. Read the arguments. The `key=value` words are coverage settings: `line=` (target line coverage %),
+   `branch=` (target branch coverage %), `rounds=` (how many write/measure rounds at most), `scope=` (a package
+   prefix to limit the work to). They are NOT arguments of `mcp_modernizer_start_run`; keep them for the target
+   gate (step 5). **Everything else the user wrote is their requirement — pass it as `requirements`, complete
+   and in their own words** (e.g. "focus on the service layer, skip generated code"). Do not summarise it or add
+   to it.
+2. Remind the user, in one line, that the run adds test files to this repository in place (a baseline copy is
+   kept), so a clean git working tree is recommended.
+3. Call `mcp_modernizer_start_run` with pattern `test-coverage` and the `requirements`. If it says a run already
+   exists, show its status (`mcp_modernizer_run_status`) and ask whether to continue it (/modernize:next) or
+   restart (restart=true).
+4. Then drive the pipeline exactly as `/modernize:next` does (see the Stella Modernizer context): loop on
+   `mcp_modernizer_next_step` until it returns a step for a person, the run is blocked, or it is done.
+   The first step is the **baseline measurement**: the pipeline builds the project and runs its existing tests
+   with JaCoCo, which can take several minutes. While `next_step` says "Still working", tell the user in one
+   line what the **Now:** line says and call it again.
+5. The pipeline then stops at the `coverage` gate (step `coverage-target`) and shows the baseline line and branch
+   numbers and the weakest classes. Present them in plain words and ask the user for the target. **Never confirm
+   this gate on the user's behalf**, and do not invent a target. If the user already gave `line=` / `branch=` /
+   `rounds=` / `scope=`, show them back and ask for a go-ahead; once the user confirms (or gives other values),
+   call `mcp_modernizer_confirm` with gate=`coverage` and selection=["line=85", "branch=70", "rounds=6",
+   "scope=com.acme"] — only the keys the user set, with their values. Then continue the loop.
+6. Subagent steps use `modernizer-tester` (write-tests, fix-tests); invoke them verbatim like any other
+   subagent step. After each round the pipeline re-measures and loops until the target is met or the rounds run
+   out.
+7. If the pipeline stops at the `coverage-stalled` gate (step `coverage-stalled`: the rounds are used up or
+   coverage stopped improving), show the numbers reached and what blocked progress (UNTESTABLE classes, tests
+   that were deleted) and offer exactly three choices: `accept` (finish with the current coverage),
+   `more=<n>` (n more rounds), or a new target (e.g. `line=80`). Never choose for the user; answer with
+   `mcp_modernizer_confirm`, gate=`coverage`, selection=["accept"] / ["more=3"] / ["line=80"].
+8. When the run is done, summarise the baseline and final numbers (as measured by the pipeline), the tests
+   added, the `UNTESTABLE:` classes with their reasons, any `PRODUCTION-ISSUE:` findings, and where the report
+   is.
+"""

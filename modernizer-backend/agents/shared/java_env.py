@@ -132,13 +132,16 @@ def _run_streaming(cmd: list[str], cwd: Path, env: dict, timeout: int) -> tuple[
 
 
 def run_maven(cwd: Path, args: list[str], java_home: str | None = None,
-              timeout: int | None = None) -> tuple[int, str]:
-    """Run Maven in `cwd` with the configured JDK and settings, batch mode."""
+              timeout: int | None = None, env_extra: dict[str, str] | None = None) -> tuple[int, str]:
+    """Run Maven in `cwd` with the configured JDK and settings, batch mode. `env_extra` adds to the build's
+    environment (the coverage agent travels in JAVA_TOOL_OPTIONS)."""
     mvn = maven_executable(cwd)
     if not mvn:
         return 127, "mvn: not found on PATH (and no Maven wrapper in the project)"
     cmd = [mvn, "-B", *maven_settings_args(args), *args]
-    code, out = _run(cmd, cwd, build_env(java_home), timeout or config.VALIDATE_TIMEOUT_SECONDS)
+    env = build_env(java_home)
+    env.update(env_extra or {})
+    code, out = _run(cmd, cwd, env, timeout or config.VALIDATE_TIMEOUT_SECONDS)
     if any(a in out for a in ("[INFO] BUILD", "[ERROR] Failed to execute")) or code == 124:
         progress.build(f"`mvn {' '.join(a for a in args if not a.startswith('-D'))}` in `{cwd.name or '.'}`",
                        build_summary.redact(build_summary.summarize(out, code).text()))

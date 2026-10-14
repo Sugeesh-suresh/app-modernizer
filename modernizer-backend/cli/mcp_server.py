@@ -131,6 +131,8 @@ async def list_patterns() -> str:
     """List the modernization patterns this server can run, with what each changes."""
     rows = [f"- `{p.id}` — {p.label}" for p in P.PATTERNS.values()]
     rows.append(f"- `{P.STACK_DISCOVERY}` — Discover & reverse-engineer my stack (documents only; changes nothing)")
+    rows.append(f"- `{P.TEST_COVERAGE}` — Raise unit-test coverage (writes new tests only, with the test frameworks the "
+                "repository already has; measured with JaCoCo; Maven)")
     return "\n".join(rows) + ("\n\njava-8-to-25 also takes migration_strategy=bigbang|incremental, "
                               "springboot_upgrade and junit_upgrade.")
 
@@ -145,7 +147,7 @@ async def start_run(pattern: str, workspace: str = "", migration_strategy: str =
 
     Args:
         pattern: java-8-to-25, java-8-to-11, solr-4-to-9, oracle-19c-to-23ai, tibco-ems-to-pubsub,
-            jsp-to-react-bff or stack-discovery.
+            jsp-to-react-bff, stack-discovery or test-coverage.
         workspace: Repository root; defaults to the Gemini CLI workspace.
         migration_strategy: java-8-to-25 only — "bigbang" (one pass) or "incremental" (staged).
         springboot_upgrade: java-8-to-25 only — also move to Spring Boot 4 / executable JAR.
@@ -360,6 +362,9 @@ def _pattern_tools(run: Run):
     pattern = run.state.get("current_pattern") or run.state["pattern"]
     if pattern == P.STACK_DISCOVERY:
         raise RunError("Stack discovery is read-only: it has no write or build tools.")
+    if pattern == P.TEST_COVERAGE:
+        import importlib
+        return pattern, importlib.import_module("agents.test_coverage.tools")
     return pattern, P.get(pattern).tools()
 
 
@@ -470,6 +475,8 @@ async def ws_validate(workspace: str = "") -> str:
     def body():
         run = _load(workspace)
         pattern, tools = _pattern_tools(run)
+        if pattern == P.TEST_COVERAGE:
+            return "No validator in this pipeline: it measures coverage itself. Check your tests with ws_run_command."
         name = P.get(pattern).validator
         if not name:
             return (f"No static validator for {pattern} — build with ws_run_command and read the output. "

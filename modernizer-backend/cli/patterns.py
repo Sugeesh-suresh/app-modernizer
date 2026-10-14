@@ -18,6 +18,7 @@ JAVA_8_TO_11 = "java-8-to-11"
 JAVA_8_TO_25 = "java-8-to-25"
 JSP_TO_REACT = "jsp-to-react-bff"
 STACK_DISCOVERY = "stack-discovery"
+TEST_COVERAGE = "test-coverage"
 
 
 @dataclass(frozen=True)
@@ -92,7 +93,7 @@ PATTERNS: dict[str, Pattern] = {
     ),
 }
 
-ALL_PATTERNS = (*PATTERNS, STACK_DISCOVERY)
+ALL_PATTERNS = (*PATTERNS, STACK_DISCOVERY, TEST_COVERAGE)
 
 
 def get(pattern: str) -> Pattern:

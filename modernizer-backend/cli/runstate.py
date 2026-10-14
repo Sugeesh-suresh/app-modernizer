@@ -182,6 +182,7 @@ class Run:
             "plan": self.read_doc("plan", pattern),
             "preflight_json": self.state.get("preflight_json", ""),
             "approved_stage": self.state.get("approved_stage", ""),
+            "java_home": self.state.get("java_home", ""),
             "java11_build_passed": self.state.get("java11_build_passed"),
             "pass_changes": self.state.get("pass_changes", {}),
             "pass_start_file": str(self.result_path(f"{pattern}/pass_start.json")),

@@ -128,6 +128,9 @@ def start(workspace: Path, pattern: str, migration_strategy: str = "bigbang", sp
     if pattern == P.STACK_DISCOVERY:
         from . import discovery
         discovery.init(run)
+    elif pattern == P.TEST_COVERAGE:
+        from . import coverage_run
+        coverage_run.init(run)
     else:
         graph = dependency_graph.build_dependency_graph(ws, pattern)
         run.state["dependency_graph_json"] = json.dumps(graph)
@@ -151,6 +154,9 @@ def summary(run: Run) -> str:
         lines.append(f"- **Requirements:** {s['requirements'][:300]}" + (" …" if len(s["requirements"]) > 300 else ""))
     if s.get("bundle") and len(s["bundle"]) > 1:
         lines.append(f"- **Bundle:** {', '.join(s['bundle'])}")
+    if s["pattern"] == P.TEST_COVERAGE:
+        from . import coverage_run
+        lines += coverage_run.status_lines(run)
     lines.append(f"- **Phase:** {s.get('phase')}")
     if s.get("current_step"):
         current = s["current_step"]
@@ -251,6 +257,9 @@ def next_step(run: Run) -> tuple[dict, list[str]]:
     if run.state["pattern"] == P.STACK_DISCOVERY:
         from . import discovery
         return discovery.next_step(run)
+    if run.state["pattern"] == P.TEST_COVERAGE:
+        from . import coverage_run
+        return coverage_run.next_step(run)
     log: list[str] = []
     current = run.state.get("current_step")
     if current and current["kind"] == "subagent":
@@ -270,6 +279,9 @@ def complete_step(run: Run, step_id: str) -> str:
     if run.state["pattern"] == P.STACK_DISCOVERY:
         from . import discovery
         return discovery.complete_step(run, step_id)
+    if run.state["pattern"] == P.TEST_COVERAGE:
+        from . import coverage_run
+        return coverage_run.complete_step(run, step_id)
     current = run.state.get("current_step") or {}
     if current.get("id") != step_id:
         raise RunError(f"The run is waiting on `{current.get('id', 'nothing')}`, not `{step_id}`. "
@@ -1205,6 +1217,9 @@ def confirm(run: Run, gate: str, selection: list[str] | None = None, documents: 
     if run.state["pattern"] == P.STACK_DISCOVERY:
         from . import discovery
         return discovery.confirm(run, gate, selection, documents)
+    if run.state["pattern"] == P.TEST_COVERAGE:
+        from . import coverage_run
+        return coverage_run.confirm(run, gate, selection, documents)
     phase = run.state.get("phase")
     if gate == "companions":
         if phase != "select":
@@ -1263,6 +1278,9 @@ def refine(run: Run, gate: str, feedback: str) -> str:
     if run.state["pattern"] == P.STACK_DISCOVERY:
         from . import discovery
         return discovery.refine(run, gate, feedback)
+    if run.state["pattern"] == P.TEST_COVERAGE:
+        from . import coverage_run
+        return coverage_run.refine(run, gate, feedback)
     if not (feedback or "").strip():
         raise RunError("Say what should change.")
     phase = run.state.get("phase")

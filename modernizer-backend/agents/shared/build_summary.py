@@ -89,8 +89,8 @@ def summarize(output: str, exit_code: int | None = None, tool: str = "") -> Summ
         s.passed = None if not results else results[-1] == "SUCCESS"
         if (t := _TIME.findall(out)):
             s.duration = t[-1]
-    if s.passed is None and exit_code == 0 and (s.tool == "gradle" or "[INFO]" in out):
-        s.passed = True if _RESULT.search(out) or _GRADLE.search(out) else None
+    if s.passed is None and exit_code is not None and not out.startswith("TIMEOUT") and exit_code != 124:
+        s.passed = exit_code == 0        # a quiet build (`mvn -q`) prints no BUILD line: its exit code is the verdict
     seen = set()
     for name, status, took in _MODULE.findall(out):
         if name not in seen and not name.startswith("Reactor"):

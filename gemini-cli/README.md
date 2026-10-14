@@ -56,6 +56,14 @@ Node and Maven plugins are not installed (Maven fetches its plugins from your re
 reported, not worked around). Turn it off with `AUTO_INSTALL_TOOLS=off`; remove everything by deleting
 `~/.modernizer/tools`. To fetch ahead of time: `python -m cli tools --install-jdk 17 --install-maven`.
 
+**Raising test coverage.** `/modernize:coverage [line=85] [branch=70] [rounds=6] [scope=com.acme] [what you want]`
+measures the repository's own tests under JaCoCo (baseline, a few minutes the first time), stops at the
+`coverage-target` gate so you pick the target, then rounds of the `modernizer-tester` subagent writing new tests —
+only under `src/test`, existing tests frozen — each followed by the pipeline's own check (whole suite under
+JaCoCo, tests that assert nothing removed, flaky tests caught). It asks again (`coverage-stalled`) when the rounds
+run out or stop adding coverage: `accept`, `more=3` or a new target. The report lists before/after per package,
+what was added and dropped, and what could not be unit-tested. Maven only.
+
 Settings (either option): `AUTO_INSTALL_TOOLS`, `MODERNIZER_TOOLS_DIR`, `MIGRATION_JAVA_HOME`, `MIGRATION_JAVA_HOMES`, `BASELINE_JAVA_HOME`, `MAVEN_SETTINGS`,
 `PREFLIGHT`, `APPROVED_VERSIONS_FILE`, `BUILD_LOOP_MAX_ITERATIONS`, `JAVA11_ANALYSIS`, `MIGRATION_ANALYSIS`,
 `RULES_EXTRACTION`, and the rest of `.env.example`. Model settings (`GEMINI_MODEL`, `MODEL_PLAN`, ...) do not

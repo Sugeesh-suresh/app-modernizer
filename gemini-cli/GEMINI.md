@@ -12,6 +12,7 @@ When the user says what they want beyond the pattern (a library to move, a versi
 Patterns: `java-8-to-25` (bigbang or incremental, optional Spring Boot 4 / JUnit), `java-8-to-11` (JDK only;
 JSP and WildFly frozen), `solr-4-to-9`, `oracle-19c-to-23ai`, `tibco-ems-to-pubsub`, `jsp-to-react-bff`, and
 `stack-discovery` (reverse engineering: documents the repository as it is; changes nothing).
+`test-coverage` raises unit-test coverage of a Maven repository by adding new tests only (`/modernize:coverage [line=85] [branch=70] [rounds=6] [scope=...]`): the pipeline measures with JaCoCo, stops at the `coverage` gate (step `coverage-target`) for the user's target, and again at `coverage-stalled` (`accept`, `more=<n>` or a new target); the `modernizer-tester` subagent writes the tests under `src/test` only, with the repository's existing frameworks.
 
 Reverse engineering (`stack-discovery`) asks the user for a **strategy** before reading any code, with options
 computed for the repository: `layered-trace` (API & logic → UI top-down → data bottom-up; recommended for
@@ -32,7 +33,7 @@ interactions and backend traces) and `UI_SCREENS.md` (a screenshot of each page)
   queries say which skill and which step file.
 - **Subagents** do the model work, each with only the tools its role needs: `modernizer-analyst`,
   `modernizer-planner`, `modernizer-coder`, `modernizer-validator`, `modernizer-reviewer`,
-  `modernizer-writer`.
+  `modernizer-writer`, `modernizer-tester` (test-coverage only).
 - **State** lives in `.modernizer/` in the repository (`run.json`, `docs/<pattern>/` for the BRD, Technical
   Specification, Test Inventory and plan, `results/` for builds, review, report and the diff). The baseline copy
   of the repository is under `~/.modernizer/baselines/`. A run survives restarting Gemini CLI.
@@ -40,7 +41,7 @@ interactions and backend traces) and `UI_SCREENS.md` (a screenshot of each page)
 ## Driving the pipeline
 
 Commands: `/reverse-engineer [strategy] [docs=...]`, `/modernize:start <pattern> [...]`, `/modernize:discover`, `/modernize:next`, `/modernize:status`,
-`/modernize:approve [...]`, `/modernize:refine <feedback>`, `/modernize:export`.
+`/modernize:approve [...]`, `/modernize:refine <feedback>`, `/modernize:export`, `/modernize:coverage [line=85] [branch=70] [rounds=6] [scope=...]`.
 
 When continuing a run, loop:
 

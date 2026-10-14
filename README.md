@@ -96,6 +96,22 @@ upload → RE (Java 11 blockers + frozen-zone inventory) → HUMAN: review → p
        → code review → report → frozen-file restore → diff
 ```
 
+### Test-coverage pattern (Gemini CLI)
+
+| Pattern | From | To | Validation | Strategies |
+|---|---|---|---|---|
+| **Raise unit-test coverage** (`test-coverage`) | A Maven repository whose tests cover too little | The same repository plus **new tests only**, written with the frameworks it already has (JUnit 4/5, Mockito, …) | JaCoCo, measured by the pipeline on the repository's own build | Rounds until a target you set is met |
+
+`/modernize:coverage` measures first, then asks you for the target, then loops:
+
+1. **Environment check and baseline (no model).** JDK and Maven for the repository's Java level (installed for you when missing, see *Installed tools*), the test stack read from the poms and the imports of the existing tests, then the repository's own tests run once under JaCoCo. The agent is attached through `JAVA_TOOL_OPTIONS`, never through the pom, so a Surefire `<argLine>` written out in the pom (which silently defeats `jacoco:prepare-agent`) does not hide the coverage and no build file is edited.
+2. **Gate `coverage-target`.** You see the baseline per package, the biggest gaps, the stack and the defaults (`COVERAGE_TARGET_LINE` 80%, rounds, batch size) and choose the target — `line=85`, `branch=70`, `rounds=8`, `scope=com.acme.service`, `exclude=*Dto` — or take the defaults.
+3. **Rounds.** The `modernizer-tester` subagent writes tests for the classes with the most uncovered lines (each brief lists the uncovered line numbers and the untaken branches, a sample of the repository's own test style, and your free-text request). Then the pipeline, without a model: puts back anything that is not a new test file; scans the new tests for ones that assert nothing (no assertion, only `assertNotNull`, `assertTrue(true)`, `@Ignore`); runs the whole suite under JaCoCo; runs the new test classes a second time to catch flaky ones. A problem goes to the tester to repair (`COVERAGE_FIX_ATTEMPTS`); what is still wrong after that is **deleted by the pipeline** — only ever a new test: existing tests are frozen (a write to one is refused), a failing test is never kept, skipped or disabled, and a test that already failed before the run is left alone and never counts against the new ones.
+4. **Gate `coverage-stalled`** when the rounds run out or two rounds in a row add less than `COVERAGE_MIN_GAIN` points: `accept`, `more=N`, or a new target.
+5. **Report (no model):** before/after per package and per round, the tests added, those dropped and why, classes the tester reported untestable without a refactor, possible production issues it noticed, the largest gaps left, and how to reproduce the measurement. Production code is never changed; the delivered change is a list of new files under `src/test`.
+
+The coverage figures are JaCoCo's, from builds the pipeline runs itself — never an agent's claim. JSP pages are not measured (JaCoCo instruments Java classes only); the servlets, beans and filters behind them are. Maven only in this version (a Gradle project is stopped with that message).
+
 ### Analysis-only pattern
 
 | Pattern | From | To | Validation | Strategies |
@@ -825,6 +841,11 @@ app-modernizer/
 | `MIGRATION_JAVA_HOMES` | No | — | Java 8 → 25: one JDK per release, `8=/opt/jdk8,17=/opt/jdk17,25=/opt/jdk25`; a release without one builds on the nearest newer JDK found |
 | `MAVEN_NO_SNAPSHOT_UPDATES` | No | `on` | Every migration build passes `-nsu`: SNAPSHOT dependencies' `maven-metadata.xml` is not re-fetched on each build (most of a first build on a slow repository). `off` = Maven's default; a call that passes `-U` still updates |
 | `MAVEN_REPO_LOCAL` | No | — | A local Maven repository for the migration's builds (`-Dmaven.repo.local`): filled once, reused by every build and run, and keeps snapshot churn out of `~/.m2`. Costs one full download and its disk space |
+| `COVERAGE_TARGET_LINE` / `COVERAGE_TARGET_BRANCH` | No | `80` / `0` | test-coverage: the target offered at the `coverage-target` gate (branch `0` = line coverage only); the user can change both there |
+| `COVERAGE_MAX_ROUNDS` / `COVERAGE_MIN_GAIN` | No | `6` / `1.0` | test-coverage: writer rounds before the run asks, and the percentage points a round must add (two rounds below it make the run ask) |
+| `COVERAGE_BATCH_CLASSES` / `COVERAGE_BATCH_LINES` / `COVERAGE_MIN_CLASS_LINES` | No | `4` / `300` / `3` | test-coverage: classes and uncovered lines handed to one writer round; classes with fewer uncovered lines are not worth a round |
+| `COVERAGE_FIX_ATTEMPTS` / `COVERAGE_FLAKE_CHECK` | No | `2` / `on` | test-coverage: repair passes per round before the pipeline deletes the flawed new tests itself; run the new tests a second time to catch flaky ones |
+| `JACOCO_VERSION` | No | by JDK | test-coverage: JaCoCo release (default 0.8.12; 0.8.13 for JDK 24; 0.8.14 for JDK 25) |
 | `AUTO_INSTALL_TOOLS` | No | `on` | The environment check installs what the machine lacks: the JDK of each release the run builds (Eclipse Temurin from Adoptium) and Maven 3.6.3+ (Apache Maven from Maven Central), for the current user only, checksum-verified, under `MODERNIZER_TOOLS_DIR`. `off` = stop and say what to install instead |
 | `MODERNIZER_TOOLS_DIR` | No | `~/.modernizer/tools` | Where installed JDKs (`jdks/temurin-<N>`) and Maven (`maven/`) go, with a log of each install (`installed.json`). Delete the folder to remove everything |
 | `ADOPTIUM_API` / `MAVEN_DOWNLOAD_BASE` / `MAVEN_INSTALL_VERSION` | No | Adoptium / Maven Central / `3.9.11` | Where the installer downloads from (point at an internal mirror) and which Maven it installs. https only |
