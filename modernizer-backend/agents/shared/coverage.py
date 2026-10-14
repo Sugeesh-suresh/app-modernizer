@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import tempfile
+import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -444,6 +445,28 @@ def _agent_jar(root: Path, version: str, java_home: str | None) -> Path:
     return dest
 
 
+def _short_dir() -> Path:
+    """A short folder without spaces for the agent jar and the data file. The agent's options travel in
+    JAVA_TOOL_OPTIONS, and a JDK 8 silently ignores the agent when that value is long (about 1,000 characters,
+    proxy settings included) — a repository checked out deep under `C:\\Users\\Some Name\\OneDrive - ...` would
+    otherwise measure 0%. Spaces split the options too."""
+    candidates = [Path("/tmp") / "mzcov"] if os.name != "nt" else \
+        [Path(os.environ.get("PUBLIC", r"C:\Users\Public")) / "mzcov", Path(os.environ.get("SystemDrive", "C:") + "\\") / "mzcov"]
+    candidates.append(Path(tempfile.gettempdir()) / "mzcov")
+    for folder in candidates:
+        if " " in str(folder):
+            continue
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            probe = folder / ".w"
+            probe.write_text("x")
+            probe.unlink()
+            return folder
+        except OSError:
+            continue
+    return Path(tempfile.gettempdir()) / "mzcov"
+
+
 def _clear(root: Path) -> None:
     for d in list(root.rglob("jacoco")):
         if d.is_dir() and d.parent.name == "site" and "target" in d.parts:
@@ -456,7 +479,7 @@ def measure(root: Path, java_home: str | None, packages: list[str] | None = None
     """Run the repository's tests (all, or only the named test classes) and read what they covered.
     Failing tests are recorded, never fatal: the pipeline compares them with the baseline's."""
     version = jacoco_version(java_major_of(java_home))
-    exec_file = root / ".modernizer" / "jacoco.exec"
+    exec_file = _short_dir() / f"{uuid.uuid4().hex[:8]}.exec"
     env_extra: dict[str, str] = {}
     args = ["-fae", "-Dmaven.test.failure.ignore=true", "-DfailIfNoTests=false", "-Dsurefire.failIfNoSpecifiedTests=false"]
     repo_jacoco = any("jacoco-maven-plugin" in p.read_text(encoding="utf-8", errors="replace") for p in fswalk.files(root, "pom.xml"))
@@ -464,14 +487,16 @@ def measure(root: Path, java_home: str | None, packages: list[str] | None = None
         args.append("-Dtest=" + ",".join(only_tests))
     args.append("test")
     if with_coverage:
-        jar = _agent_jar(root, version, java_home)
-        exec_file.parent.mkdir(parents=True, exist_ok=True)
-        exec_file.unlink(missing_ok=True)
+        cached = _agent_jar(root, version, java_home)
+        jar = exec_file.parent / f"jacocoagent-{version}.jar"
+        if not jar.is_file() or jar.stat().st_size != cached.stat().st_size:
+            shutil.copy2(cached, jar)
         options = f"destfile={exec_file},append=true"
         if packages:
             options += ",includes=" + ":".join(f"{p.rstrip('.*')}.*" for p in packages)
         flag = f"-javaagent:{jar}={options}"
         env_extra["JAVA_TOOL_OPTIONS"] = (os.environ.get("JAVA_TOOL_OPTIONS", "") + " " + flag).strip()
+        option_chars = len(env_extra["JAVA_TOOL_OPTIONS"])
         if repo_jacoco:                          # the repository's own jacoco would attach a second agent: leave it out
             args.append("-Djacoco.skip=true")
         _clear(root)
@@ -480,14 +505,14 @@ def measure(root: Path, java_home: str | None, packages: list[str] | None = None
     progress.stage(label or "Coverage: running the tests"
                    + (" under JaCoCo" if with_coverage else "") + " — a first build downloads every dependency")
     code, out = java_env.run_maven(root, args, java_home=java_home, timeout=timeout, env_extra=env_extra)
-    if with_coverage and not exec_file.is_file() and not only_tests:
-        exec_file.parent.mkdir(parents=True, exist_ok=True)
-        exec_file.write_bytes(b"\x01\xc0\xc0\x10\x07")      # no JVM ran a test: an empty data file reports every class as uncovered
+    tests = read_test_results(root)
+    agent_wrote = exec_file.is_file()
+    if with_coverage and not agent_wrote and not tests.total and not only_tests:
+        exec_file.write_bytes(b"\x01\xc0\xc0\x10\x07")      # no test ran: an empty data file reports every class as uncovered
     if with_coverage and exec_file.is_file():
         progress.stage("Coverage: reading the JaCoCo data (report)")
         java_env.run_maven(root, ["-fae", f"org.jacoco:jacoco-maven-plugin:{version}:report", f"-Djacoco.dataFile={exec_file}"],
                            java_home=java_home, timeout=timeout)
-    tests = read_test_results(root)
     summary = build_summary.redact(build_summary.summarize(out, code).text())
     s = build_summary.summarize(out, code)
     report = load_reports(root) if with_coverage else Report()
@@ -504,9 +529,13 @@ def measure(root: Path, java_home: str | None, packages: list[str] | None = None
             problem = "the build produced no verdict (cut off or timed out)"
         else:
             problem = "the build failed: " + "; ".join((classified.other or [])[:3])[:400]
-    elif with_coverage and not report.classes and tests.total:
-        ok, problem = False, ("the tests ran but JaCoCo produced no coverage data — the agent may not have attached "
-                              "(unsupported JDK / JaCoCo version, or the tests run in a JVM that ignores JAVA_TOOL_OPTIONS)")
+    elif with_coverage and tests.total and (not agent_wrote or not report.classes):
+        ok, problem = False, (f"{tests.total} test(s) ran but JaCoCo recorded nothing — the agent did not attach to the "
+                              "tests' JVM (an unsupported JDK / JaCoCo version, a JAVA_TOOL_OPTIONS of "
+                              f"{option_chars} characters that an old JDK truncates, or tests run in a JVM that ignores "
+                              "the variable). Set JACOCO_VERSION, or shorten JAVA_TOOL_OPTIONS.")
+    if with_coverage:
+        exec_file.unlink(missing_ok=True)
     return Measurement(ok, summary, report, tests, out[-1500:], problem, environment)
 
 

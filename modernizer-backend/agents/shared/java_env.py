@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import config
-from . import build_summary, progress, toolchain
+from . import build_summary, jdk_discovery, progress, toolchain
 
 _IS_WINDOWS = os.name == "nt"
 
@@ -39,14 +39,16 @@ _IS_WINDOWS = os.name == "nt"
 # ---------------------------------------------------------------------------
 
 def migration_home() -> str:
-    """The JDK a Java 8 -> 11 build runs on: MIGRATION_JAVA_HOME, else the JDK 11 this tool installed because
-    the machine had none (agents/shared/toolchain.py), else "" (the server's own)."""
-    return config.MIGRATION_JAVA_HOME or toolchain.managed_home(11)
+    """The JDK a Java 8 -> 11 build runs on: MIGRATION_JAVA_HOME, else a JDK 11 found in the standard install
+    folders (agents/shared/jdk_discovery.py), else the one this tool installed because the machine had none
+    (agents/shared/toolchain.py), else "" (the server's own)."""
+    return config.MIGRATION_JAVA_HOME or jdk_discovery.find(11) or toolchain.managed_home(11)
 
 
 def baseline_home() -> str:
-    """The JDK 8 the uploaded code's tests run on: BASELINE_JAVA_HOME, else the one this tool installed."""
-    return config.BASELINE_JAVA_HOME or toolchain.managed_home(8)
+    """The JDK 8 the uploaded code's tests run on: BASELINE_JAVA_HOME, else a JDK 8 found on the machine, else the
+    one this tool installed."""
+    return config.BASELINE_JAVA_HOME or jdk_discovery.find(8) or toolchain.managed_home(8)
 
 
 def build_env(java_home: str | None = None) -> dict[str, str]:

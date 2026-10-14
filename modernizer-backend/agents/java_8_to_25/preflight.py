@@ -40,7 +40,7 @@ from pathlib import Path
 
 from .. import config
 from ..java_8_to_11.preflight import check_approved, maven_roots
-from ..shared import approved_versions, java_env, progress, toolchain
+from ..shared import approved_versions, java_env, jdk_discovery, progress, toolchain
 from .stages import INCREMENTAL_STAGES, incremental_stages
 
 TARGET = 25
@@ -65,6 +65,9 @@ def configured_homes() -> list[tuple[str, str]]:
     if os.environ.get("JAVA_HOME", "").strip():
         homes.append(("JAVA_HOME", os.environ["JAVA_HOME"].strip()))
     homes.append(("PATH", ""))
+    # The JDKs sitting in the standard install folders (Program Files, /Library/Java, /usr/lib/jvm, SDKMAN, ...): a
+    # machine has several, and JAVA_HOME / PATH name one. After everything the user configured.
+    homes += [(f"found in {Path(j.home).parent}", j.home) for j in jdk_discovery.discover()]
     # The JDKs this tool installed because the machine lacked them: after everything the user configured.
     homes += [(f"installed JDK {major}", home) for major, home in sorted(toolchain.managed_jdks().items())]
     return homes

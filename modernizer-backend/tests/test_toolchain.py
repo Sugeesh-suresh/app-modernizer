@@ -296,6 +296,8 @@ def test_an_installed_jdk_and_maven_are_what_the_builds_use(site, monkeypatch, t
     site.add_maven()
     monkeypatch.setattr(config, "MIGRATION_JAVA_HOME", "")
     monkeypatch.setattr(config, "BASELINE_JAVA_HOME", "")
+    monkeypatch.setattr(java_env.jdk_discovery, "find", lambda major, **k: "")       # this machine's own JDKs stay out
+    monkeypatch.setattr(java_env.jdk_discovery, "discover", lambda *a, **k: [])
     assert java_env.migration_home() == ""
     home = toolchain.install_jdk(11)
     assert java_env.migration_home() == home

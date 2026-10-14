@@ -612,3 +612,27 @@ def test_a_whole_coverage_run_on_a_jsp_servlet_repository(tmp_path, monkeypatch,
     assert changed and all("src/test/java/" in l for l in changed), changed
     assert (repo / _PROD).read_text() == original
     assert Run.load(repo).state["phase"] == "done"
+
+
+def test_the_agent_and_its_data_file_live_in_a_short_folder_without_spaces():
+    folder = coverage._short_dir()
+    assert " " not in str(folder) and len(str(folder)) < 30 and folder.is_dir()
+
+
+def test_a_measurement_where_the_agent_never_wrote_is_not_a_zero_percent_baseline(tmp_path, monkeypatch):
+    """A JDK 8 ignores an agent whose JAVA_TOOL_OPTIONS is too long: the tests pass, nothing is recorded. That must
+    stop the run with the reason, never report 0%."""
+    root = tmp_path / "r"
+    (root / "target/surefire-reports").mkdir(parents=True)
+    (root / "pom.xml").write_text("<project/>")
+    jar = tmp_path / "agent.jar"
+    jar.write_bytes(b"x")
+    monkeypatch.setattr(coverage, "_agent_jar", lambda *a, **k: jar)
+
+    def fake_maven(cwd, args, java_home=None, timeout=None, env_extra=None):
+        (cwd / "target/surefire-reports").mkdir(parents=True, exist_ok=True)
+        (cwd / "target/surefire-reports/TEST-a.FooTest.xml").write_text('<testsuite name="a.FooTest" tests="3" skipped="0"/>')
+        return 0, "[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0\n[INFO] BUILD SUCCESS\n"
+    monkeypatch.setattr(coverage.java_env, "run_maven", fake_maven)
+    m = coverage.measure(root, None, packages=["a"])
+    assert not m.ok and "3 test(s) ran but JaCoCo recorded nothing" in m.problem and "JAVA_TOOL_OPTIONS" in m.problem
